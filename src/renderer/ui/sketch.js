@@ -344,6 +344,57 @@ function setEdgeLength(it, i, len) {
   return 'locked';
 }
 
+/**
+ * Add a point to a polygon after point k (on edge k), keeping its per-point data in step:
+ * locks, named angles (per point), named lengths (per edge; the split edge loses its length
+ * name), and constraints. A constraint on the split edge applies to both halves (they stay in
+ * line), except point-on-line, which stays with the first half. Returns the new constraints.
+ */
+function insertPoint(it, k, p, constraints) {
+  const n = it.pts.length, at = k + 1;
+  it.pts.splice(at, 0, [p[0], p[1]]);
+  if (it.lock) it.lock.splice(at, 0, false);
+  if (it.angleRef) it.angleRef.splice(at, 0, null);
+  if (it.lenRef) { it.lenRef[k] = null; it.lenRef.splice(at, 0, null); if (!it.lenRef.some(Boolean)) delete it.lenRef; }
+  void n;
+  const shift = (ref) => (ref.uid !== it.uid || ref.i <= k ? ref : { ...ref, i: ref.i + 1 });
+  const out = [];
+  for (const c of constraints) {
+    const moved = { ...c, a: shift(c.a), ...(c.b ? { b: shift(c.b) } : {}) };
+    out.push(moved);
+    // the second half of a split edge gets the same line constraint
+    const onSplit = (ref) => ref && ref.uid === it.uid && ref.kind === 'edge' && ref.i === k;
+    if (c.type !== 'online' && (onSplit(c.a) || onSplit(c.b))) {
+      const half = (ref) => (onSplit(ref) ? { ...ref, i: at } : shift(ref));
+      out.push({ ...c, a: half(c.a), ...(c.b ? { b: half(c.b) } : {}) });
+    }
+  }
+  return out;
+}
+
+/**
+ * Remove point k of a polygon (it keeps at least 3). Its two edges become one: constraints on
+ * the point or either edge are dropped, as are the length names of those edges and the
+ * point's angle name; everything after it is renumbered. Returns the new constraints, or null.
+ */
+function removePoint(it, k, constraints) {
+  const n = it.pts.length;
+  if (n <= 3) return null;
+  const prev = (k - 1 + n) % n;
+  it.pts.splice(k, 1);
+  if (it.lock) { it.lock.splice(k, 1); if (!it.lock.some(Boolean)) delete it.lock; }
+  if (it.angleRef) { it.angleRef.splice(k, 1); if (!it.angleRef.some(Boolean)) delete it.angleRef; }
+  if (it.lenRef) {
+    it.lenRef[prev] = null; // the merged edge is new
+    it.lenRef.splice(k, 1);
+    if (!it.lenRef.some(Boolean)) delete it.lenRef;
+  }
+  const gone = (ref) => ref.uid === it.uid && (ref.kind === 'point' ? ref.i === k : ref.i === k || ref.i === prev);
+  const shift = (ref) => (ref.uid !== it.uid || ref.i < k ? ref : { ...ref, i: ref.i - 1 });
+  return constraints.filter((c) => !gone(c.a) && !(c.b && gone(c.b)))
+    .map((c) => ({ ...c, a: shift(c.a), ...(c.b ? { b: shift(c.b) } : {}) }));
+}
+
 const isLocked = (it, i) => !!(it.lock && it.lock[i]);
 const anyLocked = (it) => it.type === 'poly' && !!(it.lock && it.lock.some(Boolean));
 
@@ -462,19 +513,27 @@ export function sketchDialog(existing) {
       if (len < 1e-6) { const u = rot([0, 1], f.a); ux = u[0]; uy = -u[1]; } else { ux /= len; uy /= len; }
       out.push({ kind: 'rotate', px: [top[0] + ux * ROT_OFFSET, top[1] + uy * ROT_OFFSET], from: top });
       if (anyLocked(it)) out.length = 0; // a locked point pins the shape: no resizing or rotating
-      if (it.type === 'poly') it.pts.forEach((p, i) => out.push({ kind: 'vertex', i, locked: isLocked(it, i), px: toPx(p) }));
+      if (it.type === 'poly') {
+        it.pts.forEach((p, i) => out.push({ kind: 'vertex', i, locked: isLocked(it, i), px: toPx(p) }));
+        // a '+' in the middle of each edge adds a point there
+        it.pts.forEach((p, i) => {
+          const a = toPx(p), b = toPx(it.pts[(i + 1) % it.pts.length]);
+          if (Math.hypot(b[0] - a[0], b[1] - a[1]) > 26) out.push({ kind: 'insert', i, px: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] });
+        });
+      }
       return out;
     }
     const handleAt = (it, px) => {
       const list = handles(it);
       // vertices first (they sit on the outline), then rotate, then size handles
-      const order = [...list.filter((x) => x.kind === 'vertex'), ...list.filter((x) => x.kind === 'rotate'), ...list.filter((x) => x.kind === 'size')];
-      return order.find((hd) => !hd.locked && Math.hypot(hd.px[0] - px[0], hd.px[1] - px[1]) <= (hd.kind === 'rotate' ? 9 : HANDLE + 3)) || null;
+      const order = [...list.filter((x) => x.kind === 'vertex'), ...list.filter((x) => x.kind === 'insert'), ...list.filter((x) => x.kind === 'rotate'), ...list.filter((x) => x.kind === 'size')];
+      return order.find((hd) => !hd.locked && Math.hypot(hd.px[0] - px[0], hd.px[1] - px[1]) <= (hd.kind === 'rotate' ? 9 : hd.kind === 'insert' ? 6 : HANDLE + 3)) || null;
     };
     const cursorFor = (hd, it) => {
       if (!hd) return '';
       if (hd.kind === 'rotate') return 'grab';
       if (hd.kind === 'vertex') return 'crosshair';
+      if (hd.kind === 'insert') return 'copy';
       // pick the resize cursor nearest the handle's direction on screen
       const f = frameOf(it);
       const d = rot([hd.sx, hd.sy], f.a);
@@ -576,6 +635,10 @@ export function sketchDialog(existing) {
             ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#1b1d22'; ctx.lineWidth = 1;
             ctx.fillRect(hd.px[0] - HANDLE, hd.px[1] - HANDLE, HANDLE * 2, HANDLE * 2);
             ctx.strokeRect(hd.px[0] - HANDLE + 0.5, hd.px[1] - HANDLE + 0.5, HANDLE * 2 - 1, HANDLE * 2 - 1);
+          } else if (hd.kind === 'insert') {
+            ctx.fillStyle = css('--bg-2', '#1c1f27'); ctx.strokeStyle = SEL; ctx.lineWidth = 1.2;
+            ctx.beginPath(); ctx.arc(hd.px[0], hd.px[1], 5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(hd.px[0] - 2.5, hd.px[1]); ctx.lineTo(hd.px[0] + 2.5, hd.px[1]); ctx.moveTo(hd.px[0], hd.px[1] - 2.5); ctx.lineTo(hd.px[0], hd.px[1] + 2.5); ctx.stroke();
           } else if (hd.kind === 'vertex' && hd.locked) {
             ctx.fillStyle = '#8a93a3'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
             ctx.fillRect(hd.px[0] - 4.5, hd.px[1] - 4.5, 9, 9); ctx.strokeRect(hd.px[0] - 4.5, hd.px[1] - 4.5, 9, 9);
@@ -722,6 +785,11 @@ export function sketchDialog(existing) {
       if (tool === 'select') {
         const cur = sel();
         const hd = cur && handleAt(cur, px);
+        if (hd && hd.kind === 'insert') {
+          // dragging the '+' adds a point there; a plain click picks the edge, like clicking the edge
+          drag = { kind: 'insert', hd, startPx: px, shift: e.shiftKey, uid: cur.uid };
+          return;
+        }
         if (hd && hd.kind === 'vertex') {
           // a corner of the selected polygon: drag it, or (a click without moving) pick it
           remember();
@@ -771,6 +839,18 @@ export function sketchDialog(existing) {
       const it = sel();
       if (drag && it) {
         if (drag.kind === 'move') { moveItem(it, p[0] - drag.last[0], p[1] - drag.last[1]); drag.last = p; }
+        else if (drag.kind === 'insert') {
+          const q = pxOf(e);
+          if (Math.hypot(q[0] - drag.startPx[0], q[1] - drag.startPx[1]) >= 3) {
+            remember();
+            const k = drag.hd.i;
+            constraints = insertPoint(it, k, p, constraints);
+            picks = [];
+            drag = { kind: 'vertex', hd: { i: k + 1 }, startPx: drag.startPx, moved: true, shift: false, uid: it.uid, inserted: true };
+            solve({ fixed: new Set([it.id + ':' + (k + 1)]) });
+            panel();
+          }
+        }
         else if (drag.kind === 'vertex') {
           const q = pxOf(e);
           if (!drag.moved && Math.hypot(q[0] - drag.startPx[0], q[1] - drag.startPx[1]) >= 3) drag.moved = true;
@@ -830,6 +910,8 @@ export function sketchDialog(existing) {
         if (drag.kind === 'rotate') canvas.style.cursor = 'grab';
         const d = drag;
         drag = null;
+        if (d.kind === 'insert') { pickPart({ uid: d.uid, kind: 'edge', i: d.hd.i }, d.shift, sel()); return; }
+        if (d.kind === 'vertex' && d.inserted) { if (!settle({})) { panel(); draw(); return; } pickPart({ uid: d.uid, kind: 'point', i: d.hd.i }, false, sel()); return; }
         if (d.kind === 'vertex' && !d.moved) { undo.pop(); pickPart({ uid: d.uid, kind: 'point', i: d.hd.i }, d.shift, sel()); return; }
         panel(); draw();
         return;
@@ -848,7 +930,22 @@ export function sketchDialog(existing) {
       draft = null; panel(); draw();
     });
     canvas.addEventListener('pointerleave', () => { cursor = null; hover = null; draw(); });
-    canvas.addEventListener('dblclick', () => { if (tool === 'poly') finishPoly(); });
+    canvas.addEventListener('dblclick', (e) => {
+      if (tool === 'poly') { finishPoly(); return; }
+      if (tool !== 'select' || pointAt(pxOf(e))) return; // on a point: nothing to add
+      const ed = edgeAt(pxOf(e));
+      if (!ed) return;
+      // the point goes on the edge, at the snapped position nearest the pointer
+      const a = ed.it.pts[ed.i], b = ed.it.pts[(ed.i + 1) % ed.it.pts.length], q = toMm(e);
+      const dx = b[0] - a[0], dy = b[1] - a[1], L = dx * dx + dy * dy;
+      const t = L > 0 ? Math.min(0.98, Math.max(0.02, ((q[0] - a[0]) * dx + (q[1] - a[1]) * dy) / L)) : 0.5;
+      remember();
+      constraints = insertPoint(ed.it, ed.i, [a[0] + dx * t, a[1] + dy * t], constraints);
+      selected = ed.it.id;
+      picks = [{ uid: ed.it.uid, kind: 'point', i: ed.i + 1 }];
+      if (!settle({})) picks = [];
+      panel(); draw();
+    });
 
     /** Add a constraint from the picked edges and points, then re-solve (undone if impossible). */
     const addConstraint = (type) => {
@@ -864,6 +961,33 @@ export function sketchDialog(existing) {
       if (settle({})) picks = [];
       panel(); draw();
     };
+
+    /** Remove polygon points (each polygon keeps at least 3), then re-solve (undone if impossible). */
+    const removePoints = (list) => {
+      const byShape = new Map();
+      for (const q of list) { if (!byShape.has(q.uid)) byShape.set(q.uid, []); byShape.get(q.uid).push(q.i); }
+      for (const [uid, idx] of byShape) {
+        const it = byUid(uid);
+        if (!it || it.type !== 'poly') continue;
+        if (it.pts.length - new Set(idx).size < 3) { toast('A polygon needs at least 3 points'); return; }
+      }
+      remember();
+      for (const [uid, idx] of byShape) {
+        const it = byUid(uid);
+        for (const i of [...new Set(idx)].sort((x, y) => y - x)) constraints = removePoint(it, i, constraints) || constraints; // highest first, so the rest keep their numbers
+      }
+      // a polygon with no area left can't become a shape
+      const flat = [...byShape.keys()].map(byUid).some((it) => {
+        let area = 0;
+        for (let i = 0; i < it.pts.length; i++) { const p = it.pts[i], q = it.pts[(i + 1) % it.pts.length]; area += p[0] * q[1] - q[0] * p[1]; }
+        return Math.abs(area) / 2 < 0.01;
+      });
+      if (flat) { restore(undo.pop()); toast('That would leave the polygon flat'); panel(); draw(); return; }
+      picks = [];
+      settle({});
+      panel(); draw();
+    };
+    const removePickedPoints = () => removePoints(picks.filter((q) => q.kind === 'point'));
 
     const removeSelected = () => {
       const it = sel();
@@ -896,6 +1020,7 @@ export function sketchDialog(existing) {
       if (!ctrl && (e.key === 'f' || e.key === 'F')) { stop(); fit(); return; }
       if (e.key === 'Enter' && draft && draft.type === 'poly') { stop(); finishPoly(); }
       else if (e.key === 'Escape' && (draft || selected || picks.length)) { stop(); if (draft) draft = null; else if (picks.length) { picks = []; panel(); } else { selected = null; panel(); } draw(); }
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && picks.some((q) => q.kind === 'point')) { stop(); removePickedPoints(); }
       else if ((e.key === 'Delete' || e.key === 'Backspace') && selected) { stop(); removeSelected(); }
       else if (ctrl && e.key.toLowerCase() === 'z') { stop(); undoOnce(); }
       else if (ctrl && e.key.toLowerCase() === 'd') { stop(); duplicate(); }
@@ -1050,7 +1175,7 @@ export function sketchDialog(existing) {
         side.append(section('Position & size', rows));
         if (it.type === 'poly') {
           const list = h('div', { class: 'sketch-points' },
-            h('div', { class: 'xyz xya' }, h('span', {}, ''), h('span', {}, 'X'), h('span', {}, 'Y'), h('span', {}, 'Angle'), h('span', {}, 'Edge'), h('span', {}, '')));
+            h('div', { class: 'xyz xya' }, h('span', {}, ''), h('span', {}, 'X'), h('span', {}, 'Y'), h('span', {}, 'Angle'), h('span', {}, 'Edge'), h('span', {}, ''), h('span', {}, '')));
           const n = it.pts.length;
           it.pts.forEach((p, i) => {
             const locked = isLocked(it, i);
@@ -1083,7 +1208,9 @@ export function sketchDialog(existing) {
               if (lock.some(Boolean)) it.lock = lock; else delete it.lock;
               panel(); draw();
             } });
-            list.append(h('div', { class: 'xyz xya' }, h('span', {}, String(i + 1)), x, y, ang, len, lockBtn));
+            const delBtn = button({ icon: 'close', title: n <= 3 ? 'A polygon needs at least 3 points' : `Remove point ${i + 1} (or pick it and press Delete)`, cls: 'btn-ghost sketch-lock', onClick: () => removePoints([{ uid: it.uid, kind: 'point', i }]) });
+            if (n <= 3) delBtn.disabled = true;
+            list.append(h('div', { class: 'xyz xya' }, h('span', {}, String(i + 1)), x, y, ang, len, lockBtn, delBtn));
           });
           side.append(section('Points', [list]));
         }
@@ -1209,6 +1336,6 @@ export function sketchDialog(existing) {
     if (!items.length) setTool('rect'); else { setTool('select'); fit(); }
     panel(); draw();
     // exposed for automated checks
-    m.el.__sketch = { add: (it) => { items.push({ ...it, uid: newUid(), id: nextId++ }); panel(); draw(); }, done, items: () => items, select: (i) => pick(items[i] && items[i].id), toPx, frameOf, handles: () => (sel() ? handles(sel()) : []), angles: () => (sel() && sel().pts ? interiorAngles(sel().pts) : null), lengths: () => (sel() && sel().pts ? sel().pts.map((_, i) => edgeLen(sel().pts, i)) : null), params: () => params, constraints: () => constraints, picks: () => picks, pickPart: (i, kind, k, add = false) => { const it = items[i]; pickPart({ uid: it.uid, kind, i: k }, add, it); } };
+    m.el.__sketch = { add: (it) => { items.push({ ...it, uid: newUid(), id: nextId++ }); panel(); draw(); }, done, items: () => items, select: (i) => pick(items[i] && items[i].id), toPx, frameOf, handles: () => (sel() ? handles(sel()) : []), angles: () => (sel() && sel().pts ? interiorAngles(sel().pts) : null), lengths: () => (sel() && sel().pts ? sel().pts.map((_, i) => edgeLen(sel().pts, i)) : null), params: () => params, constraints: () => constraints, picks: () => picks, removePoints: (list) => removePoints(list), pickPart: (i, kind, k, add = false) => { const it = items[i]; pickPart({ uid: it.uid, kind, i: k }, add, it); } };
   });
 }
