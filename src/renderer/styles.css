@@ -438,7 +438,7 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .xyz.xy { grid-template-columns: 46px repeat(2, 1fr); }
 .xyz.xya { grid-template-columns: 14px repeat(4, 1fr) 26px; gap: 4px; }
 .input.dim.linked { color: var(--accent); border-color: var(--accent); font-weight: 600; }
-.xyz.dimrow { grid-template-columns: 1fr 1fr 22px 26px; }
+.xyz.dimrow { grid-template-columns: 0.8fr 1.4fr 44px 26px; }
 .dim-name { font-weight: 600; color: var(--accent) !important; font-size: 12.5px !important; }
 .sketch-lock { width: 26px; height: 26px; padding: 0; justify-content: center; }
 .sketch-lock.active { color: var(--accent); }
@@ -477,3 +477,7 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .update-bar i { display: block; height: 100%; width: 0; background: var(--accent, #4c8dff); transition: width .15s linear; }
 
 .edge-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.con-btns .btn-icon { width: 34px; padding: 0; justify-content: center; }
+.con-btns .btn-icon:disabled { opacity: .35; }
+.con-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; padding: 2px 0; }
+.con-row > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
