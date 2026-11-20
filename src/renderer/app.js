@@ -210,6 +210,14 @@ export class App {
       if (ok) platform.closeReady(); else platform.closeCancel();
     });
     platform.onOpenFile((file) => this._openExternal(file));
+    // the open design was changed on another computer (Google Drive): show the new version
+    window.addEventListener('dabble-designs-changed', async (e) => {
+      const id = this.designId;
+      if (!id || this.dirty || !e.detail || !e.detail.ids.includes(id)) return;
+      const text = await platform.loadDesign(id);
+      if (!text || this.dirty || this.designId !== id) return;
+      try { await this._loadDoc(deserializeDoc(text), id); toast('Updated with changes from Google Drive'); } catch (err) { console.warn(err); }
+    });
   }
 
   async _openInitial() {

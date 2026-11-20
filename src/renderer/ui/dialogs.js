@@ -5,6 +5,36 @@ import { EXPORT_FORMATS } from '../core/io.js';
 import { formatLength } from '../view/gizmo.js';
 import { countShapes } from '../core/doc.js';
 import { printCheckDialog } from './printdialog.js';
+import * as drive from '../drive.js';
+import { GOOGLE_CLIENT_ID } from '../config.js';
+import { driveAction } from './dashboard.js';
+
+/** Settings › Google Drive (browser version only). */
+function driveGroup(app, m) {
+  const reopen = () => { m.close(); settingsDialog(app); };
+  const st = drive.getStatus();
+  const out = [];
+  if (!GOOGLE_CLIENT_ID && !drive.isLinked()) {
+    const input = h('input', { class: 'input', placeholder: 'xxxx.apps.googleusercontent.com', value: drive.clientId(), style: { width: '100%' } });
+    out.push(row('OAuth client ID', 'Needed once to switch on Google Drive. Create a Web client ID in Google Cloud (see the README), or put it in config.js to set it for everyone using this copy.',
+      h('div', { class: 'set-btns' }, button({ label: 'Save', cls: 'btn-outline', onClick: () => { drive.setClientId(input.value); reopen(); } }))), input);
+  }
+  if (drive.clientId()) {
+    if (drive.isLinked()) {
+      const who = st.account ? st.account.email : 'your Google account';
+      out.push(row('Signed in', `Designs are kept in the DabbleCAD folder in ${who}'s Drive, and in this browser.${st.pending ? ` ${st.pending} not synced yet.` : ''}`,
+        h('div', { class: 'set-btns' },
+          st.state === 'reconnect' ? button({ label: 'Reconnect', cls: 'btn-primary', onClick: () => driveAction(async () => { await drive.reconnect(); reopen(); }) }) : null,
+          button({ label: 'Sign out', cls: 'btn-ghost', onClick: () => { drive.signOut(); reopen(); } }))));
+      out.push(row('Copy my designs to Drive', 'Uploads every design in this browser, including ones made before you signed in.',
+        button({ label: 'Copy', icon: 'arrowUp', cls: 'btn-outline', onClick: () => driveAction(async () => { await drive.copyAllToDrive(); toast('Designs copied to Google Drive'); }) })));
+    } else {
+      out.push(row('Google Drive', 'Keep your designs in a DabbleCAD folder in your Google Drive, so you have them on any computer. DabbleCAD can only see files it made.',
+        button({ label: 'Sign in', icon: 'cloud', cls: 'btn-primary', onClick: () => driveAction(async () => { await drive.signIn(); reopen(); }) })));
+    }
+  }
+  return h('div', { class: 'set-group' }, h('h4', {}, 'Google Drive'), ...out);
+}
 
 const toggle = (checked, onChange) => {
   const input = h('input', { type: 'checkbox', checked });
@@ -68,6 +98,7 @@ export async function settingsDialog(app) {
     h('div', { class: 'set-group' }, h('h4', {}, 'Files'),
       row('Auto-save', 'Designs are saved to your library as you work.', toggle(s.autosave !== false, (v) => app.patchSettings({ autosave: v }))),
       isDesktop ? row('Design library', 'Where DabbleCAD keeps your designs.', button({ label: 'Open folder', icon: 'folder', cls: 'btn-outline', onClick: () => platform.openDesignsFolder() })) : null),
+    isDesktop ? null : driveGroup(app, m),
     isDesktop ? h('div', { class: 'set-group' }, h('h4', {}, '3D printing'),
       row('Slicer', s.slicerPath ? s.slicerPath : 'Not set: "Open in slicer" uses whatever app opens 3MF files on this computer.', h('div', { class: 'set-btns' },
         button({ label: 'Choose…', cls: 'btn-outline', onClick: async () => { const p = await platform.pickApp(); if (p) { app.patchSettings({ slicerPath: p }); toast('Slicer set'); m.close(); settingsDialog(app); } } }),

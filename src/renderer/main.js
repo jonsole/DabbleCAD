@@ -12,11 +12,13 @@ import * as laserIo from './laser/io.js';
 import * as laserTools from './laser/tools.js';
 import * as laserDepth from './laser/depthmap.js';
 import * as laserBox from './laser/boxmaker.js';
+import { platform } from './platform.js';
+import * as drive from './drive.js';
 
 const app = new App();
 // Handy for debugging and automated checks from DevTools (F12).
 window.dabble = app;
-window.dabbleLib = { shapes, doc, geometry, io, solid, dialogs, laser: { model: laserModel, gcode: laserGcode, ops: laserOps, io: laserIo, tools: laserTools, depthmap: laserDepth, boxmaker: laserBox } };
+window.dabbleLib = { platform, drive, shapes, doc, geometry, io, solid, dialogs, laser: { model: laserModel, gcode: laserGcode, ops: laserOps, io: laserIo, tools: laserTools, depthmap: laserDepth, boxmaker: laserBox } };
 app.init().catch((err) => {
   console.error(err);
   const boot = document.getElementById('boot');

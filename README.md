@@ -220,6 +220,45 @@ map can go onto the bed as one grayscale engraving, or as **slice passes**: one 
 per pass, each on its own layer, so the laser cuts the relief step by step.
 Suggested material settings are starting points, not calibrated guarantees.
 
+### Google Drive (web version)
+
+In the web version you can keep your design library in your own Google Drive, so the
+same designs are there on any computer. Sign in from **Your designs → Sign in to Google
+Drive**. Designs then live in a **DabbleCAD** folder in your Drive as normal `.dabble`
+files (with a preview picture), and every save, rename and delete is synced.
+
+- Saves always go to the browser first, so nothing waits on the network. If Drive can't
+  be reached, designs show a crossed-out cloud ("not synced yet") and upload when you're
+  back online.
+- Designs made before you signed in stay in the browser until you choose
+  **Copy my designs to Drive**.
+- Deleting a design moves its Drive file to the Drive bin, where it can be restored.
+- If the same design is changed on two computers, the most recent save wins.
+- DabbleCAD asks only for access to files it creates (the `drive.file` permission), so
+  it can't see anything else in your Drive. There's no DabbleCAD server: the browser
+  talks to Google directly. Sign-in lasts about an hour; after that the button says
+  **Reconnect Drive** and one click carries on.
+- Signed out, nothing changes: designs stay in the browser only.
+
+**Setting it up for your copy of DabbleCAD** (once, about 10 minutes):
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), create a project.
+2. **APIs & Services → Library**: enable the **Google Drive API**.
+3. **Google Auth Platform → Branding** (the OAuth consent screen): user type **External**,
+   app name *DabbleCAD*, your email as support and developer contact. Don't add a logo:
+   that would require Google's review.
+4. **Data Access**: add the scope `.../auth/drive.file`.
+5. **Audience**: either add your Google account as a test user (while the app is in
+   *Testing*, sign-ins expire after 7 days), or press **Publish app**. With only the
+   `drive.file` scope and no logo, publishing normally doesn't need Google's verification.
+6. **Clients → Create client**: type **Web application**, authorised JavaScript origin
+   `https://<your-user>.github.io` (and `http://localhost:5183` for development).
+   No redirect URI is needed.
+7. Put the client ID in `src/renderer/config.js` (`GOOGLE_CLIENT_ID`) and push; or, just
+   to try it, paste it into **Settings → Google Drive** in one browser.
+
+The client ID is not a secret; it only identifies the app to Google.
+
 ## Saving
 
 `Ctrl+S` (or `Cmd+S` on Mac) saves the design and its laser workspace, even with

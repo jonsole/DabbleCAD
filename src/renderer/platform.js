@@ -1,5 +1,6 @@
 // Bridge to the desktop shell. When DabbleCAD runs in a plain browser (vite dev)
 // the same API is backed by localStorage / downloads so the editor still works.
+import { installDrive } from './drive.js';
 
 const native = window.dabbleNative || null;
 export const isDesktop = !!native;
@@ -93,5 +94,8 @@ const browser = {
   onSerialPorts: () => {},
   chooseSerialPort: () => {},
 };
+
+// in the browser, the library can also be kept in the user's Google Drive (see drive.js)
+if (!native) installDrive(browser);
 
 export const platform = native || browser;
