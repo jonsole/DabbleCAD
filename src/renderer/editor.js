@@ -380,7 +380,10 @@ export class Editor extends Emitter {
 
   _startEdgeTool() {
     const sel = this.movableNodes();
-    this.edgeMode = { id: sel.length === 1 ? sel[0].id : null, picked: new Set(), hoverId: null, hover: null, key: null };
+    const node = sel.length === 1 ? sel[0] : null;
+    // starting with a shape selected selects all of its edges
+    const picked = new Set(node && !node.hidden ? nodeEdgeData(node).chains.map((_, i) => i) : []);
+    this.edgeMode = { id: node ? node.id : null, picked, hoverId: null, hover: null, key: null };
     this.refreshOutlines();
     this._syncEdgeOverlays();
   }
