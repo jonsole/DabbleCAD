@@ -350,7 +350,14 @@ function mergeItems(items) {
     if (!other || other.o === it) continue;
     const o = other.o;
     if (o.chain.convex !== it.chain.convex || o.t !== it.t || Math.abs(o.r - it.r) > 1e-6) continue;
-    const shared = facesAt(it, e).some((a) => facesAt(o, other.f).some((b) => sameDir(a, b)));
+    const fa = facesAt(it, e), fb = facesAt(o, other.f);
+    // Edges that share a face join round a corner, meeting in a mitre (inside fills then have no
+    // notch, and a round or chamfer runs on smoothly). The mitre is only exact when both edges
+    // have the same angle between their faces, so outside edges with different angles (the top
+    // and side edges of a wedge) are cut separately, which already meets correctly.
+    const shares = fa.some((a) => fb.some((b) => sameDir(a, b)));
+    const sameAngle = Math.abs(fa[0].dot(fa[1]) - fb[0].dot(fb[1])) < 0.03;
+    const shared = shares && (!it.chain.convex || sameAngle);
     if (shared) link.get(it)[e] = other;
   }
   const done = new Set();
