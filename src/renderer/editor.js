@@ -850,7 +850,7 @@ export class Editor extends Emitter {
 
   // ---------------------------------------------------------------- adding shapes
   /** Position a new node so its footprint is centred on (x, y) of the workplane and it rests on it. */
-  placeAt(node, x, y) {
+  placeAt(node, x, y, frame = this.frame) {
     const base = node._base || (node._base = [...node.matrix]);
     const g = getGeometry(node);
     const box = expandBox(new THREE.Box3(), g, mat4(base));
@@ -859,8 +859,26 @@ export class Editor extends Emitter {
     const hw = box.isEmpty() ? 0 : (box.max.x - box.min.x) / 2, hl = box.isEmpty() ? 0 : (box.max.y - box.min.y) / 2;
     // snap the footprint corner so edges land on the grid
     const px = this.snapValue(x - hw) + hw, py = this.snapValue(y - hl) + hl;
-    const m = this.frame.clone().multiply(T(px - cx, py - cy, -minz)).multiply(mat4(base));
+    const m = frame.clone().multiply(T(px - cx, py - cy, -minz)).multiply(mat4(base));
     m.toArray(node.matrix);
+  }
+
+  /**
+   * A temporary workplane on the face under a pick: z along the face normal, x level where it
+   * can be. Its origin is the main workplane's origin projected onto the face, so the grid (and
+   * snapping) stays in line with the main grid, e.g. shapes on a flat top snap like on the floor.
+   */
+  _faceFrame(hit) {
+    const n = hit.normal.clone().normalize();
+    const up = new THREE.Vector3(0, 0, 1).transformDirection(this.frame);
+    let x = new THREE.Vector3().crossVectors(up, n);
+    if (x.lengthSq() < 1e-6) x = new THREE.Vector3(1, 0, 0).transformDirection(this.frame);
+    x.normalize();
+    const y = new THREE.Vector3().crossVectors(n, x).normalize();
+    x.crossVectors(y, n).normalize();
+    const o = new THREE.Vector3().setFromMatrixPosition(this.frame);
+    o.addScaledVector(n, hit.point.clone().sub(o).dot(n));
+    return new THREE.Matrix4().makeBasis(x, y, n).setPosition(o);
   }
 
   addNode(node, { select = true, commit = true } = {}) {
@@ -907,16 +925,36 @@ export class Editor extends Emitter {
       const el = document.elementFromPoint(ev.clientX, ev.clientY);
       return el === canvas || (el && el.closest && el.closest('.gizmo-layer') && !el.closest('.gz-handle'));
     };
+    // Over an existing shape, the workplane moves onto the face under the pointer for the time
+    // being (its grid shows there) and the new shape sits on that face, aligned to it.
+    let shown = null;
+    const showGrid = (f) => {
+      if (f === shown || (f && shown && f.equals(shown))) return;
+      shown = f;
+      this.viewport.setFrame(f || (this.hasFrame ? this.frame : null));
+    };
     const update = (ev) => {
-      const p = overCanvas(ev) ? this.planePoint(ev) : null;
-      ghost.visible = !!p;
-      if (p) {
-        this.placeAt(node, p.x, p.y);
+      let ok = false, face = null;
+      if (overCanvas(ev)) {
+        const hit = this.pickNode(ev);
+        if (hit && hit.node) {
+          face = this._faceFrame(hit);
+          const q = hit.point.clone().applyMatrix4(face.clone().invert());
+          this.placeAt(node, q.x, q.y, face);
+          ok = true;
+        } else {
+          const p = this.planePoint(ev);
+          if (p) { this.placeAt(node, p.x, p.y); ok = true; }
+        }
+      }
+      showGrid(face);
+      ghost.visible = ok;
+      if (ok) {
         ghost.matrix.fromArray(node.matrix);
         ghost.updateMatrixWorld(true);
       }
       this.viewport.requestRender();
-      return !!p;
+      return ok;
     };
     const finish = (ev) => {
       const ok = update(ev);
@@ -940,6 +978,7 @@ export class Editor extends Emitter {
         window.removeEventListener('pointerdown', onDown, true);
         this.viewport.helpers.remove(ghost);
         ghost.material.dispose();
+        showGrid(null); // the workplane goes back where it was
         this.viewport.requestRender();
       },
     };
