@@ -464,10 +464,16 @@ export class Editor extends Emitter {
     const d = nodeEdgeData(node);
     const idx = edgeRoundIndex(node);
     const picked = [...em.picked].filter((i) => i < d.chains.length);
-    const replaced = new Set(picked.map((i) => idx[i]).filter((k) => k !== undefined));
-    const keep = (node.edgeRounds || []).filter((_, k) => !replaced.has(k));
-    const added = t !== 'sharp' && r > 0 ? picked.map((i) => ({ sig: d.sigs[i], r, t })) : [];
-    const next = [...keep, ...added];
+    // edges already shaped keep their place in the list (the order edges are cut in); new ones go last
+    const shape = t !== 'sharp' && r > 0;
+    const replace = new Map(picked.filter((i) => idx[i] !== undefined).map((i) => [idx[i], i]));
+    const next = [];
+    (node.edgeRounds || []).forEach((e, k) => {
+      if (!replace.has(k)) next.push(e);
+      else if (shape) next.push({ sig: d.sigs[replace.get(k)], r, t });
+    });
+    const added = shape ? picked.filter((i) => idx[i] === undefined).map((i) => ({ sig: d.sigs[i], r, t })) : [];
+    next.push(...added);
     await this._busy(() => {
       if (next.length) node.edgeRounds = next; else delete node.edgeRounds;
       this.sync();

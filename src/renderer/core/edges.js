@@ -492,8 +492,9 @@ function chamferCorner(api, V, ends, d) {
 }
 
 /**
- * Round or chamfer the given edges of a closed solid. items: [{ chain, r, t }] in the geometry's
- * own frame, t = 'round' (r is the radius) or 'chamfer' (r is the set-back along each face).
+ * Round or chamfer the given edges of a closed solid. items: [{ chain, r, t, order }] in the
+ * geometry's own frame, t = 'round' (r is the radius) or 'chamfer' (r is the set-back along each
+ * face), order = when the edge was shaped (earlier edges are cut first).
  * `allChains` are all the edges of the solid, used to tell edges made by inside fills from
  * original ones. Returns { geometry, failed } (failed counts edges that could not be shaped),
  * or null when the solid itself could not be built.
@@ -521,60 +522,99 @@ export function filletEdges(geo, items, allChains = []) {
     }
     return pieces;
   };
-  try {
-    const inside = items.filter((it) => !it.chain.convex).map((it) => ({ ...it, count: 1 }));
-    let outside = items.filter((it) => it.chain.convex).map((it) => ({ ...it, count: 1 }));
-    let result = base;
-    const fills = build(inside);
-    if (fills.length) { result = result.add(unionOf(fills)); made.push(result); }
-
-    if (fills.length && outside.length) {
-      const now = findEdges(fromSolid(result)).filter((c) => c.convex);
-      const before = [...(allChains.length ? allChains : items.map((it) => it.chain))];
-      const style = new Map(); // original chain -> picked outside item
-      for (const it of outside) style.set(before.indexOf(it.chain) >= 0 ? before.indexOf(it.chain) : before.push(it.chain) - 1, it);
-      const mapped = [], fresh = [], found = new Set();
-      for (const c of now) for (const run of splitByOwner(c, before)) {
-        if (run.owner < 0) fresh.push(run.chain);
-        else if (style.has(run.owner)) {
-          const it = style.get(run.owner);
-          mapped.push({ chain: run.chain, r: it.r, t: it.t, count: found.has(it) ? 0 : 1 });
-          found.add(it);
-        }
-      }
-      failed += outside.filter((it) => !found.has(it)).length;
-      // edges the fills created, touching a picked outside edge: carry its treatment round
-      const tips = mapped.filter((m) => !m.chain.closed);
-      for (const c of fresh) {
-        if (c.closed) continue;
-        const ends = [c.points[0], c.points[c.points.length - 1]];
-        const touch = tips.find((m) => ends.some((e) => near(e, m.chain.points[0]) || near(e, m.chain.points[m.chain.points.length - 1])));
-        if (touch) mapped.push({ chain: c, r: touch.r, t: touch.t, count: 0 });
-      }
-      outside = mapped;
+  // Earlier stages changed the solid: find each picked edge again as what it has become, and
+  // carry its treatment onto new edges an earlier stage made where they continue it (the end
+  // of an inside fill, the top of a rounded corner), so it runs round instead of stopping short.
+  const remap = (solid, stage, before) => {
+    const now = findEdges(fromSolid(solid)).filter((c) => c.convex);
+    const style = new Map();
+    for (const it of stage) {
+      let k = before.indexOf(it.chain);
+      if (k < 0) k = before.push(it.chain) - 1;
+      style.set(k, it);
     }
-
-    const cuts = build(outside);
-    // corners where three outside edges of the same type and size meet: a ball patch for
-    // rounds, a flat triangle for chamfers
+    const mapped = [], fresh = [], found = new Set();
+    for (const c of now) for (const run of splitByOwner(c, before)) {
+      if (run.owner < 0) fresh.push(run.chain);
+      else if (style.has(run.owner)) {
+        const it = style.get(run.owner);
+        mapped.push({ chain: run.chain, r: it.r, t: it.t, count: found.has(it) ? 0 : 1 });
+        found.add(it);
+      }
+    }
+    failed += stage.filter((it) => !found.has(it)).length;
+    // a new edge continues a picked one if it starts where that one ends, along a shared face,
+    // turning less than 60 degrees
+    const tips = [];
+    for (const m of mapped) {
+      const P = m.chain.points, n = P.length;
+      if (m.chain.closed || n < 2) continue;
+      tips.push({ m, at: P[0], heading: P[0].clone().sub(P[1]).normalize(), faces: [m.chain.segA[0], m.chain.segB[0]] });
+      tips.push({ m, at: P[n - 1], heading: P[n - 1].clone().sub(P[n - 2]).normalize(), faces: [m.chain.segA[n - 2], m.chain.segB[n - 2]] });
+    }
+    const continues = (c, end) => {
+      const P = c.points, n = P.length;
+      const at = end === 0 ? P[0] : P[n - 1];
+      const leave = (end === 0 ? P[1].clone().sub(P[0]) : P[n - 2].clone().sub(P[n - 1])).normalize();
+      const k = end === 0 ? 0 : c.segA.length - 1;
+      return tips.find((tp) => near(tp.at, at) && tp.heading.dot(leave) > 0.5
+        && [c.segA[k], c.segB[k]].some((f) => tp.faces.some((g) => sameDir(f, g))));
+    };
+    for (const c of fresh) {
+      if (c.closed) continue;
+      const tp = continues(c, 0) || continues(c, 1);
+      if (tp) mapped.push({ chain: c, r: tp.m.r, t: tp.m.t, count: 0 });
+    }
+    return mapped;
+  };
+  // corners where three outside edges of the same type and size meet: a ball patch for
+  // rounds, a flat triangle for chamfers
+  const cornerPieces = (list) => {
     const corners = [];
-    for (const it of mergeItems(outside)) {
+    for (const it of mergeItems(list)) {
       const ch = it.chain;
       if (ch.closed) continue;
       const n = ch.points.length, last = ch.segA.length - 1;
       corners.push({ V: ch.points[0], nA: ch.segA[0], nB: ch.segB[0], dir: ch.points[1].clone().sub(ch.points[0]).normalize(), r: it.r, t: it.t });
       corners.push({ V: ch.points[n - 1], nA: ch.segA[last], nB: ch.segB[last], dir: ch.points[n - 2].clone().sub(ch.points[n - 1]).normalize(), r: it.r, t: it.t });
     }
-    const used = new Set();
+    const used = new Set(), pieces = [];
     for (const c of corners) {
       if (used.has(c)) continue;
       const group = corners.filter((o) => near(o.V, c.V));
       group.forEach((o) => used.add(o));
       if (group.length !== 3 || group.some((o) => Math.abs(o.r - c.r) > 1e-6 || o.t !== c.t)) continue;
       const piece = c.t === 'chamfer' ? chamferCorner(api, c.V, group, c.r) : cornerPiece(api, c.V, group, c.r);
-      if (piece) { made.push(piece); cuts.push(piece); }
+      if (piece) { made.push(piece); pieces.push(piece); }
     }
-    if (cuts.length) { result = result.subtract(unionOf(cuts)); made.push(result); }
+    return pieces;
+  };
+  try {
+    const inside = items.filter((it) => !it.chain.convex).map((it) => ({ ...it, count: 1 }));
+    const outside = items.filter((it) => it.chain.convex).map((it) => ({ ...it, count: 1 }));
+    const before = [...(allChains.length ? allChains : items.map((it) => it.chain))];
+    let result = base, changed = false;
+
+    // stage 1: inside fills
+    const fills = build(inside);
+    if (fills.length) { result = result.add(unionOf(fills)); made.push(result); changed = true; }
+
+    // then outside edges, one type and size at a time, in the order they were shaped (like CAD
+    // features): each stage is cut into the result of the ones before it
+    const stages = new Map();
+    for (const it of outside) {
+      const key = it.t + ':' + it.r.toFixed(4);
+      if (!stages.has(key)) stages.set(key, []);
+      stages.get(key).push(it);
+    }
+    const first = (list) => Math.min(...list.map((it) => it.order ?? 0));
+    const order = [...stages.values()].sort((a, b) => first(a) - first(b));
+    for (const stage of order) {
+      const list = changed ? remap(result, stage, before) : stage;
+      const cuts = build(list);
+      cuts.push(...cornerPieces(list));
+      if (cuts.length) { result = result.subtract(unionOf(cuts)); made.push(result); changed = true; }
+    }
     if (result.status() !== 'NoError' || result.isEmpty()) return null;
     return { geometry: fromSolid(result), failed };
   } catch (err) {
