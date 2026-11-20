@@ -298,7 +298,7 @@ function applyEdgeRounds(node) {
   stats.edgeRoundsFailed = 0;
   const keep = () => { const g = base.clone(); g.userData = {}; return g; };
   if (!items.length || !(maxR > 0.01)) return keep();
-  const res = filletEdges(d.scaled, items);
+  const res = filletEdges(d.scaled, items, d.chains);
   if (!res) { stats.edgeRoundsFailed = items.length; return keep(); }
   stats.edgeRoundsFailed = res.failed;
   const out = toCreasedNormals(res.geometry, CREASE);

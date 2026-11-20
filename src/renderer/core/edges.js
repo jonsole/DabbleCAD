@@ -126,7 +126,9 @@ function makeChain(segs, closed, verts, faces) {
   let length = 0;
   for (let i = 0; i < segs.length; i++) length += verts[segs[i].a].distanceTo(verts[segs[i].b]);
   const color = faces[segs[0].fA].color;
-  return { points, closed, convex: segs[0].convex, nA, nB, color, length, ends: closed ? null : [ids[0], ids[n - 1]] };
+  // face normals either side of each segment (segment k runs from point k to k + 1)
+  const segA = segs.map((sg) => faces[sg.fA].n.clone()), segB = segs.map((sg) => faces[sg.fB].n.clone());
+  return { points, closed, convex: segs[0].convex, nA, nB, segA, segB, color, length, ends: closed ? null : [ids[0], ids[n - 1]] };
 }
 
 // ------------------------------------------------------------------ signatures
@@ -231,43 +233,70 @@ function section(E, nA, nB, r, convex, segs, chamfer = false) {
   return { pts: out, C };
 }
 
-/** Closed mesh swept along an edge chain from per-point cross-sections. Returns a Manifold or null. */
+/**
+ * Closed mesh swept along an edge chain. Each segment carries the exact cross-section for its
+ * own two faces; where segments meet, the section is the mitre (the two neighbouring sweeps cut
+ * by the plane halfway between them), so joints and curved edges close up without gaps.
+ * Returns a Manifold or null.
+ */
 function sweepPiece(api, chain, r, chamfer = false) {
-  const n = chain.points.length;
-  // same facet count at every point so neighbouring sections line up
+  const P = chain.points, n = P.length, closed = chain.closed;
+  const nseg = closed ? n : n - 1;
+  if (nseg < 1) return null;
   let maxTheta = 0;
-  for (let i = 0; i < n; i++) maxTheta = Math.max(maxTheta, Math.acos(THREE.MathUtils.clamp(chain.nA[i].dot(chain.nB[i]), -1, 1)));
+  for (let k = 0; k < nseg; k++) maxTheta = Math.max(maxTheta, Math.acos(THREE.MathUtils.clamp(chain.segA[k].dot(chain.segB[k]), -1, 1)));
   const segs = Math.max(2, Math.ceil((maxTheta / (Math.PI / 2)) * ARC_SEGMENTS));
+  const dir = [], S = [];
+  for (let k = 0; k < nseg; k++) {
+    dir.push(P[(k + 1) % n].clone().sub(P[k]).normalize());
+    const sec = section(P[k], chain.segA[k], chain.segB[k], r, chain.convex, segs, chamfer);
+    if (!sec) return null;
+    S.push(sec.pts);
+  }
+  // slide a section along its own sweep direction onto a plane
+  const onto = (pts, d, origin, m) => {
+    const den = d.dot(m);
+    return pts.map((p) => p.clone().addScaledVector(d, origin.clone().sub(p).dot(m) / den));
+  };
+  const joint = (j) => {
+    const kin = (j - 1 + nseg) % nseg, kout = j % nseg;
+    const m = dir[kin].clone().add(dir[kout]);
+    if (m.lengthSq() < 1e-6) return null;
+    m.normalize();
+    if (dir[kin].dot(m) < 0.2) return null; // turns back on itself
+    const a = onto(S[kin], dir[kin], P[j], m), b = onto(S[kout], dir[kout], P[j], m);
+    return a.map((p, i) => p.add(b[i]).multiplyScalar(0.5));
+  };
   const secs = [];
-  for (let i = 0; i < n; i++) {
-    const s = section(chain.points[i], chain.nA[i], chain.nB[i], r, chain.convex, segs, chamfer);
-    if (!s) return null;
-    secs.push(s.pts);
+  if (closed) {
+    for (let j = 0; j < n; j++) secs.push(joint(j));
+  } else {
+    secs.push(S[0].map((p) => p.clone()));
+    for (let j = 1; j < n - 1; j++) secs.push(joint(j));
+    secs.push(onto(S[nseg - 1], dir[nseg - 1], P[n - 1], dir[nseg - 1]));
+    if (chain.convex) {
+      // run the cutter just past open ends so no skin is left at the end faces
+      secs[0].forEach((p) => p.addScaledVector(dir[0], -EPS));
+      secs[n - 1].forEach((p) => p.addScaledVector(dir[nseg - 1], EPS));
+    }
   }
+  if (secs.some((x) => !x)) return null;
   const m = secs[0].length;
-  if (!chain.closed && chain.convex) {
-    // run the cutter just past open ends so no skin is left at the end faces
-    const t0 = chain.points[0].clone().sub(chain.points[1]).normalize().multiplyScalar(EPS);
-    const t1 = chain.points[n - 1].clone().sub(chain.points[n - 2]).normalize().multiplyScalar(EPS);
-    secs[0].forEach((p) => p.add(t0));
-    secs[n - 1].forEach((p) => p.add(t1));
-  }
   const c = chain.color || [0.7, 0.7, 0.7];
   const props = new Float32Array(n * m * 6);
   secs.forEach((sec, i) => sec.forEach((p, j) => props.set([p.x, p.y, p.z, c[0], c[1], c[2]], (i * m + j) * 6)));
   const tri = [];
   const V = (i, j) => i * m + (j % m);
-  const rings = chain.closed ? n : n - 1;
+  const rings = closed ? n : n - 1;
   for (let i = 0; i < rings; i++) {
     const i2 = (i + 1) % n;
     for (let j = 0; j < m; j++) tri.push(V(i, j), V(i, j + 1), V(i2, j + 1), V(i, j), V(i2, j + 1), V(i2, j));
   }
-  if (!chain.closed) {
+  if (!closed) {
     for (let j = 1; j < m - 1; j++) tri.push(V(0, 0), V(0, j + 1), V(0, j));
     for (let j = 1; j < m - 1; j++) tri.push(V(n - 1, 0), V(n - 1, j), V(n - 1, j + 1));
   }
-  // orient outwards
-  let vol = 0;
+  let vol = 0; // orient outwards
   for (let k = 0; k < tri.length; k += 3) {
     const a = tri[k] * 6, b = tri[k + 1] * 6, d = tri[k + 2] * 6;
     vol += props[a] * (props[b + 1] * props[d + 2] - props[b + 2] * props[d + 1])
@@ -283,6 +312,111 @@ function sweepPiece(api, chain, r, chamfer = false) {
   } catch {
     return null;
   }
+}
+
+const near = (p, q, tol = 2e-3) => p.distanceToSquared(q) < tol * tol;
+const sameDir = (a, b) => a.dot(b) > 0.9995;
+
+/** Reverse a chain (points and segments) without changing which face is on which side. */
+function reversed(ch) {
+  const segA = [...ch.segA].reverse(), segB = [...ch.segB].reverse();
+  const points = [...ch.points].reverse();
+  if (ch.closed) { points.unshift(points.pop()); segA.push(segA.shift()); segB.push(segB.shift()); }
+  return { ...ch, points, segA, segB };
+}
+const swapped = (ch) => ({ ...ch, segA: ch.segB, segB: ch.segA });
+
+/**
+ * Join picked edges that meet end to end into longer chains so they are swept as one piece with
+ * mitred joints (no notch where two rounded edges meet). Edges join only where exactly two of
+ * them meet, with the same type and size, and both border the same face. A corner where three
+ * meet is left for the ball patch. items: [{ chain, r, t, count }] -> same shape, merged.
+ */
+function mergeItems(items) {
+  const open = items.filter((it) => !it.chain.closed);
+  const out = items.filter((it) => it.chain.closed);
+  const endsAt = (it, e) => (e === 0 ? it.chain.points[0] : it.chain.points[it.chain.points.length - 1]);
+  const facesAt = (it, e) => { const k = e === 0 ? 0 : it.chain.segA.length - 1; return [it.chain.segA[k], it.chain.segB[k]]; };
+  const link = new Map(); // item -> [link at end 0, link at end 1]
+  for (const it of open) link.set(it, [null, null]);
+  for (const it of open) for (const e of [0, 1]) {
+    const p = endsAt(it, e);
+    const here = [];
+    for (const o of open) for (const f of [0, 1]) if (near(endsAt(o, f), p)) here.push({ o, f });
+    if (here.length !== 2) continue;
+    const other = here.find((h) => !(h.o === it && h.f === e));
+    if (!other || other.o === it) continue;
+    const o = other.o;
+    if (o.chain.convex !== it.chain.convex || o.t !== it.t || Math.abs(o.r - it.r) > 1e-6) continue;
+    const shared = facesAt(it, e).some((a) => facesAt(o, other.f).some((b) => sameDir(a, b)));
+    if (shared) link.get(it)[e] = other;
+  }
+  const done = new Set();
+  const walk = (first, entry) => {
+    let chain = null, count = 0, it = first, inEnd = entry;
+    while (it && !done.has(it)) {
+      done.add(it);
+      let ch = inEnd === 0 ? it.chain : reversed(it.chain);
+      if (chain) {
+        // keep the shared face on the same side all along
+        const k = chain.segA.length - 1;
+        if (!sameDir(chain.segA[k], ch.segA[0]) && !sameDir(chain.segB[k], ch.segB[0])) {
+          if (sameDir(chain.segA[k], ch.segB[0]) || sameDir(chain.segB[k], ch.segA[0])) ch = swapped(ch);
+        }
+        chain = { ...chain, points: [...chain.points, ...ch.points.slice(1)], segA: [...chain.segA, ...ch.segA], segB: [...chain.segB, ...ch.segB], length: chain.length + ch.length };
+      } else chain = { ...ch };
+      count += it.count ?? 1;
+      const next = link.get(it)[1 - inEnd];
+      if (!next) break;
+      it = next.o; inEnd = next.f;
+    }
+    if (chain.points.length > 2 && near(chain.points[0], chain.points[chain.points.length - 1])) {
+      chain.points.pop(); chain.closed = true; // came back round to the start: a loop
+    }
+    return { chain, r: first.r, t: first.t, count };
+  };
+  for (const it of open) { // start from chain ends first
+    if (done.has(it)) continue;
+    const [l0, l1] = link.get(it);
+    if (!l0 || !l1) out.push(walk(it, l0 ? 1 : 0));
+  }
+  for (const it of open) if (!done.has(it)) out.push(walk(it, 0)); // what's left are loops
+  return out;
+}
+
+/**
+ * Split a chain into runs by which of the `owners` chains each segment lies on (-1: none, i.e.
+ * an edge that did not exist before). A round fill blends smoothly into its faces, so after
+ * filling, an outside edge, the fill's end and the next outside edge can come out as one chain.
+ */
+function splitByOwner(ch, owners, tol = 2e-3) {
+  const P = ch.points, n = P.length, nseg = ch.closed ? n : n - 1;
+  const seg = new THREE.Line3(), q = new THREE.Vector3();
+  const ownerOf = (k) => {
+    const mid = P[k].clone().lerp(P[(k + 1) % n], 0.5);
+    return owners.findIndex((b) => {
+      const Q = b.points, m = Q.length, bs = b.closed ? m : m - 1;
+      for (let j = 0; j < bs; j++) {
+        seg.set(Q[j], Q[(j + 1) % m]);
+        if (seg.closestPointToPoint(mid, true, q).distanceToSquared(mid) < tol * tol) return true;
+      }
+      return false;
+    });
+  };
+  const own = [];
+  for (let k = 0; k < nseg; k++) own.push(ownerOf(k));
+  if (own.every((o) => o === own[0])) return [{ chain: ch, owner: own[0] }];
+  let start = 0;
+  if (ch.closed) { while (own[start] === own[(start - 1 + nseg) % nseg]) start += 1; }
+  const runs = [];
+  for (let i = 0; i < nseg;) {
+    const k0 = (start + i) % nseg, o = own[k0];
+    const ks = [];
+    while (i < nseg && own[(start + i) % nseg] === o) { ks.push((start + i) % nseg); i += 1; }
+    const points = [...ks.map((k) => P[k]), P[(ks[ks.length - 1] + 1) % n]];
+    runs.push({ owner: o, chain: { ...ch, closed: false, points, segA: ks.map((k) => ch.segA[k]), segB: ks.map((k) => ch.segB[k]) } });
+  }
+  return runs;
 }
 
 /**
@@ -316,65 +450,99 @@ function cornerPiece(api, V, ends, r) {
   } catch {
     return null;
   } finally {
-    for (const s of made) try { s.delete(); } catch { /* freed */ }
+    for (const x of made) try { x.delete(); } catch { /* freed */ }
   }
 }
 
 /**
  * Round or chamfer the given edges of a closed solid. items: [{ chain, r, t }] in the geometry's
  * own frame, t = 'round' (r is the radius) or 'chamfer' (r is the set-back along each face).
- * Returns { geometry, failed } where failed counts edges that could not be rounded, or null
- * when the solid itself could not be built.
+ * `allChains` are all the edges of the solid, used to tell edges made by inside fills from
+ * original ones. Returns { geometry, failed } (failed counts edges that could not be shaped),
+ * or null when the solid itself could not be built.
+ *
+ * Order matters at corners where inside and outside edges meet: inside edges are filled
+ * first, then the edges are found again on the filled solid, and each picked outside edge is
+ * cut along what it has become. New edges a fill creates where it meets a picked outside edge
+ * get the same treatment, so the round or chamfer carries on around the fill's end.
  */
-export function filletEdges(geo, items) {
+export function filletEdges(geo, items, allChains = []) {
   const api = kernel();
   if (!api) return null;
   const base = toSolid(geo);
   if (!base) return null;
   const made = [base];
   let failed = 0;
+  const unionOf = (list) => { const u = list.length === 1 ? list[0] : api.Manifold.union(list); if (u !== list[0]) made.push(u); return u; };
+  const build = (list) => {
+    const pieces = [];
+    for (const it of mergeItems(list)) {
+      const piece = sweepPiece(api, it.chain, it.r, it.t === 'chamfer');
+      if (!piece) { failed += it.count ?? 1; continue; }
+      made.push(piece); pieces.push(piece);
+      it.done = true;
+    }
+    return pieces;
+  };
   try {
-    const cut = [], add = [];
-    const corners = new Map(); // vertex key -> [{ nA, nB, dir, r }]
-    const vkey = (p) => p.toArray().map((x) => Math.round(x * 1e3)).join(',');
-    for (const { chain, r, t } of items) {
-      const chamfer = t === 'chamfer';
-      const piece = sweepPiece(api, chain, r, chamfer);
-      if (!piece) { failed += 1; continue; }
-      made.push(piece);
-      (chain.convex ? cut : add).push(piece);
-      if (chain.convex && !chain.closed && !chamfer) {
-        const n = chain.points.length;
-        for (const [i, j] of [[0, 1], [n - 1, n - 2]]) {
-          const key = vkey(chain.points[i]);
-          let l = corners.get(key);
-          if (!l) corners.set(key, (l = []));
-          l.push({ V: chain.points[i], nA: chain.nA[i], nB: chain.nB[i], dir: chain.points[j].clone().sub(chain.points[i]).normalize(), r });
+    const inside = items.filter((it) => !it.chain.convex).map((it) => ({ ...it, count: 1 }));
+    let outside = items.filter((it) => it.chain.convex).map((it) => ({ ...it, count: 1 }));
+    let result = base;
+    const fills = build(inside);
+    if (fills.length) { result = result.add(unionOf(fills)); made.push(result); }
+
+    if (fills.length && outside.length) {
+      const now = findEdges(fromSolid(result)).filter((c) => c.convex);
+      const before = [...(allChains.length ? allChains : items.map((it) => it.chain))];
+      const style = new Map(); // original chain -> picked outside item
+      for (const it of outside) style.set(before.indexOf(it.chain) >= 0 ? before.indexOf(it.chain) : before.push(it.chain) - 1, it);
+      const mapped = [], fresh = [], found = new Set();
+      for (const c of now) for (const run of splitByOwner(c, before)) {
+        if (run.owner < 0) fresh.push(run.chain);
+        else if (style.has(run.owner)) {
+          const it = style.get(run.owner);
+          mapped.push({ chain: run.chain, r: it.r, t: it.t, count: found.has(it) ? 0 : 1 });
+          found.add(it);
         }
       }
+      failed += outside.filter((it) => !found.has(it)).length;
+      // edges the fills created, touching a picked outside edge: carry its treatment round
+      const tips = mapped.filter((m) => !m.chain.closed);
+      for (const c of fresh) {
+        if (c.closed) continue;
+        const ends = [c.points[0], c.points[c.points.length - 1]];
+        const touch = tips.find((m) => ends.some((e) => near(e, m.chain.points[0]) || near(e, m.chain.points[m.chain.points.length - 1])));
+        if (touch) mapped.push({ chain: c, r: touch.r, t: touch.t, count: 0 });
+      }
+      outside = mapped;
     }
-    for (const ends of corners.values()) {
-      if (ends.length !== 3 || ends.some((e) => Math.abs(e.r - ends[0].r) > 1e-6)) continue;
-      const piece = cornerPiece(api, ends[0].V, ends, ends[0].r);
-      if (piece) { made.push(piece); cut.push(piece); }
+
+    const cuts = build(outside);
+    // ball patches where three rounded outside edges meet
+    const corners = [];
+    for (const it of mergeItems(outside)) {
+      const ch = it.chain;
+      if (it.t === 'chamfer' || ch.closed) continue;
+      const n = ch.points.length, last = ch.segA.length - 1;
+      corners.push({ V: ch.points[0], nA: ch.segA[0], nB: ch.segB[0], dir: ch.points[1].clone().sub(ch.points[0]).normalize(), r: it.r });
+      corners.push({ V: ch.points[n - 1], nA: ch.segA[last], nB: ch.segB[last], dir: ch.points[n - 2].clone().sub(ch.points[n - 1]).normalize(), r: it.r });
     }
-    let result = base;
-    if (add.length) {
-      const u = add.length === 1 ? add[0] : api.Manifold.union(add);
-      if (u !== add[0]) made.push(u);
-      result = result.add(u); made.push(result);
+    const used = new Set();
+    for (const c of corners) {
+      if (used.has(c)) continue;
+      const group = corners.filter((o) => near(o.V, c.V));
+      group.forEach((o) => used.add(o));
+      if (group.length !== 3 || group.some((o) => Math.abs(o.r - c.r) > 1e-6)) continue;
+      const piece = cornerPiece(api, c.V, group, c.r);
+      if (piece) { made.push(piece); cuts.push(piece); }
     }
-    if (cut.length) {
-      const u = cut.length === 1 ? cut[0] : api.Manifold.union(cut);
-      if (u !== cut[0]) made.push(u);
-      result = result.subtract(u); made.push(result);
-    }
+    if (cuts.length) { result = result.subtract(unionOf(cuts)); made.push(result); }
     if (result.status() !== 'NoError' || result.isEmpty()) return null;
     return { geometry: fromSolid(result), failed };
   } catch (err) {
     console.warn('Edge rounding failed', err);
     return null;
   } finally {
-    for (const s of made) try { s.delete(); } catch { /* freed */ }
+    for (const x of made) try { x.delete(); } catch { /* freed */ }
   }
 }
