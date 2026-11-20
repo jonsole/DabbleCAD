@@ -462,8 +462,4 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .update-bar { height: 8px; border-radius: 4px; background: var(--border); overflow: hidden; margin: 12px 0; }
 .update-bar i { display: block; height: 100%; width: 0; background: var(--accent, #4c8dff); transition: width .15s linear; }
 
-.edge-type { display: flex; width: 100%; }
-.edge-type .btn { flex: 1; justify-content: center; }
 .edge-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
-.edge-type-row { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 8px; font-size: 12px; color: var(--muted); }
-.edge-type-row .segmented .btn { height: 28px; padding: 0 6px; }

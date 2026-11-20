@@ -132,51 +132,54 @@ export class Inspector {
   _renderEdgePanel() {
     const ed = this.editor;
     const info = ed.edgeInfo();
+    const node = info.node;
     const done = button({ icon: 'close', title: 'Done (Esc)', onClick: () => ed.exitEdgeMode() });
-    this.host.append(h('div', { class: 'insp-head' }, h('div', { class: 'insp-title' }, 'Edges'), done));
-    const body = [];
-    if (!info.node || !info.picked.length) {
-      if (ed.hasShapedEdges(info.node) && !info.node.locked) body.push(h('div', { class: 'insp-row-btns' }, button({ label: 'Apply Edges', cls: 'btn-primary', title: 'Make the rounded and chamfered edges a permanent part of the shape (Ctrl+Z to undo)', onClick: () => ed.applyEdges(info.node) })));
-      if (body.length) this.host.append(h('div', { class: 'insp-section' }, ...body));
+    this.host.append(h('div', { class: 'insp-head' }, h('div', { class: 'insp-title' }, node ? node.name || kindName(node) : 'Edges'), done));
+    if (!node) return;
+    const applyBtn = () => button({ label: 'Apply Edges', cls: 'btn-outline', title: 'Make the rounded and chamfered edges a permanent part of the shape (Ctrl+Z to undo)', onClick: () => ed.applyEdges(node) });
+    const canApply = ed.hasShapedEdges(node) && !node.locked;
+    if (this.open.edgetool === undefined) this.open.edgetool = true;
+    const rows = [];
+    if (!info.picked.length) {
+      if (canApply) rows.push(h('div', { class: 'insp-row-btns' }, applyBtn()));
+      if (rows.length) this.host.append(this._section('edgetool', 'Edges', rows));
       return;
     }
-    const st = info.styles;
-    const types = new Set(st.map((x) => x.t));
-    const type = types.size === 1 ? st[0].t : null;
-    const sizes = st.filter((x) => x.t !== 'sharp').map((x) => x.r);
-    const sameSize = sizes.length && sizes.every((r) => Math.abs(r - sizes[0]) < 1e-6);
-    if (sameSize) this.edgeSize = sizes[0];
-    const size = this.edgeSize ?? 2;
+    // same controls as the Edges section of the shape inspector: radius 0 means a sharp edge
+    const shaped = info.styles.filter((x) => x.t !== 'sharp');
+    const types = new Set(shaped.map((x) => x.t));
+    if (types.size === 1) this.edgeStyle = shaped[0].t;
+    const style = this.edgeStyle || 'round';
+    const value = shaped.length ? shaped[0].r : 0;
+    const range = h('input', { type: 'range', min: 0, max: 10, step: 0.1, value: Math.min(10, value) });
+    const num = h('input', { class: 'input', type: 'number', min: 0, max: 50, step: 0.1, value });
+    const apply = (v) => {
+      v = Math.max(0, v);
+      if (!isFinite(v)) return;
+      range.value = Math.min(10, v); num.value = v;
+      ed.setPickedEdgeStyle(v > 0 ? (this.edgeStyle || 'round') : 'sharp', v);
+    };
+    range.addEventListener('input', () => { num.value = range.value; });
+    range.addEventListener('change', () => { range.blur(); apply(parseFloat(range.value)); });
+    num.addEventListener('change', () => apply(parseFloat(num.value)));
+    num.addEventListener('keydown', (e) => e.stopPropagation());
+    const sel = h('select', { class: 'input' }, h('option', { value: 'round' }, 'Round'), h('option', { value: 'chamfer' }, 'Chamfer'));
+    sel.value = style;
+    sel.addEventListener('change', () => {
+      this.edgeStyle = sel.value;
+      const r = parseFloat(num.value);
+      if (r > 0) ed.setPickedEdgeStyle(sel.value, r);
+    });
     const n = info.picked.length;
-    body.push(h('div', { class: 'insp-note' }, `${n} edge${n > 1 ? 's' : ''} selected`));
-
-    const seg = h('div', { class: 'segmented edge-type' });
-    for (const [t, label] of [['sharp', 'Sharp'], ['round', 'Round'], ['chamfer', 'Chamfer']]) {
-      const b = h('button', { class: 'btn' + (type === t ? ' active' : ''), type: 'button' }, label);
-      b.addEventListener('click', () => { b.blur(); ed.setPickedEdgeStyle(t, this.edgeSize ?? 2); });
-      seg.append(b);
-    }
-    body.push(h('div', { class: 'edge-type-row' }, h('label', {}, 'Type'), seg));
-
-    if (type !== 'sharp') {
-      const range = h('input', { type: 'range', min: 0.1, max: 10, step: 0.1, value: Math.min(10, size) });
-      const num = h('input', { class: 'input', type: 'number', min: 0.1, max: 50, step: 0.1, value: size });
-      const apply = (v) => {
-        if (!(v > 0)) return;
-        this.edgeSize = v;
-        ed.setPickedEdgeStyle(type || 'round', v);
-      };
-      range.addEventListener('input', () => { num.value = range.value; });
-      range.addEventListener('change', () => { range.blur(); apply(parseFloat(range.value)); });
-      num.addEventListener('change', () => apply(parseFloat(num.value)));
-      num.addEventListener('keydown', (e) => e.stopPropagation());
-      body.push(h('div', { class: 'param' }, h('label', {}, type === 'chamfer' ? 'Size' : 'Radius'), range, num));
-    }
-    body.push(h('div', { class: 'insp-row-btns' },
-      button({ label: 'Unselect', cls: 'btn-outline', title: 'Unselect (Esc)', onClick: () => ed.clearEdgePicks() })));
-    if (ed.hasShapedEdges(info.node) && !info.node.locked) body.push(h('div', { class: 'insp-row-btns' }, button({ label: 'Apply Edges', cls: 'btn-primary', title: 'Make the rounded and chamfered edges a permanent part of the shape (Ctrl+Z to undo)', onClick: () => ed.applyEdges(info.node) })));
-    if (info.node.locked) body.push(h('div', { class: 'insp-note' }, 'Locked')); 
-    this.host.append(h('div', { class: 'insp-section' }, ...body));
+    rows.push(
+      h('div', { class: 'insp-note' }, `${n} edge${n > 1 ? 's' : ''} selected`),
+      h('div', { class: 'param' }, h('label', {}, 'Radius'), range, num),
+      h('div', { class: 'param' }, h('label', {}, 'Style'), sel),
+      h('div', { class: 'insp-row-btns' },
+        button({ label: 'Unselect', cls: 'btn-outline', title: 'Unselect (Esc)', onClick: () => ed.clearEdgePicks() }),
+        ...(canApply ? [applyBtn()] : [])));
+    if (node.locked) rows.push(h('div', { class: 'insp-note' }, 'Locked'));
+    this.host.append(this._section('edgetool', 'Edges', rows));
   }
 
   _section(key, title, rows) {
