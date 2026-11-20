@@ -749,7 +749,7 @@ export class App {
     if (key === 'Escape') {
       done();
       if (ed.placing) ed.cancelPlace();
-      else if (ed.edgeMode) ed.exitEdgeMode();
+      else if (ed.edgeMode) { if (ed.edgeMode.picked.size) ed.clearEdgePicks(); else ed.exitEdgeMode(); }
       else if (ed.tool !== 'select') ed.setTool('select');
       else if (ed.selection.size) ed.clearSelection();
       else if (ed.editing) ed.exitGroup();
@@ -777,7 +777,7 @@ export class App {
     if (e.altKey) return;
     const map = {
       w: () => { if (shift) { ed.workplaneAtSelection(); this._updateBanner(); } else ed.setTool('workplane'); },
-      r: () => ed.setTool('ruler'), n: () => ed.setTool('note'), l: () => ed.setTool('align'), m: () => ed.setTool('mirror'),
+      e: () => ed.setTool('edges'), r: () => ed.setTool('ruler'), n: () => ed.setTool('note'), l: () => ed.setTool('align'), m: () => ed.setTool('mirror'),
       c: () => ed.toggleCruise(), d: () => ed.dropToWorkplane(), s: () => ed.setHole(false), h: () => ed.setHole(true), t: () => ed.toggleTransparent(),
     };
     if (map[key]) { done(); map[key](); }

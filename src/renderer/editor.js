@@ -108,8 +108,9 @@ export class Editor extends Emitter {
     const ids = new Set(this.doc.nodes.map((n) => n.id));
     this.selection = new Set(state.selection.filter((id) => ids.has(id)));
     if (this.edgeMode) {
-      if (ids.has(this.edgeMode.id) && this.selection.has(this.edgeMode.id)) { this.edgeMode.picked.clear(); this.edgeMode.hover = -1; }
-      else this.exitEdgeMode(false);
+      const em = this.edgeMode;
+      if (!ids.has(em.id)) em.id = null;
+      em.picked.clear(); em.hover = null; em.key = null;
     }
     this.dupState = null;
     this.alignAnchor = null;
@@ -144,8 +145,10 @@ export class Editor extends Emitter {
       this.meshes.delete(id);
     }
     if (this.edgeMode) {
-      if (!this.meshes.has(this.edgeMode.id)) this.exitEdgeMode(false);
-      else this._syncEdgeOverlay();
+      const em = this.edgeMode;
+      if (em.id && !this.meshes.has(em.id)) { em.id = null; em.picked.clear(); }
+      if (em.hoverId && !this.meshes.has(em.hoverId)) { em.hoverId = null; em.hover = null; }
+      this._syncEdgeOverlays();
     }
     this.viewport.requestRender();
   }
@@ -312,8 +315,9 @@ export class Editor extends Emitter {
 
   setTool(tool) {
     if (this.placing && tool !== 'place') this.cancelPlace();
-    if (tool !== 'select') this.exitEdgeMode(false);
     this.tool = this.tool === tool && tool !== 'select' && tool !== 'place' ? 'select' : tool;
+    if (this.tool === 'edges' && !this.edgeMode) this._startEdgeTool();
+    if (this.tool !== 'edges' && this.edgeMode) this._endEdgeTool();
     if (this.tool !== 'align') this.alignAnchor = null;
     this.viewport.canvas.style.cursor = ['workplane', 'ruler', 'note'].includes(this.tool) ? 'crosshair' : '';
     this.emit('tool');
@@ -349,101 +353,140 @@ export class Editor extends Emitter {
     return { node: this.node(hit.object.userData.id), point: hit.point.clone(), normal, mesh: hit.object };
   }
 
-  // ---------------------------------------------------------------- edge rounding
-  // Edge mode: the sharp edges of the one selected shape or group are drawn over it and can be
-  // clicked to pick them, then rounded with their own radius. Edges are stored by where they
-  // are on the shape (node.edgeRounds), so they survive resizing and edits nearby.
+  // ---------------------------------------------------------------- edge tool
+  // The Edges tool: point at any shape or group to see its sharp edges, click to pick them
+  // (shift-click for several), then give the picked edges a type (sharp, round, chamfer) and
+  // size in the inspector. Edges are stored by where they are on the shape (node.edgeRounds),
+  // so they survive resizing and nearby edits. Picks always belong to one node (edgeMode.id).
 
-  enterEdgeMode() {
-    const nodes = this.movableNodes();
-    if (nodes.length !== 1 || nodes[0].hidden) return false;
-    const d = nodeEdgeData(nodes[0]);
-    if (d.tooDetailed) { toast('This shape has too much detail to pick edges', 'warn', 4000); return false; }
-    if (!d.chains.length) { toast('This shape has no sharp edges to round', 'warn', 4000); return false; }
-    this.edgeMode = { id: nodes[0].id, picked: new Set(), hover: -1 };
+  _startEdgeTool() {
+    const sel = this.movableNodes();
+    this.edgeMode = { id: sel.length === 1 ? sel[0].id : null, picked: new Set(), hoverId: null, hover: null, key: null };
     this.refreshOutlines();
-    this._syncEdgeOverlay();
-    this.emit('selection');
-    return true;
+    this._syncEdgeOverlays();
   }
+
+  _endEdgeTool() {
+    if (!this.edgeMode) return;
+    this.edgeMode = null;
+    for (const mesh of this.meshes.values()) this._dropEdgeOverlay(mesh);
+    this.viewport.canvas.style.cursor = '';
+    this.refreshOutlines();
+  }
+
+  /** Start the Edges tool, with the one selected shape (if any) ready to pick from. */
+  enterEdgeMode() { if (this.tool !== 'edges') this.setTool('edges'); }
 
   exitEdgeMode(emit = true) {
     if (!this.edgeMode) return;
-    const mesh = this.meshes.get(this.edgeMode.id);
-    this.edgeMode = null;
-    if (mesh && mesh.userData.edgeOverlay) {
-      for (const l of mesh.userData.edgeOverlay) { mesh.remove(l); l.geometry.dispose(); l.material.dispose(); }
-      mesh.userData.edgeOverlay = null;
-    }
-    this.viewport.canvas.style.cursor = '';
-    this.refreshOutlines();
+    this._endEdgeTool();
+    this.tool = 'select';
+    this.emit('tool');
     if (emit) this.emit('selection');
   }
 
-  /** Edge mode state for the inspector: the node, its edges, which are picked and their radii. */
+  /** State for the edge properties panel: the node, picked edges and their current style. */
   edgeInfo() {
     const em = this.edgeMode;
-    const node = em && this.node(em.id);
-    if (!node) return null;
+    if (!em) return null;
+    const node = em.id && this.node(em.id);
+    if (!node) return { node: null, count: 0, picked: [], styles: [] };
     const d = nodeEdgeData(node);
     const idx = edgeRoundIndex(node);
-    const radii = idx.map((k) => (k === undefined ? undefined : node.edgeRounds[k].r));
-    return { node, count: d.chains.length, picked: [...em.picked], radii, rounded: radii.filter((r) => r > 0).length };
+    const style = (i) => {
+      const k = idx[i];
+      if (k === undefined) return { t: 'sharp', r: 0 };
+      const e = node.edgeRounds[k];
+      return { t: e.t === 'chamfer' ? 'chamfer' : 'round', r: e.r };
+    };
+    const picked = [...em.picked].filter((i) => i < d.chains.length);
+    return {
+      node, count: d.chains.length, picked,
+      styles: picked.map(style),
+      inside: picked.filter((i) => !d.chains[i].convex).length,
+    };
   }
 
   pickAllEdges(on = true) {
-    if (!this.edgeMode) return;
-    const d = nodeEdgeData(this.node(this.edgeMode.id));
-    this.edgeMode.picked = new Set(on ? d.chains.map((_, i) => i) : []);
-    this._syncEdgeOverlay();
+    const em = this.edgeMode;
+    if (!em || !em.id) return;
+    const d = nodeEdgeData(this.node(em.id));
+    em.picked = new Set(on ? d.chains.map((_, i) => i) : []);
+    this._syncEdgeOverlays();
     this.emit('selection');
   }
 
-  /** Round the picked edges with radius r (0 removes their rounding). */
-  async roundPickedEdges(r) {
+  clearEdgePicks() {
+    if (!this.edgeMode) return;
+    this.edgeMode.picked.clear();
+    this._syncEdgeOverlays();
+    this.emit('selection');
+  }
+
+  /** Give the picked edges a style: t = 'sharp' | 'round' | 'chamfer', r = radius or chamfer size. */
+  async setPickedEdgeStyle(t, r) {
     const em = this.edgeMode;
-    const node = em && this.node(em.id);
-    if (!node || !em.picked.size) return;
+    const node = em && em.id && this.node(em.id);
+    if (!node || !em.picked.size || node.locked) return;
     const d = nodeEdgeData(node);
     const idx = edgeRoundIndex(node);
-    const replaced = new Set([...em.picked].map((i) => idx[i]).filter((k) => k !== undefined));
+    const picked = [...em.picked].filter((i) => i < d.chains.length);
+    const replaced = new Set(picked.map((i) => idx[i]).filter((k) => k !== undefined));
     const keep = (node.edgeRounds || []).filter((_, k) => !replaced.has(k));
-    const added = r > 0 ? [...em.picked].map((i) => ({ sig: d.sigs[i], r })) : [];
+    const added = t !== 'sharp' && r > 0 ? picked.map((i) => ({ sig: d.sigs[i], r, t })) : [];
     const next = [...keep, ...added];
     await this._busy(() => {
       if (next.length) node.edgeRounds = next; else delete node.edgeRounds;
       this.sync();
       this.commit();
     });
-    if (r > 0) {
-      const failed = geoStats.edgeRoundsFailed || 0;
-      if (failed) toast(failed === added.length ? 'Those edges could not be rounded (try a smaller radius)' : `${failed} edge${failed > 1 ? 's' : ''} could not be rounded`, 'warn', 4000);
-    }
+    const failed = added.length ? geoStats.edgeRoundsFailed || 0 : 0;
+    if (failed) toast(failed >= added.length ? 'Those edges could not be shaped (try a smaller size)' : `${failed} edge${failed > 1 ? 's' : ''} could not be shaped`, 'warn', 4000);
     this.emit('selection');
   }
 
-  _syncEdgeOverlay() {
+  _dropEdgeOverlay(mesh) {
+    const lines = mesh.userData.edgeOverlay;
+    if (!lines) return;
+    for (const l of lines) { mesh.remove(l); l.material.dispose(); }
+    lines[0].geometry.dispose();
+    mesh.userData.edgeOverlay = null;
+  }
+
+  /** Draw the edges of the picking node and of the node under the pointer. */
+  _syncEdgeOverlays() {
     const em = this.edgeMode;
-    const node = em && this.node(em.id);
-    const mesh = em && this.meshes.get(em.id);
+    if (!em) return;
+    const show = new Set([em.id, em.hoverId].filter((id) => id && this.meshes.has(id)));
+    for (const [id, mesh] of this.meshes) if (!show.has(id)) this._dropEdgeOverlay(mesh);
+    for (const id of show) this._buildEdgeOverlay(id);
+    this.viewport.requestRender();
+  }
+
+  _buildEdgeOverlay(id) {
+    const em = this.edgeMode;
+    const node = this.node(id), mesh = this.meshes.get(id);
     if (!node || !mesh) return;
     const d = nodeEdgeData(node);
-    if (em.key !== d.key) { if (em.key) em.picked.clear(); em.key = d.key; } // edges were re-found: old picks no longer apply
+    if (id === em.id && em.key !== d.key) { if (em.key) em.picked.clear(); em.key = d.key; } // edges were re-found
     const idx = edgeRoundIndex(node);
+    const active = id === em.id;
     const pos = [], col = [];
-    const C = { base: new THREE.Color(0x9aa7b8), round: new THREE.Color(0xff9800), pick: new THREE.Color(0x29c5ff), hover: new THREE.Color(0xffffff) };
+    const C = { base: new THREE.Color(0x9aa7b8), round: new THREE.Color(0xff9800), chamfer: new THREE.Color(0xd36bff), pick: new THREE.Color(0x29c5ff), hover: new THREE.Color(0xffffff) };
     d.lines.forEach((pts, i) => {
-      const c = i === em.hover ? C.hover : em.picked.has(i) ? C.pick : idx[i] !== undefined ? C.round : C.base;
+      const hovered = em.hover && em.hover.id === id && em.hover.i === i;
+      const k = idx[i];
+      const c = hovered ? C.hover : active && em.picked.has(i) ? C.pick
+        : k !== undefined ? (node.edgeRounds[k].t === 'chamfer' ? C.chamfer : C.round) : C.base;
       const n = pts.length, segs = d.chains[i].closed ? n : n - 1;
-      for (let k = 0; k < segs; k++) {
-        const a = pts[k], b = pts[(k + 1) % n];
+      for (let s = 0; s < segs; s++) {
+        const a = pts[s], b = pts[(s + 1) % n];
         pos.push(a.x, a.y, a.z, b.x, b.y, b.z);
         col.push(c.r, c.g, c.b, c.r, c.g, c.b);
       }
     });
     const geo = new LineSegmentsGeometry();
-    geo.setPositions(pos);
-    geo.setColors(col);
+    if (pos.length) { geo.setPositions(pos); geo.setColors(col); }
     let lines = mesh.userData.edgeOverlay;
     if (!lines) {
       // thick lines, plus a faint copy drawn through the model so edges on the far side can still be found
@@ -459,68 +502,85 @@ export class Editor extends Emitter {
     }
     for (const l of lines) l.material.resolution.set(this.viewport.width, this.viewport.height);
     mesh.updateMatrixWorld(true);
-    this.viewport.requestRender();
   }
 
-  /** Index of the edge under the pointer (nearest on screen, not hidden by the model), or -1. */
-  _pickEdge(e) {
+  /** The edge under the pointer ({ id, i }), nearest on screen and not hidden by the model, or null. */
+  _pickEdge(e, underId) {
     const em = this.edgeMode;
-    const node = this.node(em.id), mesh = this.meshes.get(em.id);
-    if (!node || !mesh) return -1;
     const vp = this.viewport;
-    const d = nodeEdgeData(node);
-    const idx = edgeRoundIndex(node);
     const rect = vp.canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-    const W = mesh.matrixWorld;
     const a = new THREE.Vector3(), b = new THREE.Vector3(), pa = {}, pb = {};
     const cands = [];
-    d.lines.forEach((pts, i) => {
-      let best = Infinity, at = null;
-      const n = pts.length, segs = d.chains[i].closed ? n : n - 1;
-      for (let k = 0; k < segs; k++) {
-        a.copy(pts[k]).applyMatrix4(W); b.copy(pts[(k + 1) % n]).applyMatrix4(W);
-        vp.project(a, pa); vp.project(b, pb);
-        if (pa.behind || pb.behind) continue;
-        const dx = pb.x - pa.x, dy = pb.y - pa.y, L = dx * dx + dy * dy;
-        const t = L > 0 ? Math.min(1, Math.max(0, ((mx - pa.x) * dx + (my - pa.y) * dy) / L)) : 0;
-        const dist = Math.hypot(pa.x + t * dx - mx, pa.y + t * dy - my);
-        if (dist < best) { best = dist; at = a.clone().lerp(b, t); }
-      }
-      if (best < 10) cands.push({ i, dist: best, at });
-    });
-    if (!cands.length) return -1;
+    for (const id of new Set([underId, em.id])) {
+      const node = id && this.node(id), mesh = id && this.meshes.get(id);
+      if (!node || !mesh || !mesh.visible) continue;
+      const d = nodeEdgeData(node);
+      const W = mesh.matrixWorld;
+      d.lines.forEach((pts, i) => {
+        let best = Infinity, at = null;
+        const n = pts.length, segs = d.chains[i].closed ? n : n - 1;
+        for (let k = 0; k < segs; k++) {
+          a.copy(pts[k]).applyMatrix4(W); b.copy(pts[(k + 1) % n]).applyMatrix4(W);
+          vp.project(a, pa); vp.project(b, pb);
+          if (pa.behind || pb.behind) continue;
+          const dx = pb.x - pa.x, dy = pb.y - pa.y, L = dx * dx + dy * dy;
+          const t = L > 0 ? Math.min(1, Math.max(0, ((mx - pa.x) * dx + (my - pa.y) * dy) / L)) : 0;
+          const dist = Math.hypot(pa.x + t * dx - mx, pa.y + t * dy - my);
+          if (dist < best) { best = dist; at = a.clone().lerp(b, t); }
+        }
+        if (best < 10) cands.push({ id, i, dist: best, at, node });
+      });
+    }
+    if (!cands.length) return null;
     cands.sort((p, q) => p.dist - q.dist);
     const ray = vp.rayFromClient(e.clientX, e.clientY);
     const hits = vp.pick(e.clientX, e.clientY, [...this.meshes.values()].filter((m) => m.visible));
     const front = hits.length ? hits[0].distance : Infinity;
-    const s = node.matrix;
-    const scale = Math.max(Math.hypot(s[0], s[1], s[2]), Math.hypot(s[4], s[5], s[6]), Math.hypot(s[8], s[9], s[10]));
     for (const c of cands) {
       const along = c.at.clone().sub(ray.origin).dot(ray.direction);
-      // a rounded edge sits off the surface (or inside a filled corner), so allow for its radius
-      const r = idx[c.i] !== undefined ? node.edgeRounds[idx[c.i]].r : 0;
-      if (along <= front + vp.unitsPerPixel(c.at) * 8 + r * scale * 1.5) return c.i;
+      // a rounded edge sits off the surface (or inside a filled corner), so allow for its size
+      const k = edgeRoundIndex(c.node)[c.i];
+      const r = k !== undefined ? c.node.edgeRounds[k].r : 0;
+      const m = c.node.matrix;
+      const scale = Math.max(Math.hypot(m[0], m[1], m[2]), Math.hypot(m[4], m[5], m[6]), Math.hypot(m[8], m[9], m[10]));
+      if (along <= front + vp.unitsPerPixel(c.at) * 8 + r * scale * 1.5) return { id: c.id, i: c.i };
     }
-    return -1;
+    return null;
   }
 
   _edgeHover(e) {
-    const i = this._pickEdge(e);
-    this.viewport.canvas.style.cursor = i >= 0 ? 'pointer' : '';
-    if (i !== this.edgeMode.hover) { this.edgeMode.hover = i; this._syncEdgeOverlay(); }
+    const em = this.edgeMode;
+    const under = this.pickNode(e);
+    const hoverId = under ? under.node.id : null;
+    const hit = this._pickEdge(e, hoverId);
+    this.viewport.canvas.style.cursor = hit ? 'pointer' : '';
+    const same = (p, q) => (p && q ? p.id === q.id && p.i === q.i : p === q);
+    if (hoverId !== em.hoverId || !same(hit, em.hover)) {
+      em.hoverId = hoverId || (hit && hit.id) || null;
+      em.hover = hit;
+      this._syncEdgeOverlays();
+    }
   }
 
   _edgeClick(e) {
     const em = this.edgeMode;
-    const i = this._pickEdge(e);
-    if (i < 0) {
-      const hit = this.pickNode(e);
-      if (hit && hit.node.id !== em.id) this.select([hit.node.id]); // clicking another shape leaves edge mode
+    const under = this.pickNode(e);
+    const hit = this._pickEdge(e, under ? under.node.id : null);
+    const multi = e.shiftKey || e.metaKey;
+    if (!hit) {
+      if (!multi && em.picked.size) { em.picked.clear(); this._syncEdgeOverlays(); this.emit('selection'); }
       return;
     }
-    if (em.picked.has(i)) em.picked.delete(i); else em.picked.add(i);
-    this._syncEdgeOverlay();
+    if (hit.id !== em.id) {
+      em.id = hit.id; em.key = null; em.picked = new Set([hit.i]);
+    } else if (multi) {
+      if (em.picked.has(hit.i)) em.picked.delete(hit.i); else em.picked.add(hit.i);
+    } else {
+      em.picked = em.picked.size === 1 && em.picked.has(hit.i) ? new Set() : new Set([hit.i]);
+    }
+    this.refreshOutlines();
+    this._syncEdgeOverlays();
     this.emit('selection');
   }
 

@@ -150,7 +150,7 @@ const SHORTCUTS = [
   ['Moving shapes', [['Move along X / Y', 'Arrow keys'], ['Move along Z', 'Ctrl + ↑ / ↓'], ['Move ×10', 'Shift + arrows'], ['Constrain to one axis', 'Shift + drag'], ['Drag a copy', 'Alt + drag'], ['Drop to workplane', 'D'], ['Cruise (snap onto shapes)', 'C']]],
   ['Resizing and rotating', [['Uniform scale', 'Shift + handle'], ['Scale from centre', 'Alt + handle'], ['Rotate in 45° steps', 'Shift + rotate'], ['Type a size', 'Click a dimension']]],
   ['Shape properties', [['Solid', 'S'], ['Hole', 'H'], ['Transparent', 'T'], ['Lock / unlock', 'Ctrl + L'], ['Hide', 'Ctrl + H'], ['Show all', 'Ctrl + Shift + H']]],
-  ['Tools', [['Workplane', 'W'], ['Workplane on selection', 'Shift + W'], ['Ruler', 'R'], ['Notes', 'N'], ['Align', 'L'], ['Mirror', 'M'], ['Cancel tool', 'Esc']]],
+  ['Tools', [['Workplane', 'W'], ['Workplane on selection', 'Shift + W'], ['Edges', 'E'], ['Ruler', 'R'], ['Notes', 'N'], ['Align', 'L'], ['Mirror', 'M'], ['Cancel tool', 'Esc']]],
   ['Commands', [['Copy / Cut / Paste', 'Ctrl + C / X / V'], ['Paste in place', 'Ctrl + Shift + V'], ['Duplicate and repeat', 'Ctrl + D'], ['Delete', 'Del'], ['Undo / Redo', 'Ctrl + Z / Ctrl + Y'], ['Select all', 'Ctrl + A'],
     ['Group (union)', 'Ctrl + G'], ['Intersect group', 'Ctrl + I'], ['Bundle', 'Ctrl + B'], ['Ungroup', 'Ctrl + Shift + G'], ['Add to / remove from selection', 'Shift + click'], ['Box select', 'Drag on empty space']]],
 ];

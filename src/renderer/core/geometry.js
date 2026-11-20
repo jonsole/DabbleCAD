@@ -289,11 +289,11 @@ export function edgeRadii(node) {
 function applyEdgeRounds(node) {
   const base = getGeometry({ ...node, edgeRounds: null });
   const d = nodeEdgeData(node);
-  const radii = matchRounds(node.edgeRounds, d.sigs, d.size).map((k) => (k === undefined ? undefined : node.edgeRounds[k].r));
+  const radii = matchRounds(node.edgeRounds, d.sigs, d.size).map((k) => (k === undefined ? undefined : node.edgeRounds[k]));
   const bb = d.scaled.boundingBox;
   const maxR = Math.min(bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z) / 2 - 0.05;
   const items = [];
-  radii.forEach((r, j) => { if (r > 0) items.push({ chain: d.chains[j], r: Math.min(r, maxR) }); });
+  radii.forEach((e, j) => { if (e && e.r > 0) items.push({ chain: d.chains[j], r: Math.min(e.r, maxR), t: e.t === 'chamfer' ? 'chamfer' : 'round' }); });
   stats.edgeRoundsLost = node.edgeRounds.length - items.length;
   stats.edgeRoundsFailed = 0;
   const keep = () => { const g = base.clone(); g.userData = {}; return g; };

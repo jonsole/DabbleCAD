@@ -26,6 +26,7 @@ export class Inspector {
     if (active && this.host.contains(active) && (active.tagName === 'TEXTAREA' || active.type === 'range')) return this.updateNumbers();
     clear(this.host);
     this.numberFields = [];
+    if (ed.edgeMode) return this._renderEdgePanel();
     if (!nodes.length || ed.placing) return;
     const first = nodes[0];
     const allLocked = nodes.every((n) => n.locked);
@@ -107,55 +108,84 @@ export class Inspector {
     style.addEventListener('change', () => ed._busy(() => ed.patchSelection({ roundStyle: style.value })));
     const rows = [];
     if (nodes.length === 1) rows.push(...this._pickedEdgeRows(first));
-    if (!ed.edgeMode) {
-      rows.push(h('div', { class: 'insp-subhead' }, 'All edges'),
-        h('div', { class: 'param' }, h('label', {}, 'Radius'), range, num),
-        h('div', { class: 'param' }, h('label', {}, 'Style'), style),
-        note);
-    }
-    if (ed.edgeMode) this.open.edges = true;
+    rows.push(h('div', { class: 'insp-subhead' }, 'All edges'),
+      h('div', { class: 'param' }, h('label', {}, 'Radius'), range, num),
+      h('div', { class: 'param' }, h('label', {}, 'Style'), style),
+      note);
     return this._section('edges', 'Edges', rows);
   }
 
-  // Round chosen edges, each with its own radius: pick them in the view while in edge mode.
+  // In the shape inspector: a way into the Edges tool, and a summary of styled edges.
   _pickedEdgeRows(node) {
     const ed = this.editor;
-    const info = ed.edgeInfo();
-    if (!info) {
-      const n = (node.edgeRounds || []).length;
-      const rows = [h('div', { class: 'insp-row-btns' },
-        button({ label: 'Pick edges to round', icon: 'pencil', cls: 'btn-outline', title: 'Click edges in the view and give them their own radius', onClick: () => ed.enterEdgeMode() }))];
-      if (n) {
-        rows.push(h('div', { class: 'insp-note' }, `${n} edge${n > 1 ? 's' : ''} rounded individually.`),
-          h('div', { class: 'insp-row-btns' }, button({ label: 'Remove edge rounds', cls: 'btn-outline', onClick: () => ed._busy(() => ed.patchSelection((x) => (x.id === node.id ? { edgeRounds: undefined } : {}))) })));
-      }
-      return rows;
+    const n = (node.edgeRounds || []).length;
+    const rows = [h('div', { class: 'insp-row-btns' },
+      button({ label: 'Edit edges', icon: 'edges', cls: 'btn-outline', title: 'Round or chamfer individual edges (E)', onClick: () => ed.enterEdgeMode() }))];
+    if (n) {
+      rows.push(h('div', { class: 'insp-note' }, `${n} edge${n > 1 ? 's' : ''} rounded or chamfered.`),
+        h('div', { class: 'insp-row-btns' }, button({ label: 'Make all sharp', cls: 'btn-outline', onClick: () => ed._busy(() => ed.patchSelection((x) => (x.id === node.id ? { edgeRounds: undefined } : {}))) })));
     }
-    const picked = info.picked;
-    const radii = picked.map((i) => info.radii[i]).filter((r) => r > 0);
-    const same = radii.length && radii.every((r) => Math.abs(r - radii[0]) < 1e-6);
-    if (same && radii.length === picked.length) this.edgeRadius = radii[0];
-    const value = this.edgeRadius ?? 2;
-    const range = h('input', { type: 'range', min: 0.1, max: 10, step: 0.1, value });
-    const num = h('input', { class: 'input', type: 'number', min: 0.1, max: 50, step: 0.1, value });
-    range.addEventListener('input', () => { num.value = range.value; this.edgeRadius = parseFloat(range.value); });
-    num.addEventListener('change', () => { const v = parseFloat(num.value); if (v > 0) { this.edgeRadius = v; range.value = v; } });
-    num.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') num.dispatchEvent(new Event('change')); });
-    const status = picked.length
-      ? `${picked.length} edge${picked.length > 1 ? 's' : ''} picked` + (radii.length ? (same ? `, rounded ${radii[0]} mm.` : ', mixed radii.') : '.')
-      : 'Click edges in the view to pick them.';
-    const roundBtn = button({ label: radii.length ? 'Update radius' : 'Round picked', cls: 'btn-primary', onClick: () => ed.roundPickedEdges(this.edgeRadius ?? 2) });
-    const unBtn = button({ label: 'Unround', cls: 'btn-outline', title: 'Make the picked edges sharp again', onClick: () => ed.roundPickedEdges(0) });
-    if (!picked.length) roundBtn.disabled = true;
-    if (!radii.length) unBtn.disabled = true;
-    return [
-      h('div', { class: 'insp-note' }, `${status} Orange edges are rounded. ${info.count} edges in total.`),
-      h('div', { class: 'param' }, h('label', {}, 'Edge radius'), range, num),
-      h('div', { class: 'insp-row-btns' }, roundBtn, unBtn),
-      h('div', { class: 'insp-row-btns' },
-        button({ label: picked.length === info.count ? 'Pick none' : 'Pick all', cls: 'btn-outline', onClick: () => ed.pickAllEdges(picked.length !== info.count) }),
-        button({ label: 'Done', cls: 'btn-outline', title: 'Stop picking edges (Esc)', onClick: () => ed.exitEdgeMode() })),
-    ];
+    return rows;
+  }
+
+  // Edge properties: shown in place of the shape inspector while the Edges tool is active.
+  _renderEdgePanel() {
+    const ed = this.editor;
+    const info = ed.edgeInfo();
+    const done = button({ icon: 'close', title: 'Done (Esc)', onClick: () => ed.exitEdgeMode() });
+    this.host.append(h('div', { class: 'insp-head' }, h('div', { class: 'insp-title' }, 'Edges'), done));
+    const body = [];
+    const swatch = (c) => h('span', { class: 'edge-swatch', style: { background: c } });
+    if (!info.node || !info.picked.length) {
+      body.push(
+        h('div', { class: 'insp-note' }, 'Point at a shape to see its edges, then click an edge to pick it. Shift-click to pick several.'),
+        h('div', { class: 'insp-note' }, swatch('#ff9800'), 'Round  ', swatch('#d36bff'), 'Chamfer  ', swatch('#29c5ff'), 'Picked'),
+        h('div', { class: 'insp-note' }, 'Inside edges, where two shapes meet, appear once the shapes are grouped (Ctrl+G).'));
+      if (info.node) body.push(h('div', { class: 'insp-row-btns' }, button({ label: `Pick all ${info.count} edges`, cls: 'btn-outline', onClick: () => ed.pickAllEdges(true) })));
+      this.host.append(h('div', { class: 'insp-section' }, ...body));
+      return;
+    }
+    const st = info.styles;
+    const types = new Set(st.map((x) => x.t));
+    const type = types.size === 1 ? st[0].t : null;
+    const sizes = st.filter((x) => x.t !== 'sharp').map((x) => x.r);
+    const sameSize = sizes.length && sizes.every((r) => Math.abs(r - sizes[0]) < 1e-6);
+    if (sameSize) this.edgeSize = sizes[0];
+    const size = this.edgeSize ?? 2;
+    const name = info.node.name || kindName(info.node);
+    const n = info.picked.length;
+    const where = info.inside === n ? (n > 1 ? ' (inside edges)' : ' (inside edge)') : info.inside ? ` (${info.inside} inside)` : '';
+    body.push(h('div', { class: 'insp-note' }, `${n} edge${n > 1 ? 's' : ''} of ${name}${where}`));
+
+    const seg = h('div', { class: 'segmented edge-type' });
+    for (const [t, label] of [['sharp', 'Sharp'], ['round', 'Round'], ['chamfer', 'Chamfer']]) {
+      const b = h('button', { class: 'btn' + (type === t ? ' active' : ''), type: 'button' }, label);
+      b.addEventListener('click', () => { b.blur(); ed.setPickedEdgeStyle(t, this.edgeSize ?? 2); });
+      seg.append(b);
+    }
+    body.push(h('div', { class: 'edge-type-row' }, h('label', {}, 'Type'), seg));
+    if (types.size > 1) body.push(h('div', { class: 'insp-note' }, 'The picked edges have different types. Choose one to apply to all.'));
+
+    if (type !== 'sharp') {
+      const range = h('input', { type: 'range', min: 0.1, max: 10, step: 0.1, value: Math.min(10, size) });
+      const num = h('input', { class: 'input', type: 'number', min: 0.1, max: 50, step: 0.1, value: size });
+      const apply = (v) => {
+        if (!(v > 0)) return;
+        this.edgeSize = v;
+        ed.setPickedEdgeStyle(type || 'round', v);
+      };
+      range.addEventListener('input', () => { num.value = range.value; });
+      range.addEventListener('change', () => { range.blur(); apply(parseFloat(range.value)); });
+      num.addEventListener('change', () => apply(parseFloat(num.value)));
+      num.addEventListener('keydown', (e) => e.stopPropagation());
+      body.push(h('div', { class: 'param' }, h('label', {}, type === 'chamfer' ? 'Size' : 'Radius'), range, num));
+      if (sizes.length && !sameSize) body.push(h('div', { class: 'insp-note' }, 'Mixed sizes. Set one to apply to all.'));
+    }
+    body.push(h('div', { class: 'insp-row-btns' },
+      button({ label: n === info.count ? 'Pick none' : `Pick all ${info.count}`, cls: 'btn-outline', onClick: () => ed.pickAllEdges(n !== info.count) }),
+      button({ label: 'Clear', cls: 'btn-outline', title: 'Unpick (Esc)', onClick: () => ed.clearEdgePicks() })));
+    if (info.node.locked) body.push(h('div', { class: 'insp-note' }, 'This shape is locked. Unlock it to change its edges.'));
+    this.host.append(h('div', { class: 'insp-section' }, ...body));
   }
 
   _section(key, title, rows) {

@@ -61,7 +61,7 @@ const scaleKey = (node) => {
 const roundKey = (node) => (node.round > 0 ? '~' + (node.roundStyle === 'bevel' ? 'b' : 'r') + round5(node.round) + '*' + scaleKey(node) : '');
 
 // Edge rounds depend on the node's scale too: fillets are made at the shape's real size.
-const edgeKey = (node) => '~e' + scaleKey(node) + ':' + node.edgeRounds.map((e) => e.sig.m.join(',') + '/' + e.sig.d.join(',') + '/' + e.sig.l + '/' + round5(e.r)).join(';');
+const edgeKey = (node) => '~e' + scaleKey(node) + ':' + node.edgeRounds.map((e) => e.sig.m.join(',') + '/' + e.sig.d.join(',') + '/' + e.sig.l + '/' + round5(e.r) + (e.t === 'chamfer' ? 'c' : '')).join(';');
 
 export function geomKey(node) {
   if (node.round > 0) return geomKey({ ...node, round: 0 }) + roundKey(node);
@@ -131,7 +131,7 @@ export function deserializeDoc(text) {
     const out = { hole: false, transparent: false, locked: false, hidden: false, name: '', ...node };
     out.matrix = Array.isArray(node.matrix) && node.matrix.length === 16 ? node.matrix.map(Number) : [...IDENT];
     if (out.edgeRounds !== undefined) {
-      const ok = (e) => e && e.sig && [e.sig.m, e.sig.d].every((v) => Array.isArray(v) && v.length === 3 && v.every(isFinite)) && isFinite(e.sig.l) && e.r > 0;
+      const ok = (e) => e && e.sig && [e.sig.m, e.sig.d].every((v) => Array.isArray(v) && v.length === 3 && v.every(isFinite)) && isFinite(e.sig.l) && e.r > 0 && (e.t === undefined || e.t === 'round' || e.t === 'chamfer');
       out.edgeRounds = Array.isArray(out.edgeRounds) ? out.edgeRounds.filter(ok) : [];
       if (!out.edgeRounds.length) delete out.edgeRounds;
     }

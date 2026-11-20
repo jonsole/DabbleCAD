@@ -202,7 +202,7 @@ export function matchRounds(rounds, sigs, size) {
 
 // ------------------------------------------------------------------ fillets
 /** Cross-section of the fillet cutter at one point of an edge, or null if the faces are parallel. */
-function section(E, nA, nB, r, convex, segs) {
+function section(E, nA, nB, r, convex, segs, chamfer = false) {
   const axis = new THREE.Vector3().crossVectors(nA, nB);
   if (axis.lengthSq() < 1e-8) return null;
   axis.normalize();
@@ -215,6 +215,13 @@ function section(E, nA, nB, r, convex, segs) {
   const theta = Math.acos(THREE.MathUtils.clamp(u1.dot(u2), -1, 1));
   if (theta < 1e-4) return null;
   const out = [E.clone().addScaledVector(E.clone().sub(C).normalize(), EPS)];
+  if (chamfer) {
+    // straight cut: set back r along each face from the edge (the fillet's tangent points scaled)
+    const tA = C.clone().addScaledVector(u1, r).sub(E), tB = C.clone().addScaledVector(u2, r).sub(E);
+    if (tA.lengthSq() < 1e-12 || tB.lengthSq() < 1e-12) return null;
+    out.push(E.clone().addScaledVector(tA.normalize(), r), E.clone().addScaledVector(tB.normalize(), r));
+    return { pts: out, C };
+  }
   const st = Math.sin(theta);
   for (let k = 0; k <= segs; k++) {
     const f = k / segs;
@@ -225,7 +232,7 @@ function section(E, nA, nB, r, convex, segs) {
 }
 
 /** Closed mesh swept along an edge chain from per-point cross-sections. Returns a Manifold or null. */
-function sweepPiece(api, chain, r) {
+function sweepPiece(api, chain, r, chamfer = false) {
   const n = chain.points.length;
   // same facet count at every point so neighbouring sections line up
   let maxTheta = 0;
@@ -233,7 +240,7 @@ function sweepPiece(api, chain, r) {
   const segs = Math.max(2, Math.ceil((maxTheta / (Math.PI / 2)) * ARC_SEGMENTS));
   const secs = [];
   for (let i = 0; i < n; i++) {
-    const s = section(chain.points[i], chain.nA[i], chain.nB[i], r, chain.convex, segs);
+    const s = section(chain.points[i], chain.nA[i], chain.nB[i], r, chain.convex, segs, chamfer);
     if (!s) return null;
     secs.push(s.pts);
   }
@@ -314,7 +321,8 @@ function cornerPiece(api, V, ends, r) {
 }
 
 /**
- * Fillet the given edges of a closed solid. items: [{ chain, r }] in the geometry's own frame.
+ * Round or chamfer the given edges of a closed solid. items: [{ chain, r, t }] in the geometry's
+ * own frame, t = 'round' (r is the radius) or 'chamfer' (r is the set-back along each face).
  * Returns { geometry, failed } where failed counts edges that could not be rounded, or null
  * when the solid itself could not be built.
  */
@@ -329,12 +337,13 @@ export function filletEdges(geo, items) {
     const cut = [], add = [];
     const corners = new Map(); // vertex key -> [{ nA, nB, dir, r }]
     const vkey = (p) => p.toArray().map((x) => Math.round(x * 1e3)).join(',');
-    for (const { chain, r } of items) {
-      const piece = sweepPiece(api, chain, r);
+    for (const { chain, r, t } of items) {
+      const chamfer = t === 'chamfer';
+      const piece = sweepPiece(api, chain, r, chamfer);
       if (!piece) { failed += 1; continue; }
       made.push(piece);
       (chain.convex ? cut : add).push(piece);
-      if (chain.convex && !chain.closed) {
+      if (chain.convex && !chain.closed && !chamfer) {
         const n = chain.points.length;
         for (const [i, j] of [[0, 1], [n - 1, n - 2]]) {
           const key = vkey(chain.points[i]);
