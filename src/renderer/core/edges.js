@@ -429,8 +429,11 @@ function splitByOwner(ch, owners, tol = 2e-3) {
 }
 
 /**
- * Where three rounded convex edges with the same radius meet, fill the corner with a ball
- * patch (the corner of the box spanned by the edges, minus the rolling ball).
+ * Where three rounded convex edges with the same radius meet, round the corner with a ball
+ * patch. The ball sits r from all three faces (centre C). The material to remove is what lies
+ * in the corner's normal cone from C (the directions spanned by the three face normals, the
+ * region whose nearest point on the shrunk solid is C) further than r from C. The edge cutters
+ * cover everything outside that cone, so this works for corners of any angle.
  */
 function cornerPiece(api, V, ends, r) {
   const normals = [];
@@ -438,24 +441,20 @@ function cornerPiece(api, V, ends, r) {
   if (normals.length !== 3 || ends.length !== 3) return null;
   const M = new THREE.Matrix3().set(...normals[0].toArray(), ...normals[1].toArray(), ...normals[2].toArray());
   if (Math.abs(M.determinant()) < 1e-6) return null;
-  const C = new THREE.Vector3(-r, -r, -r).applyMatrix3(M.invert()).add(V);
-  const dirs = ends.map((e) => e.dir);
-  const D = new THREE.Matrix3().set(dirs[0].x, dirs[1].x, dirs[2].x, dirs[0].y, dirs[1].y, dirs[2].y, dirs[0].z, dirs[1].z, dirs[2].z);
-  if (Math.abs(D.determinant()) < 1e-6) return null;
-  const k = C.clone().sub(V).applyMatrix3(D.clone().invert());
-  if (k.x <= 0 || k.y <= 0 || k.z <= 0) return null;
-  const grow = 1 + EPS / r; // push the flat sides just outside the faces
-  const pts = [];
-  for (const a of [0, k.x]) for (const b of [0, k.y]) for (const c of [0, k.z]) {
-    const p = V.clone().addScaledVector(dirs[0], a).addScaledVector(dirs[1], b).addScaledVector(dirs[2], c);
-    pts.push(p.sub(C).multiplyScalar(grow).add(C).toArray());
-  }
+  const C = new THREE.Vector3(-r, -r, -r).applyMatrix3(M.clone().invert()).add(V);
+  // reach well past the corner: V - C = sum a_i n_i; the cone's far face must clear the corner
+  const G = new THREE.Matrix3().set(...normals.map((a) => normals.map((b) => a.dot(b))).flat());
+  if (Math.abs(G.determinant()) < 1e-9) return null;
+  const a = new THREE.Vector3(r, r, r).applyMatrix3(G.invert());
+  const reach = Math.max(a.x, 0) + Math.max(a.y, 0) + Math.max(a.z, 0);
+  const L = 3 * Math.max(reach, r) + 4 * EPS;
+  const pts = [C.toArray(), ...normals.map((nrm) => C.clone().addScaledVector(nrm, L).toArray())];
   const made = [];
   try {
-    const box = api.Manifold.hull(pts); made.push(box);
+    const cone = api.Manifold.hull(pts); made.push(cone);
     const ball = api.Manifold.sphere(r, ARC_SEGMENTS * 4); made.push(ball);
     const moved = ball.translate([C.x, C.y, C.z]); made.push(moved);
-    return box.subtract(moved);
+    return cone.subtract(moved);
   } catch {
     return null;
   } finally {
