@@ -70,6 +70,42 @@ function rotateTo(it, it0, deg) {
   }
 }
 
+/** Interior angle at each corner of a polygon, in degrees (over 180 at an inward corner). */
+function interiorAngles(pts) {
+  const n = pts.length;
+  let area = 0;
+  for (let i = 0; i < n; i++) { const p = pts[i], q = pts[(i + 1) % n]; area += p[0] * q[1] - q[0] * p[1]; }
+  const ccw = area >= 0;
+  return pts.map((b, i) => {
+    const a = pts[(i - 1 + n) % n], c = pts[(i + 1) % n];
+    const u = [a[0] - b[0], a[1] - b[1]], v = [c[0] - b[0], c[1] - b[1]];
+    // anticlockwise from the outgoing edge to the incoming one is the inside of an anticlockwise polygon
+    let t = Math.atan2(v[0] * u[1] - v[1] * u[0], v[0] * u[0] + v[1] * u[1]);
+    if (!ccw) t = -t;
+    if (t < 0) t += Math.PI * 2;
+    return (t * 180) / Math.PI;
+  });
+}
+
+/**
+ * Set the interior angle at corner i: the corner and its incoming edge stay put, the outgoing
+ * edge swings round (keeping its length), so only the next point moves.
+ */
+function setInteriorAngle(it, i, deg) {
+  const pts = it.pts, n = pts.length;
+  if (n < 3 || !(deg > 0 && deg < 360)) return false;
+  let area = 0;
+  for (let k = 0; k < n; k++) { const p = pts[k], q = pts[(k + 1) % n]; area += p[0] * q[1] - q[0] * p[1]; }
+  const s = area >= 0 ? 1 : -1;
+  const a = pts[(i - 1 + n) % n], b = pts[i], c = pts[(i + 1) % n];
+  const u = [a[0] - b[0], a[1] - b[1]], lu = Math.hypot(u[0], u[1]);
+  const len = Math.hypot(c[0] - b[0], c[1] - b[1]);
+  if (lu < 1e-9 || len < 1e-9) return false;
+  const d = rot([u[0] / lu, u[1] / lu], -s * rad(deg));
+  pts[(i + 1) % n] = [+(b[0] + d[0] * len).toFixed(4), +(b[1] + d[1] * len).toFixed(4)];
+  return true;
+}
+
 function moveItem(it, dx, dy) {
   if (it.type === 'rect') { it.x += dx; it.y += dy; }
   else if (it.type === 'circle') { it.cx += dx; it.cy += dy; }
@@ -236,6 +272,21 @@ export function sketchDialog(existing) {
             ctx.strokeStyle = '#1b1d22'; ctx.lineWidth = 1.3;
             ctx.beginPath(); ctx.arc(hd.px[0], hd.px[1], 3.6, -Math.PI * 0.9, Math.PI * 0.55); ctx.stroke();
           }
+        }
+        // interior angles at a polygon's corners, just inside each corner
+        if (it.type === 'poly' && it.pts.length >= 3) {
+          const angs = interiorAngles(it.pts), n = it.pts.length;
+          it.pts.forEach((p, i) => {
+            const P = toPx(p), A = toPx(it.pts[(i - 1 + n) % n]), C = toPx(it.pts[(i + 1) % n]);
+            const ua = [A[0] - P[0], A[1] - P[1]], uc = [C[0] - P[0], C[1] - P[1]];
+            const la = Math.hypot(ua[0], ua[1]) || 1, lc = Math.hypot(uc[0], uc[1]) || 1;
+            let bx = ua[0] / la + uc[0] / lc, by = ua[1] / la + uc[1] / lc;
+            let bl = Math.hypot(bx, by);
+            if (bl < 1e-6) { bx = -ua[1] / la; by = ua[0] / la; bl = 1; } // straight corner: go sideways
+            bx /= bl; by /= bl;
+            if (angs[i] > 180) { bx = -bx; by = -by; } // inward corner: the inside is the other way
+            label(`${fmt(angs[i])}°`, P[0] + bx * 26, P[1] + by * 26);
+          });
         }
         // dimensions, outside the bottom and left edges
         const out = (q, d) => { const a = toPx(toWorld(f, q)), c = toPx(f.c); const dx = a[0] - c[0], dy = a[1] - c[1], l = Math.hypot(dx, dy) || 1; return [a[0] + (dx / l) * d, a[1] + (dy / l) * d]; };
@@ -459,11 +510,18 @@ export function sketchDialog(existing) {
         ];
         side.append(section('Position & size', rows));
         if (it.type === 'poly') {
-          const list = h('div', { class: 'sketch-points' });
-          it.pts.forEach((p, i) => list.append(h('div', { class: 'xyz xy' }, h('span', {}, String(i + 1)),
-            numField(() => it.pts[i][0], (v) => { it.pts[i] = [v, it.pts[i][1]]; }),
-            numField(() => it.pts[i][1], (v) => { it.pts[i] = [it.pts[i][0], v]; }))));
-          side.append(section('Points', [list], false));
+          const list = h('div', { class: 'sketch-points' },
+            h('div', { class: 'xyz xya' }, h('span', {}, ''), h('span', {}, 'X'), h('span', {}, 'Y'), h('span', {}, 'Angle')));
+          it.pts.forEach((p, i) => {
+            const ang = numField(() => interiorAngles(it.pts)[i], (v) => { if (!setInteriorAngle(it, i, v)) toast('Angle must be between 0 and 360°'); }, { min: 0.1 });
+            ang.max = 359.9;
+            ang.title = `Interior angle at point ${i + 1}: point ${((i + 1) % it.pts.length) + 1} swings round to match`;
+            list.append(h('div', { class: 'xyz xya' }, h('span', {}, String(i + 1)),
+              numField(() => it.pts[i][0], (v) => { it.pts[i] = [v, it.pts[i][1]]; }),
+              numField(() => it.pts[i][1], (v) => { it.pts[i] = [it.pts[i][0], v]; }),
+              ang));
+          });
+          side.append(section('Points', [list]));
         }
       }
       side.append(section('Pull up', [h('div', { class: 'xyz xy' }, h('span', {}, 'Height'), numField(() => depth, (v) => { depth = v; }, { min: 0.2 }), h('span', {}, 'mm'))]));
@@ -513,6 +571,6 @@ export function sketchDialog(existing) {
     if (!items.length) setTool('rect'); else setTool('select');
     panel(); draw();
     // exposed for automated checks
-    m.el.__sketch = { add: (it) => { items.push({ ...it, id: nextId++ }); panel(); draw(); }, done, items: () => items, select: (i) => pick(items[i] && items[i].id), toPx, frameOf, handles: () => (sel() ? handles(sel()) : []) };
+    m.el.__sketch = { add: (it) => { items.push({ ...it, id: nextId++ }); panel(); draw(); }, done, items: () => items, select: (i) => pick(items[i] && items[i].id), toPx, frameOf, handles: () => (sel() ? handles(sel()) : []), angles: () => (sel() && sel().pts ? interiorAngles(sel().pts) : null) };
   });
 }
