@@ -1,6 +1,7 @@
 // Editor: owns the document, selection, tools and every modelling command.
 import * as THREE from 'three';
-import { History, cloneNode, makeGroup, mat4, uid, newDoc } from './core/doc.js';
+import { History, cloneNode, makeGroup, makeShape, mat4, uid, newDoc } from './core/doc.js';
+import { kindName } from './core/shapes.js';
 import { getGeometry, expandBox, getEdges, measure, nodeEdgeData, edgeRoundIndex, stats as geoStats } from './core/geometry.js';
 import { toast } from './ui/dom.js';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
@@ -460,6 +461,40 @@ export class Editor extends Emitter {
     });
     const failed = added.length ? geoStats.edgeRoundsFailed || 0 : 0;
     if (failed) toast(failed >= added.length ? 'Those edges could not be shaped (try a smaller size)' : `${failed} edge${failed > 1 ? 's' : ''} could not be shaped`, 'warn', 4000);
+    this.emit('selection');
+  }
+
+  /** Does this node have edges shaped by the Edges tool or the all-edges radius? */
+  hasShapedEdges(node) { return !!node && ((node.edgeRounds && node.edgeRounds.length > 0) || node.round > 0); }
+
+  /**
+   * Bake the node's rounded and chamfered edges into it: it becomes a plain mesh shape with the
+   * current geometry, so the edges are part of the shape and new edges can be picked on it.
+   * A group's parts can no longer be edited afterwards (Ctrl+Z undoes it).
+   */
+  async applyEdges(node = this.edgeMode && this.edgeMode.id ? this.node(this.edgeMode.id) : this.movableNodes()[0]) {
+    if (!this.hasShapedEdges(node) || node.locked) return;
+    let ok = false;
+    await this._busy(() => {
+      const geo = getGeometry(node);
+      if (!geo.attributes.position.count) return;
+      const flat = geo.index ? geo.toNonIndexed() : geo;
+      const positions = new Float32Array(flat.attributes.position.array);
+      // mesh shapes are re-centred on their footprint when built: shift the matrix to match
+      const bb = new THREE.Box3().setFromBufferAttribute(flat.attributes.position);
+      const shift = new THREE.Matrix4().makeTranslation((bb.min.x + bb.max.x) / 2, (bb.min.y + bb.max.y) / 2, bb.min.z);
+      const baked = makeShape('mesh', { mesh: { id: uid('m'), positions } }, node.color, node.name || kindName(node));
+      Object.assign(baked, { id: node.id, hole: node.hole, transparent: node.transparent, hidden: node.hidden, matrix: mat4(node.matrix).multiply(shift).toArray() });
+      const i = this.doc.nodes.indexOf(node);
+      if (i < 0) return;
+      this.doc.nodes[i] = baked;
+      this.sync();
+      this.commit();
+      ok = true;
+    });
+    if (!ok) return;
+    if (this.edgeMode) { this.edgeMode.picked.clear(); this.edgeMode.key = null; this.edgeMode.hover = null; this._syncEdgeOverlays(); }
+    toast(node.type === 'group' && node.multicolor ? 'Edges applied (the shape is now one colour)' : 'Edges applied');
     this.emit('selection');
   }
 

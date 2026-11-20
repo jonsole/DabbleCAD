@@ -123,7 +123,7 @@ export class Inspector {
       button({ label: 'Edit edges', icon: 'edges', cls: 'btn-outline', title: 'Round or chamfer individual edges (E)', onClick: () => ed.enterEdgeMode() }))];
     if (n) {
       rows.push(h('div', { class: 'insp-note' }, `${n} edge${n > 1 ? 's' : ''} rounded or chamfered.`),
-        h('div', { class: 'insp-row-btns' }, button({ label: 'Make all sharp', cls: 'btn-outline', onClick: () => ed._busy(() => ed.patchSelection((x) => (x.id === node.id ? { edgeRounds: undefined } : {}))) })));
+        h('div', { class: 'insp-row-btns' }, button({ label: 'Apply Edges', cls: 'btn-outline', title: 'Make the rounded and chamfered edges a permanent part of the shape (Ctrl+Z to undo)', onClick: () => ed.applyEdges(node) }), button({ label: 'Make all sharp', cls: 'btn-outline', onClick: () => ed._busy(() => ed.patchSelection((x) => (x.id === node.id ? { edgeRounds: undefined } : {}))) })));
     }
     return rows;
   }
@@ -137,6 +137,7 @@ export class Inspector {
     const body = [];
     if (!info.node || !info.picked.length) {
       if (info.node) body.push(h('div', { class: 'insp-row-btns' }, button({ label: 'Select All', cls: 'btn-outline', onClick: () => ed.pickAllEdges(true) })));
+      if (ed.hasShapedEdges(info.node) && !info.node.locked) body.push(h('div', { class: 'insp-row-btns' }, button({ label: 'Apply Edges', cls: 'btn-primary', title: 'Make the rounded and chamfered edges a permanent part of the shape (Ctrl+Z to undo)', onClick: () => ed.applyEdges(info.node) })));
       if (body.length) this.host.append(h('div', { class: 'insp-section' }, ...body));
       return;
     }
@@ -175,6 +176,7 @@ export class Inspector {
     body.push(h('div', { class: 'insp-row-btns' },
       button({ label: 'Select All', cls: 'btn-outline', onClick: () => ed.pickAllEdges(true) }),
       button({ label: 'Unselect', cls: 'btn-outline', title: 'Unselect (Esc)', onClick: () => ed.clearEdgePicks() })));
+    if (ed.hasShapedEdges(info.node) && !info.node.locked) body.push(h('div', { class: 'insp-row-btns' }, button({ label: 'Apply Edges', cls: 'btn-primary', title: 'Make the rounded and chamfered edges a permanent part of the shape (Ctrl+Z to undo)', onClick: () => ed.applyEdges(info.node) })));
     if (info.node.locked) body.push(h('div', { class: 'insp-note' }, 'Locked')); 
     this.host.append(h('div', { class: 'insp-section' }, ...body));
   }

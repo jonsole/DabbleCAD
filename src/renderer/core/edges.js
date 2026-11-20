@@ -10,7 +10,8 @@ import { kernel, toSolid, fromSolid } from './solid.js';
 const SHARP_COS = Math.cos((30 * Math.PI) / 180); // faces meeting at more than 30 degrees form an edge
 const TURN_COS = Math.cos((40 * Math.PI) / 180); // an edge chain ends where it turns more than this
 const EPS = 0.02; // mm: cutters overlap the solid slightly so booleans don't leave slivers
-export const ARC_SEGMENTS = 12; // facets per quarter circle of fillet
+export const ARC_SEGMENTS = 12;
+const MIN_EDGE = 0.4; // mm // facets per quarter circle of fillet
 
 /**
  * Sharp edges of a closed triangle mesh, joined into chains (a straight box edge, a hole rim...).
@@ -105,7 +106,8 @@ export function findEdges(geo) {
     if (!closed && segs.length > 2 && segs[segs.length - 1].b === segs[0].a) closed = true;
     chains.push(makeChain(segs, closed, verts, faces));
   }
-  return chains;
+  // tiny creases are faceting left where curved patches meet (e.g. a baked ball corner), not edges
+  return chains.filter((c) => c.length >= MIN_EDGE);
 }
 
 function makeChain(segs, closed, verts, faces) {
