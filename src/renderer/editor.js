@@ -32,6 +32,17 @@ function edgeLineMaterial() {
   return m;
 }
 
+/** The thin selection line, pulled toward the camera the same way so inside edges show. */
+function edgeThinMaterial() {
+  const m = new THREE.LineBasicMaterial({ color: SEL_COLOR });
+  m.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', `#include <project_vertex>
+      if ( projectionMatrix[ 2 ][ 3 ] == - 1.0 ) mvPosition.xyz *= 0.985; else mvPosition.z += 0.6;
+      gl_Position = projectionMatrix * mvPosition;`);
+  };
+  return m;
+}
+
 const SEL_COLOR = 0x29c5ff;
 const selLineMat = new THREE.LineBasicMaterial({ color: SEL_COLOR });
 const edgeLineMat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32 });
@@ -504,8 +515,7 @@ export class Editor extends Emitter {
   _dropEdgeOverlay(mesh) {
     const lines = mesh.userData.edgeOverlay;
     if (!lines) return;
-    for (const l of lines) { mesh.remove(l); l.material.dispose(); }
-    lines[0].geometry.dispose();
+    for (const l of lines) { mesh.remove(l); l.material.dispose(); l.geometry.dispose(); }
     mesh.userData.edgeOverlay = null;
   }
 
@@ -525,34 +535,36 @@ export class Editor extends Emitter {
     if (!node || !mesh) return;
     const d = nodeEdgeData(node);
     if (id === em.id && em.key !== d.key) { if (em.key) em.picked.clear(); em.key = d.key; } // edges were re-found
-    // only the edge under the pointer and the selected edges are drawn, in the selection colour
+    // selected edges: the thin selection line; the edge under the pointer: a thick one
     const active = id === em.id;
-    const pos = [];
+    const thin = [], thick = [];
     d.lines.forEach((pts, i) => {
       const hovered = em.hover && em.hover.id === id && em.hover.i === i;
-      if (!hovered && !(active && em.picked.has(i))) return;
+      const out = hovered ? thick : active && em.picked.has(i) ? thin : null;
+      if (!out) return;
       const n = pts.length, segs = d.chains[i].closed ? n : n - 1;
       for (let s = 0; s < segs; s++) {
         const a = pts[s], b = pts[(s + 1) % n];
-        pos.push(a.x, a.y, a.z, b.x, b.y, b.z);
+        out.push(a.x, a.y, a.z, b.x, b.y, b.z);
       }
     });
-    if (!pos.length) { this._dropEdgeOverlay(mesh); return; }
-    const geo = new LineSegmentsGeometry();
-    geo.setPositions(pos);
-    let lines = mesh.userData.edgeOverlay;
-    if (!lines) {
-      const front = new LineSegments2(geo, edgeLineMaterial());
-      front.renderOrder = 6;
-      front.raycast = () => {};
-      mesh.add(front);
-      lines = mesh.userData.edgeOverlay = [front];
-    } else {
-      const old = lines[0].geometry;
-      for (const l of lines) l.geometry = geo;
-      old.dispose();
+    this._dropEdgeOverlay(mesh);
+    if (!thin.length && !thick.length) return;
+    const lines = [];
+    if (thin.length) {
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(thin, 3));
+      lines.push(new THREE.LineSegments(g, edgeThinMaterial()));
     }
-    for (const l of lines) l.material.resolution.set(this.viewport.width, this.viewport.height);
+    if (thick.length) {
+      const g = new LineSegmentsGeometry();
+      g.setPositions(thick);
+      const l = new LineSegments2(g, edgeLineMaterial());
+      l.material.resolution.set(this.viewport.width, this.viewport.height);
+      lines.push(l);
+    }
+    for (const l of lines) { l.renderOrder = 6; l.raycast = () => {}; mesh.add(l); }
+    mesh.userData.edgeOverlay = lines;
     mesh.updateMatrixWorld(true);
   }
 
