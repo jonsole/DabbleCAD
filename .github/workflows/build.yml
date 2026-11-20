@@ -23,10 +23,12 @@ jobs:
             os: windows-latest
             args: --win --x64
             artifact: windows-x64
-          - name: macOS Apple Silicon
-            os: macos-15
-            args: --mac --arm64
-            artifact: mac-arm64
+          # macOS Apple Silicon build disabled in this fork. To re-enable, uncomment these
+          # lines and the two mac-arm64 names in the release check below.
+          # - name: macOS Apple Silicon
+          #   os: macos-15
+          #   args: --mac --arm64
+          #   artifact: mac-arm64
           - name: macOS Intel
             os: macos-15-intel
             args: --mac --x64
@@ -108,7 +110,7 @@ jobs:
           pattern: DabbleCAD-*
           path: release-assets
           merge-multiple: true
-      - name: Verify all seven artifacts and generate checksums
+      - name: Verify all five artifacts and generate checksums
         shell: node {0}
         run: |
           const fs = require('node:fs');
@@ -118,8 +120,8 @@ jobs:
           const names = [
             `DabbleCAD-${version}-win-x64-setup.exe`,
             `DabbleCAD-${version}-win-x64.zip`,
-            `DabbleCAD-${version}-mac-arm64.dmg`,
-            `DabbleCAD-${version}-mac-arm64.zip`,
+            // `DabbleCAD-${version}-mac-arm64.dmg`, (Apple Silicon build disabled)
+            // `DabbleCAD-${version}-mac-arm64.zip`,
             `DabbleCAD-${version}-mac-x64.dmg`,
             `DabbleCAD-${version}-mac-x64.zip`,
             `DabbleCAD-${version}-linux-x64.AppImage`,
