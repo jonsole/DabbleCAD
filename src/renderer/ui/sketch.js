@@ -115,6 +115,127 @@ function setInteriorAngle(it, i, deg) {
   return 'locked';
 }
 
+// ------------------------------------------------------------------ named dimensions
+// A corner angle, an edge length or a rectangle / ellipse size can be given a name (A, L1...).
+// Every dimension using the same name is held at that value: params[name] = { kind, value },
+// item.angleRef[i] / item.lenRef[i] (edge i runs from point i to i + 1) / item.wRef / item.hRef.
+
+const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** "12.5" -> { value }, "A" -> { name }, "A=45" -> { name, value }, anything else -> { error } */
+function parseDim(text) {
+  const t = String(text).trim().replace(/\s*(°|deg|mm)$/i, '');
+  if (!t) return { error: true };
+  if (isFinite(Number(t))) return { value: Number(t) };
+  const m = /^([^=\s]+)\s*(?:=\s*(.+))?$/.exec(t);
+  if (!m || !NAME.test(m[1])) return { error: true };
+  if (m[2] === undefined) return { name: m[1] };
+  const v = Number(String(m[2]).trim().replace(/\s*(°|deg|mm)$/i, ''));
+  return isFinite(v) ? { name: m[1], value: v } : { error: true };
+}
+
+const edgeLen = (pts, i) => { const a = pts[i], b = pts[(i + 1) % pts.length]; return Math.hypot(b[0] - a[0], b[1] - a[1]); };
+const angleDiff = (a, b) => { let d = (a - b) % 360; if (d > 180) d -= 360; if (d < -180) d += 360; return d; };
+
+/** Linear solve (Gaussian elimination with partial pivoting); A is n x n, modified in place. */
+function linSolve(A, bv) {
+  const n = bv.length;
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let r = c + 1; r < n; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r;
+    if (Math.abs(A[p][c]) < 1e-14) return null;
+    [A[c], A[p]] = [A[p], A[c]]; [bv[c], bv[p]] = [bv[p], bv[c]];
+    for (let r = c + 1; r < n; r++) {
+      const f = A[r][c] / A[c][c];
+      if (!f) continue;
+      for (let k = c; k < n; k++) A[r][k] -= f * A[c][k];
+      bv[r] -= f * bv[c];
+    }
+  }
+  const x = new Array(n).fill(0);
+  for (let r = n - 1; r >= 0; r--) {
+    let v = bv[r];
+    for (let k = r + 1; k < n; k++) v -= A[r][k] * x[k];
+    x[r] = v / A[r][r];
+  }
+  return x;
+}
+
+/**
+ * Re-solve the sketch so every named dimension has its value. Rectangle and ellipse sizes are
+ * set directly. Polygon angles and lengths are met by moving unlocked points as little as
+ * possible (damped least squares, which takes the smallest change when there is freedom left).
+ * hold: { fixed: Set of "itemId:pointIndex" kept still, cons: extra one-off targets to keep }.
+ * Returns true when everything is met.
+ */
+function solveSketch(items, params, hold = {}) {
+  for (const it of items) {
+    if (it.type !== 'rect' && it.type !== 'circle') continue;
+    const w = it.wRef && params[it.wRef], hh = it.hRef && params[it.hRef];
+    if (!w && !hh) continue;
+    const f0 = frameOf(it);
+    const hx = w ? w.value / 2 : f0.hx, hy = hh ? hh.value / 2 : f0.hy;
+    setBox(it, clone(it), f0, -hx, hx, -hy, hy);
+  }
+  const cons = [];
+  for (const it of items) {
+    if (it.type !== 'poly') continue;
+    (it.angleRef || []).forEach((nm, i) => { if (nm && params[nm]) cons.push({ it, type: 'angle', i, value: params[nm].value }); });
+    (it.lenRef || []).forEach((nm, i) => { if (nm && params[nm]) cons.push({ it, type: 'len', i, value: params[nm].value }); });
+  }
+  cons.push(...(hold.cons || []));
+  if (!cons.length) return true;
+  const polys = [...new Set(cons.map((c) => c.it))];
+  const fixed = hold.fixed || new Set();
+  const vars = [];
+  for (const it of polys) it.pts.forEach((_, i) => { if (!isLocked(it, i) && !fixed.has(it.id + ':' + i)) vars.push({ it, i }); });
+  const scale = new Map(polys.map((it) => [it, Math.max(1, it.pts.reduce((t, _, i) => t + edgeLen(it.pts, i), 0) / it.pts.length)]));
+  const resid = () => cons.map((c) => (c.type === 'angle'
+    ? rad(angleDiff(interiorAngles(c.it.pts)[c.i], c.value)) * scale.get(c.it)
+    : edgeLen(c.it.pts, c.i) - c.value));
+  const norm = (r) => r.reduce((t, v) => t + v * v, 0);
+  let r = resid(), f = norm(r);
+  const ok = () => Math.sqrt(f) < 1e-3;
+  if (!vars.length || ok()) return ok();
+  const n = vars.length * 2;
+  let x = vars.flatMap((v) => v.it.pts[v.i]);
+  const put = (xs) => vars.forEach((v, k) => { v.it.pts[v.i] = [xs[2 * k], xs[2 * k + 1]]; });
+  let mu = 1e-4;
+  for (let iter = 0; iter < 200 && f > 1e-14; iter++) {
+    const J = r.map(() => new Float64Array(n));
+    for (let j = 0; j < n; j++) {
+      const hstep = 1e-6 * Math.max(1, Math.abs(x[j]));
+      const xs = [...x]; xs[j] += hstep; put(xs);
+      const r2 = resid();
+      for (let i = 0; i < r.length; i++) J[i][j] = (r2[i] - r[i]) / hstep;
+    }
+    put(x);
+    const A = Array.from({ length: n }, (_, i) => { const row = new Float64Array(n); for (let k = 0; k < n; k++) { let v = 0; for (let q = 0; q < r.length; q++) v += J[q][i] * J[q][k]; row[k] = v; } row[i] += mu; return row; });
+    const g = Array.from({ length: n }, (_, i) => { let v = 0; for (let q = 0; q < r.length; q++) v -= J[q][i] * r[q]; return v; });
+    const d = linSolve(A, g);
+    if (!d) { mu *= 10; continue; }
+    const x2 = x.map((v, i) => v + d[i]);
+    put(x2);
+    const r2 = resid(), f2 = norm(r2);
+    if (f2 < f) { x = x2; r = r2; f = f2; mu = Math.max(mu / 4, 1e-10); } else { put(x); mu *= 5; if (mu > 1e9) break; }
+  }
+  put(x.map((v) => Math.round(v * 1e5) / 1e5));
+  r = resid(); f = norm(r);
+  return ok();
+}
+
+/** Edge i's length: its far end slides along the edge (or its start, if the far end is locked). */
+function setEdgeLength(it, i, len) {
+  const pts = it.pts, n = pts.length, j = (i + 1) % n;
+  if (!(len > 0)) return false;
+  const a = pts[i], b = pts[j];
+  const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  if (l < 1e-9) return false;
+  const d = [(b[0] - a[0]) / l, (b[1] - a[1]) / l];
+  if (!isLocked(it, j)) { pts[j] = [a[0] + d[0] * len, a[1] + d[1] * len]; return true; }
+  if (!isLocked(it, i)) { pts[i] = [b[0] - d[0] * len, b[1] - d[1] * len]; return true; }
+  return 'locked';
+}
+
 const isLocked = (it, i) => !!(it.lock && it.lock[i]);
 const anyLocked = (it) => it.type === 'poly' && !!(it.lock && it.lock.some(Boolean));
 
@@ -152,21 +273,31 @@ export function sketchPolys(items) {
   return polys.map((p) => ({ outer: p.outer.map(shift), holes: p.holes.map((hh) => hh.map(shift)) }));
 }
 
-const clone = (it) => ({ ...it, pts: it.pts ? it.pts.map((p) => [...p]) : undefined, lock: it.lock ? [...it.lock] : undefined });
+const clone = (it) => ({ ...it, pts: it.pts ? it.pts.map((p) => [...p]) : undefined, lock: it.lock ? [...it.lock] : undefined,
+  angleRef: it.angleRef ? [...it.angleRef] : undefined, lenRef: it.lenRef ? [...it.lenRef] : undefined });
 
 /** Opens the sketch editor. Resolves to { polys, sketch, depth } or null. */
 export function sketchDialog(existing) {
   return new Promise((resolve) => {
     let result = null;
-    const m = modal({ title: 'Sketch', width: W + 300, onClose: () => { window.removeEventListener('keydown', onKey, true); resolve(result); } });
+    const m = modal({ title: 'Sketch', width: W + 380, onClose: () => { window.removeEventListener('keydown', onKey, true); resolve(result); } });
     const canvas = h('canvas', { class: 'sketch-canvas', width: W, height: H, tabindex: 0, 'aria-label': 'Sketch drawing area' });
     const ctx = canvas.getContext('2d');
     let items = existing && existing.items ? existing.items.map((i) => ({ ...clone(i), id: nextId++ })) : [];
     let depth = existing && existing.depth ? existing.depth : 10;
     let sheet = existing && existing.sheet ? existing.sheet : 120;
     let tool = 'select', snap = 1, selected = null, draft = null, drag = null, cursor = null, hover = null;
+    let params = existing && existing.params ? JSON.parse(JSON.stringify(existing.params)) : {};
     const undo = [];
-    const remember = () => { undo.push(JSON.stringify(items)); if (undo.length > 50) undo.shift(); };
+    const snapshot = () => JSON.stringify({ items, params });
+    const restore = (str) => { const st = JSON.parse(str); items = st.items; params = st.params || {}; };
+    const remember = () => { undo.push(snapshot()); if (undo.length > 50) undo.shift(); };
+    /** Re-solve after an edit; if the named dimensions can't all be met, put things back. */
+    const settle = (hold, { revert = true } = {}) => {
+      if (solveSketch(items, params, hold)) return true;
+      if (revert && undo.length) { restore(undo.pop()); toast('That can\'t be done while keeping the named dimensions and locked points'); }
+      return false;
+    };
     const sel = () => items.find((i) => i.id === selected) || null;
     const toastLocked = () => toast('This shape has locked points, so it can\'t be moved, resized or rotated. Unlock them in Points.');
 
@@ -218,10 +349,10 @@ export function sketchDialog(existing) {
       return ang < 22.5 || ang >= 157.5 ? 'ew-resize' : ang < 67.5 ? 'nesw-resize' : ang < 112.5 ? 'ns-resize' : 'nwse-resize';
     };
 
-    function label(text, x, y) {
+    function label(text, x, y, linked = false) {
       ctx.font = '11px sans-serif';
       const w = ctx.measureText(text).width + 10;
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = linked ? SEL : '#ffffff';
       ctx.strokeStyle = 'rgba(0,0,0,0.25)';
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -301,14 +432,29 @@ export function sketchDialog(existing) {
             if (bl < 1e-6) { bx = -ua[1] / la; by = ua[0] / la; bl = 1; } // straight corner: go sideways
             bx /= bl; by /= bl;
             if (angs[i] > 180) { bx = -bx; by = -by; } // inward corner: the inside is the other way
-            label(`${fmt(angs[i])}°`, P[0] + bx * 26, P[1] + by * 26);
+            const nm = it.angleRef && it.angleRef[i];
+            label(nm ? `${nm} ${fmt(angs[i])}°` : `${fmt(angs[i])}°`, P[0] + bx * 26, P[1] + by * 26, !!nm);
+          });
+          // edge lengths, just outside each edge
+          const cen = it.pts.reduce((acc, q) => [acc[0] + q[0] / n, acc[1] + q[1] / n], [0, 0]);
+          const Cp = toPx(cen);
+          it.pts.forEach((p, i) => {
+            const A = toPx(p), B = toPx(it.pts[(i + 1) % n]);
+            const mx = (A[0] + B[0]) / 2, my = (A[1] + B[1]) / 2;
+            let nx = -(B[1] - A[1]), ny = B[0] - A[0];
+            const nl = Math.hypot(nx, ny) || 1; nx /= nl; ny /= nl;
+            if (nx * (Cp[0] - mx) + ny * (Cp[1] - my) > 0) { nx = -nx; ny = -ny; }
+            const nm = it.lenRef && it.lenRef[i];
+            label(nm ? `${nm} ${fmt(edgeLen(it.pts, i))}` : fmt(edgeLen(it.pts, i)), mx + nx * 14, my + ny * 14, !!nm);
           });
         }
         // dimensions, outside the bottom and left edges
         const out = (q, d) => { const a = toPx(toWorld(f, q)), c = toPx(f.c); const dx = a[0] - c[0], dy = a[1] - c[1], l = Math.hypot(dx, dy) || 1; return [a[0] + (dx / l) * d, a[1] + (dy / l) * d]; };
         const wPx = out([0, -f.hy], 18), hPx = out([-f.hx, 0], 26);
-        if (f.hx > 1e-6) label(fmt(f.hx * 2), wPx[0], wPx[1]);
-        if (f.hy > 1e-6) label(fmt(f.hy * 2), hPx[0], hPx[1]);
+        if (it.type !== 'poly') { // a polygon shows its edge lengths instead
+          if (f.hx > 1e-6) label(it.wRef ? `${it.wRef} ${fmt(f.hx * 2)}` : fmt(f.hx * 2), wPx[0], wPx[1], !!it.wRef);
+          if (f.hy > 1e-6) label(it.hRef ? `${it.hRef} ${fmt(f.hy * 2)}` : fmt(f.hy * 2), hPx[0], hPx[1], !!it.hRef);
+        }
         if (drag && drag.kind === 'rotate' && r) label(`${fmt(drag.deg)}°`, r.px[0], r.px[1] - 18);
       }
       if (draft) {
@@ -375,7 +521,7 @@ export function sketchDialog(existing) {
       const it = sel();
       if (drag && it) {
         if (drag.kind === 'move') { moveItem(it, p[0] - drag.last[0], p[1] - drag.last[1]); drag.last = p; }
-        else if (drag.kind === 'vertex') { it.pts[drag.hd.i] = p; }
+        else if (drag.kind === 'vertex') { it.pts[drag.hd.i] = p; solveSketch(items, params, { fixed: new Set([it.id + ':' + drag.hd.i]) }); }
         else if (drag.kind === 'rotate') {
           const c = drag.f0.c, q = rawMm(e);
           let deg = ((Math.atan2(q[1] - c[1], q[0] - c[0]) - Math.atan2(drag.start[1] - c[1], drag.start[0] - c[0])) * 180) / Math.PI;
@@ -383,6 +529,7 @@ export function sketchDialog(existing) {
           if (!e.altKey) deg = Math.round(deg / 15) * 15;
           drag.deg = deg;
           rotateTo(it, drag.it0, deg);
+          solveSketch(items, params);
         } else {
           // resize in the shape's own frame from where the drag started; the opposite side stays put
           const { sx, sy } = drag.hd, f0 = drag.f0;
@@ -403,6 +550,7 @@ export function sketchDialog(existing) {
             if (sy > 0) ly1 = ly0 + hh; else ly0 = ly1 - hh;
           }
           setBox(it, drag.it0, f0, lx0, lx1, ly0, ly1);
+          solveSketch(items, params); // named sizes and lengths hold
         }
         panelNumbers();
       } else if (draft && draft.type === 'rect') {
@@ -451,7 +599,7 @@ export function sketchDialog(existing) {
       moveItem(c, snap || 1, -(snap || 1));
       items.push(c); selected = c.id; panel(); draw();
     };
-    const undoOnce = () => { const s = undo.pop(); if (s) { items = JSON.parse(s); if (!sel()) selected = null; panel(); draw(); } };
+    const undoOnce = () => { const s = undo.pop(); if (s) { restore(s); if (!sel()) selected = null; panel(); draw(); } };
 
     const onKey = (e) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
@@ -488,7 +636,59 @@ export function sketchDialog(existing) {
       fields.push({ input, get });
       return input;
     };
-    const panelNumbers = () => { for (const f of fields) if (document.activeElement !== f.input) f.input.value = fmt(f.get()); };
+    const panelNumbers = () => { for (const f of fields) if (document.activeElement !== f.input) f.input.value = f.raw ? f.get() : fmt(f.get()); };
+
+    /** Names used by any shape; unused names are dropped. */
+    const usedNames = () => {
+      const u = new Set();
+      for (const it of items) for (const nm of [...(it.angleRef || []), ...(it.lenRef || []), it.wRef, it.hRef]) if (nm) u.add(nm);
+      return u;
+    };
+    const prune = () => { const u = usedNames(); for (const k of Object.keys(params)) if (!u.has(k)) delete params[k]; };
+    const refArray = (it, key, i, name) => {
+      const arr = it[key] ? [...it[key]] : new Array(it.pts.length).fill(null);
+      arr[i] = name || null;
+      if (arr.some(Boolean)) it[key] = arr; else delete it[key];
+    };
+    const unitOf = (kind) => (kind === 'angle' ? '°' : 'mm');
+
+    /**
+     * A dimension box: takes a number (a one-off change), a name like A (labels this dimension,
+     * or links it to an existing A) or A=45 (sets A and links). Linked boxes show "A = 45".
+     * holdFor(v) applies a one-off value and returns what the solver should keep, or false.
+     */
+    const dimField = ({ kind, get, getRef, setRef, holdFor, valid }) => {
+      const show = () => { const nm = getRef(); return nm && params[nm] ? `${nm} = ${fmt(params[nm].value)}` : fmt(get()); };
+      const input = h('input', { class: 'input dim', type: 'text', value: show(), spellcheck: false, title: `A number, a name to label it (like ${kind === 'angle' ? 'A' : 'L'}), or name=value` });
+      input.classList.toggle('linked', !!(getRef() && params[getRef()]));
+      input.addEventListener('focus', () => input.select());
+      input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') input.blur(); else if (e.key === 'Escape') { input.value = show(); input.blur(); } });
+      input.addEventListener('change', () => {
+        const d = parseDim(input.value);
+        const fail = (msg) => { toast(msg); input.value = show(); };
+        if (d.error) return fail('Type a number, a name (like A), or name=value');
+        if (d.value !== undefined && !valid(d.value)) return fail(kind === 'angle' ? 'Angle must be between 0 and 360°' : 'Length must be more than 0');
+        remember();
+        if (d.name) {
+          const pm = params[d.name];
+          if (pm && pm.kind !== kind) { undo.pop(); return fail(`${d.name} is ${pm.kind === 'angle' ? 'an angle' : 'a length'}`); }
+          if (!pm) params[d.name] = { kind, value: d.value ?? Math.round(get() * 1000) / 1000 };
+          else if (d.value !== undefined) pm.value = d.value;
+          setRef(d.name);
+          prune();
+          settle({});
+        } else {
+          setRef(undefined);
+          prune();
+          const hold = holdFor(d.value);
+          if (hold === false) { undo.pop(); return fail('Both neighbouring points are locked'); }
+          settle(hold);
+        }
+        panel(); draw();
+      });
+      fields.push({ input, get: show, raw: true });
+      return input;
+    };
     const section = (title, rows, open = true) => h('details', { class: 'insp-section', open }, h('summary', {}, title), ...rows);
 
     function panel() {
@@ -524,29 +724,46 @@ export function sketchDialog(existing) {
         const rows = [
           h('div', { class: 'xyz xy' }, h('span', {}, ''), h('span', {}, 'X'), h('span', {}, 'Y')),
           h('div', { class: 'xyz xy' }, h('span', {}, 'Centre'), numField(() => f().c[0], (v) => setCentre(0, v)), numField(() => f().c[1], (v) => setCentre(1, v))),
-          h('div', { class: 'xyz xy' }, h('span', {}, 'Size'), numField(() => f().hx * 2, (v) => setSize(0, v), { min: 0.1 }), numField(() => f().hy * 2, (v) => setSize(1, v), { min: 0.1 })),
+          h('div', { class: 'xyz xy' }, h('span', {}, 'Size'), ...(it.type === 'poly'
+            ? [numField(() => f().hx * 2, (v) => { setSize(0, v); settle({}); }, { min: 0.1 }), numField(() => f().hy * 2, (v) => { setSize(1, v); settle({}); }, { min: 0.1 })]
+            : [0, 1].map((axis) => dimField({
+              kind: 'length', valid: (v) => v > 0,
+              get: () => (axis ? f().hy : f().hx) * 2,
+              getRef: () => (axis ? it.hRef : it.wRef),
+              setRef: (nm) => { const key = axis ? 'hRef' : 'wRef'; if (nm) it[key] = nm; else delete it[key]; },
+              holdFor: (v) => { setSize(axis, v); return {}; },
+            })))),
           h('div', { class: 'xyz xy' }, h('span', {}, 'Rotate'), rotIn, h('span', { class: 'sketch-angle' }, it.type === 'poly' ? '' : `${fmt(it.rot || 0)}°`)),
         ];
         if (anyLocked(it)) for (const el of rows.flatMap((r) => [...r.querySelectorAll('input')])) { el.disabled = true; el.title = 'Locked points pin this shape'; }
         side.append(section('Position & size', rows));
         if (it.type === 'poly') {
           const list = h('div', { class: 'sketch-points' },
-            h('div', { class: 'xyz xya' }, h('span', {}, ''), h('span', {}, 'X'), h('span', {}, 'Y'), h('span', {}, 'Angle'), h('span', {}, '')));
+            h('div', { class: 'xyz xya' }, h('span', {}, ''), h('span', {}, 'X'), h('span', {}, 'Y'), h('span', {}, 'Angle'), h('span', {}, 'Edge'), h('span', {}, '')));
           const n = it.pts.length;
           it.pts.forEach((p, i) => {
             const locked = isLocked(it, i);
             const next = (i + 1) % n, prev = (i - 1 + n) % n;
-            const ang = numField(() => interiorAngles(it.pts)[i], (v) => {
-              const ok = setInteriorAngle(it, i, v);
-              if (ok === 'locked') toast('Both neighbouring points are locked');
-              else if (!ok) toast('Angle must be between 0 and 360°');
-            }, { min: 0.1 });
-            ang.max = 359.9;
             const mover = !isLocked(it, next) ? next : !isLocked(it, prev) ? prev : -1;
-            ang.title = mover < 0 ? 'Both neighbouring points are locked' : `Interior angle at point ${i + 1}: point ${mover + 1} moves to match`;
-            if (mover < 0) ang.disabled = true;
-            const x = numField(() => it.pts[i][0], (v) => { it.pts[i] = [v, it.pts[i][1]]; });
-            const y = numField(() => it.pts[i][1], (v) => { it.pts[i] = [it.pts[i][0], v]; });
+            const ang = dimField({
+              kind: 'angle', valid: (v) => v > 0 && v < 360,
+              get: () => interiorAngles(it.pts)[i],
+              getRef: () => it.angleRef && it.angleRef[i],
+              setRef: (nm) => refArray(it, 'angleRef', i, nm),
+              holdFor: (v) => (setInteriorAngle(it, i, v) === true ? { cons: [{ it, type: 'angle', i, value: v }] } : false),
+            });
+            if (mover < 0 && !(it.angleRef && it.angleRef[i])) ang.disabled = true;
+            const len = dimField({
+              kind: 'length', valid: (v) => v > 0,
+              get: () => edgeLen(it.pts, i),
+              getRef: () => it.lenRef && it.lenRef[i],
+              setRef: (nm) => refArray(it, 'lenRef', i, nm),
+              holdFor: (v) => (setEdgeLength(it, i, v) === true ? { cons: [{ it, type: 'len', i, value: v }] } : false),
+            });
+            len.title = `Edge ${i + 1} to ${next + 1}. ${len.title}`;
+            const hold = { fixed: new Set([it.id + ':' + i]) };
+            const x = numField(() => it.pts[i][0], (v) => { it.pts[i] = [v, it.pts[i][1]]; settle(hold); });
+            const y = numField(() => it.pts[i][1], (v) => { it.pts[i] = [it.pts[i][0], v]; settle(hold); });
             if (locked) { x.disabled = true; y.disabled = true; }
             const lockBtn = button({ icon: locked ? 'lock' : 'unlock', title: locked ? `Unlock point ${i + 1}` : `Lock point ${i + 1}`, cls: 'btn-ghost sketch-lock' + (locked ? ' active' : ''), onClick: () => {
               remember();
@@ -555,10 +772,34 @@ export function sketchDialog(existing) {
               if (lock.some(Boolean)) it.lock = lock; else delete it.lock;
               panel(); draw();
             } });
-            list.append(h('div', { class: 'xyz xya' }, h('span', {}, String(i + 1)), x, y, ang, lockBtn));
+            list.append(h('div', { class: 'xyz xya' }, h('span', {}, String(i + 1)), x, y, ang, len, lockBtn));
           });
           side.append(section('Points', [list]));
         }
+      }
+      const names = Object.keys(params).sort();
+      if (names.length) {
+        const rows = names.map((nm) => {
+          const pm = params[nm];
+          const v = numField(() => pm.value, (val) => {
+            if (pm.kind === 'angle' ? !(val > 0 && val < 360) : !(val > 0)) { undo.pop(); toast(pm.kind === 'angle' ? 'Angle must be between 0 and 360°' : 'Length must be more than 0'); return; }
+            pm.value = val;
+            settle({});
+            panel();
+          }, { min: 0.001 });
+          const del = button({ icon: 'trash', title: `Remove ${nm} (the dimensions keep their current values)`, cls: 'btn-ghost sketch-lock', onClick: () => {
+            remember();
+            for (const it of items) {
+              for (const key of ['angleRef', 'lenRef']) if (it[key]) { it[key] = it[key].map((x) => (x === nm ? null : x)); if (!it[key].some(Boolean)) delete it[key]; }
+              if (it.wRef === nm) delete it.wRef;
+              if (it.hRef === nm) delete it.hRef;
+            }
+            delete params[nm];
+            panel(); draw();
+          } });
+          return h('div', { class: 'xyz dimrow' }, h('span', { class: 'dim-name' }, nm), v, h('span', {}, unitOf(pm.kind)), del);
+        });
+        side.append(section('Dimensions', rows));
       }
       side.append(section('Pull up', [h('div', { class: 'xyz xy' }, h('span', {}, 'Height'), numField(() => depth, (v) => { depth = v; }, { min: 0.2 }), h('span', {}, 'mm'))]));
     }
@@ -590,7 +831,9 @@ export function sketchDialog(existing) {
       if (draft && draft.type === 'poly') finishPoly();
       const polys = sketchPolys(items);
       if (!polys) { toast(items.length ? 'The holes remove everything' : 'Draw something first'); return; }
-      result = { polys, depth, sketch: { items: items.map(({ id, ...rest }) => { void id; return rest; }), depth, sheet } };
+      const used = usedNames();
+      const keep = Object.fromEntries(Object.entries(params).filter(([k]) => used.has(k)));
+      result = { polys, depth, sketch: { items: items.map(({ id, ...rest }) => { void id; return rest; }), depth, sheet, ...(Object.keys(keep).length ? { params: keep } : {}) } };
       m.close();
     };
 
@@ -607,6 +850,6 @@ export function sketchDialog(existing) {
     if (!items.length) setTool('rect'); else setTool('select');
     panel(); draw();
     // exposed for automated checks
-    m.el.__sketch = { add: (it) => { items.push({ ...it, id: nextId++ }); panel(); draw(); }, done, items: () => items, select: (i) => pick(items[i] && items[i].id), toPx, frameOf, handles: () => (sel() ? handles(sel()) : []), angles: () => (sel() && sel().pts ? interiorAngles(sel().pts) : null) };
+    m.el.__sketch = { add: (it) => { items.push({ ...it, id: nextId++ }); panel(); draw(); }, done, items: () => items, select: (i) => pick(items[i] && items[i].id), toPx, frameOf, handles: () => (sel() ? handles(sel()) : []), angles: () => (sel() && sel().pts ? interiorAngles(sel().pts) : null), lengths: () => (sel() && sel().pts ? sel().pts.map((_, i) => edgeLen(sel().pts, i)) : null), params: () => params };
   });
 }
