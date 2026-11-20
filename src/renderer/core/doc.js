@@ -60,8 +60,12 @@ const scaleKey = (node) => {
 };
 const roundKey = (node) => (node.round > 0 ? '~' + (node.roundStyle === 'bevel' ? 'b' : 'r') + round5(node.round) + '*' + scaleKey(node) : '');
 
+// Edge rounds depend on the node's scale too: fillets are made at the shape's real size.
+const edgeKey = (node) => '~e' + scaleKey(node) + ':' + node.edgeRounds.map((e) => e.sig.m.join(',') + '/' + e.sig.d.join(',') + '/' + e.sig.l + '/' + round5(e.r)).join(';');
+
 export function geomKey(node) {
   if (node.round > 0) return geomKey({ ...node, round: 0 }) + roundKey(node);
+  if (node.edgeRounds && node.edgeRounds.length) return geomKey({ ...node, edgeRounds: null }) + edgeKey(node);
   if (node.type === 'shape') return node.kind + paramKey(node.params);
   const parts = node.children.map((c) =>
     geomKey(c) + '@' + c.matrix.map(round5).join(',') + (c.hole ? 'h' : 's') +
@@ -126,6 +130,11 @@ export function deserializeDoc(text) {
   const revive = (node) => {
     const out = { hole: false, transparent: false, locked: false, hidden: false, name: '', ...node };
     out.matrix = Array.isArray(node.matrix) && node.matrix.length === 16 ? node.matrix.map(Number) : [...IDENT];
+    if (out.edgeRounds !== undefined) {
+      const ok = (e) => e && e.sig && [e.sig.m, e.sig.d].every((v) => Array.isArray(v) && v.length === 3 && v.every(isFinite)) && isFinite(e.sig.l) && e.r > 0;
+      out.edgeRounds = Array.isArray(out.edgeRounds) ? out.edgeRounds.filter(ok) : [];
+      if (!out.edgeRounds.length) delete out.edgeRounds;
+    }
     if (out.params && out.params.mesh && out.params.mesh.ref) {
       const id = out.params.mesh.ref;
       if (!cache[id]) cache[id] = { id, positions: fromBase64(raw.meshes[id]) };

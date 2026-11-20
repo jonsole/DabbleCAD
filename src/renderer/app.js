@@ -749,6 +749,7 @@ export class App {
     if (key === 'Escape') {
       done();
       if (ed.placing) ed.cancelPlace();
+      else if (ed.edgeMode) ed.exitEdgeMode();
       else if (ed.tool !== 'select') ed.setTool('select');
       else if (ed.selection.size) ed.clearSelection();
       else if (ed.editing) ed.exitGroup();

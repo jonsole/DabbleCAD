@@ -105,11 +105,57 @@ export class Inspector {
     const style = h('select', { class: 'input' }, h('option', { value: 'round' }, 'Round'), h('option', { value: 'bevel' }, 'Bevel'));
     style.value = first.roundStyle === 'bevel' ? 'bevel' : 'round';
     style.addEventListener('change', () => ed._busy(() => ed.patchSelection({ roundStyle: style.value })));
-    return this._section('edges', 'Edges', [
-      h('div', { class: 'param' }, h('label', {}, 'Radius'), range, num),
-      h('div', { class: 'param' }, h('label', {}, 'Style'), style),
-      note,
-    ]);
+    const rows = [];
+    if (nodes.length === 1) rows.push(...this._pickedEdgeRows(first));
+    if (!ed.edgeMode) {
+      rows.push(h('div', { class: 'insp-subhead' }, 'All edges'),
+        h('div', { class: 'param' }, h('label', {}, 'Radius'), range, num),
+        h('div', { class: 'param' }, h('label', {}, 'Style'), style),
+        note);
+    }
+    if (ed.edgeMode) this.open.edges = true;
+    return this._section('edges', 'Edges', rows);
+  }
+
+  // Round chosen edges, each with its own radius: pick them in the view while in edge mode.
+  _pickedEdgeRows(node) {
+    const ed = this.editor;
+    const info = ed.edgeInfo();
+    if (!info) {
+      const n = (node.edgeRounds || []).length;
+      const rows = [h('div', { class: 'insp-row-btns' },
+        button({ label: 'Pick edges to round', icon: 'pencil', cls: 'btn-outline', title: 'Click edges in the view and give them their own radius', onClick: () => ed.enterEdgeMode() }))];
+      if (n) {
+        rows.push(h('div', { class: 'insp-note' }, `${n} edge${n > 1 ? 's' : ''} rounded individually.`),
+          h('div', { class: 'insp-row-btns' }, button({ label: 'Remove edge rounds', cls: 'btn-outline', onClick: () => ed._busy(() => ed.patchSelection((x) => (x.id === node.id ? { edgeRounds: undefined } : {}))) })));
+      }
+      return rows;
+    }
+    const picked = info.picked;
+    const radii = picked.map((i) => info.radii[i]).filter((r) => r > 0);
+    const same = radii.length && radii.every((r) => Math.abs(r - radii[0]) < 1e-6);
+    if (same && radii.length === picked.length) this.edgeRadius = radii[0];
+    const value = this.edgeRadius ?? 2;
+    const range = h('input', { type: 'range', min: 0.1, max: 10, step: 0.1, value });
+    const num = h('input', { class: 'input', type: 'number', min: 0.1, max: 50, step: 0.1, value });
+    range.addEventListener('input', () => { num.value = range.value; this.edgeRadius = parseFloat(range.value); });
+    num.addEventListener('change', () => { const v = parseFloat(num.value); if (v > 0) { this.edgeRadius = v; range.value = v; } });
+    num.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') num.dispatchEvent(new Event('change')); });
+    const status = picked.length
+      ? `${picked.length} edge${picked.length > 1 ? 's' : ''} picked` + (radii.length ? (same ? `, rounded ${radii[0]} mm.` : ', mixed radii.') : '.')
+      : 'Click edges in the view to pick them.';
+    const roundBtn = button({ label: radii.length ? 'Update radius' : 'Round picked', cls: 'btn-primary', onClick: () => ed.roundPickedEdges(this.edgeRadius ?? 2) });
+    const unBtn = button({ label: 'Unround', cls: 'btn-outline', title: 'Make the picked edges sharp again', onClick: () => ed.roundPickedEdges(0) });
+    if (!picked.length) roundBtn.disabled = true;
+    if (!radii.length) unBtn.disabled = true;
+    return [
+      h('div', { class: 'insp-note' }, `${status} Orange edges are rounded. ${info.count} edges in total.`),
+      h('div', { class: 'param' }, h('label', {}, 'Edge radius'), range, num),
+      h('div', { class: 'insp-row-btns' }, roundBtn, unBtn),
+      h('div', { class: 'insp-row-btns' },
+        button({ label: picked.length === info.count ? 'Pick none' : 'Pick all', cls: 'btn-outline', onClick: () => ed.pickAllEdges(picked.length !== info.count) }),
+        button({ label: 'Done', cls: 'btn-outline', title: 'Stop picking edges (Esc)', onClick: () => ed.exitEdgeMode() })),
+    ];
   }
 
   _section(key, title, rows) {

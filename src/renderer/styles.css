@@ -180,6 +180,7 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .check { display: flex; align-items: center; gap: 8px; margin: 7px 0; font-size: 12.5px; cursor: pointer; }
 .check input { accent-color: var(--accent); width: 15px; height: 15px; }
 .insp-note { color: var(--muted); font-size: 12px; padding: 4px 0; }
+.insp-subhead { font-size: 12px; font-weight: 600; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
 .color-pop { position: fixed; z-index: 60; width: 232px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 10px; }
 .color-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 5px; }
 .color-cell { aspect-ratio: 1; border-radius: 5px; border: 1px solid rgba(128,128,128,.45); cursor: pointer; padding: 0; }

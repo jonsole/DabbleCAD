@@ -7,6 +7,7 @@ import { Brush, Evaluator, ADDITION, SUBTRACTION, INTERSECTION } from 'three-bvh
 import { KINDS } from './shapes.js';
 import { geomKey, mat4 } from './doc.js';
 import { solidBoolean, withSolid } from './solid.js';
+import { findEdges, edgeSignature, matchRounds, filletEdges } from './edges.js';
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -213,21 +214,95 @@ function roundEdges(base, radius, style) {
  * would stretch the radius along any resized axis. Instead stretch the shape first, round it at
  * its real size, then undo the stretch so the matrix puts it back (and normals stay correct).
  */
-function roundInWorldScale(base, node) {
+/** Size the node's own matrix scales its geometry by, per local axis. */
+function nodeScale(node) {
   const m = node.matrix || [];
   const axis = (i) => Math.max(1e-6, Math.hypot(m[i] ?? 0, m[i + 1] ?? 0, m[i + 2] ?? 0) || 1);
-  const sx = axis(0), sy = axis(4), sz = axis(8);
-  if (Math.abs(sx - 1) < 1e-6 && Math.abs(sy - 1) < 1e-6 && Math.abs(sz - 1) < 1e-6) {
-    return roundEdges(base, node.round, node.roundStyle);
-  }
+  return [axis(0), axis(4), axis(8)];
+}
+
+/** Position (and colour) of a geometry, stretched to the node's real size. */
+function scaledCopy(base, [sx, sy, sz]) {
   const pre = new THREE.BufferGeometry();
   for (const name of ['position', 'color']) if (base.attributes[name]) pre.setAttribute(name, base.attributes[name].clone());
   if (base.index) pre.setIndex(base.index.clone());
   pre.scale(sx, sy, sz);
   pre.computeBoundingBox();
+  return pre;
+}
+
+function roundInWorldScale(base, node) {
+  const [sx, sy, sz] = nodeScale(node);
+  if (Math.abs(sx - 1) < 1e-6 && Math.abs(sy - 1) < 1e-6 && Math.abs(sz - 1) < 1e-6) {
+    return roundEdges(base, node.round, node.roundStyle);
+  }
+  const pre = scaledCopy(base, [sx, sy, sz]);
   const out = roundEdges(pre, node.round, node.roundStyle);
   if (!out.attributes.normal) return base.clone(); // rounding was skipped: keep the original shape
   out.scale(1 / sx, 1 / sy, 1 / sz);
+  return out;
+}
+
+const edgeCache = new Map();
+
+/**
+ * The sharp edges of a node's own shape (before any edge rounding is applied), found at its
+ * real size. `lines` are the edges in the node's local frame, for drawing and picking;
+ * `sigs` identify them so a rounded edge can be found again after the shape changes.
+ */
+export function nodeEdgeData(node) {
+  const plain = { ...node, round: 0, edgeRounds: null };
+  const scale = nodeScale(node);
+  const key = geomKey(plain) + '#' + scale.map((v) => v.toFixed(5)).join(',');
+  let d = edgeCache.get(key);
+  if (d) return d;
+  const base = getGeometry(plain);
+  const scaled = scaledCopy(base, scale);
+  const toLocal = (p) => p.set(p.x / scale[0], p.y / scale[1], p.z / scale[2]);
+  const chains = base.attributes.position.count && triCount(base) <= EDGE_LIMIT ? findEdges(scaled) : [];
+  const bb = base.boundingBox || new THREE.Box3().setFromBufferAttribute(base.attributes.position);
+  d = {
+    key, scale, scaled, chains,
+    sigs: chains.map((c) => edgeSignature(c, toLocal)),
+    lines: chains.map((c) => c.points.map((p) => toLocal(p.clone()))),
+    size: Math.max(1e-3, bb.min.distanceTo(bb.max)),
+    tooDetailed: triCount(base) > EDGE_LIMIT,
+  };
+  edgeCache.set(key, d);
+  if (edgeCache.size > 24) edgeCache.delete(edgeCache.keys().next().value);
+  return d;
+}
+
+export const EDGE_LIMIT = 60000; // triangles; edge finding and fillets get slow beyond this
+
+/** For each edge of nodeEdgeData(node), the index into node.edgeRounds rounding it (or undefined). */
+export function edgeRoundIndex(node) {
+  const d = nodeEdgeData(node);
+  return node.edgeRounds && node.edgeRounds.length ? matchRounds(node.edgeRounds, d.sigs, d.size) : new Array(d.sigs.length);
+}
+
+/** For each edge of nodeEdgeData(node), the fillet radius applied to it (or undefined). */
+export function edgeRadii(node) {
+  return edgeRoundIndex(node).map((k) => (k === undefined ? undefined : node.edgeRounds[k].r));
+}
+
+function applyEdgeRounds(node) {
+  const base = getGeometry({ ...node, edgeRounds: null });
+  const d = nodeEdgeData(node);
+  const radii = matchRounds(node.edgeRounds, d.sigs, d.size).map((k) => (k === undefined ? undefined : node.edgeRounds[k].r));
+  const bb = d.scaled.boundingBox;
+  const maxR = Math.min(bb.max.x - bb.min.x, bb.max.y - bb.min.y, bb.max.z - bb.min.z) / 2 - 0.05;
+  const items = [];
+  radii.forEach((r, j) => { if (r > 0) items.push({ chain: d.chains[j], r: Math.min(r, maxR) }); });
+  stats.edgeRoundsLost = node.edgeRounds.length - items.length;
+  stats.edgeRoundsFailed = 0;
+  const keep = () => { const g = base.clone(); g.userData = {}; return g; };
+  if (!items.length || !(maxR > 0.01)) return keep();
+  const res = filletEdges(d.scaled, items);
+  if (!res) { stats.edgeRoundsFailed = items.length; return keep(); }
+  stats.edgeRoundsFailed = res.failed;
+  const out = toCreasedNormals(res.geometry, CREASE);
+  out.scale(1 / d.scale[0], 1 / d.scale[1], 1 / d.scale[2]);
   return out;
 }
 
@@ -247,6 +322,8 @@ export function getGeometry(node) {
   }
   if (node.round > 0) {
     g = finalize(roundInWorldScale(getGeometry({ ...node, round: 0 }), node));
+  } else if (node.edgeRounds && node.edgeRounds.length) {
+    g = finalize(applyEdgeRounds(node));
   } else if (node.type === 'group') {
     g = finalize(buildGroup(node));
   } else {

@@ -1,8 +1,11 @@
 // Editor: owns the document, selection, tools and every modelling command.
 import * as THREE from 'three';
 import { History, cloneNode, makeGroup, mat4, uid, newDoc } from './core/doc.js';
-import { getGeometry, expandBox, getEdges, measure, stats as geoStats } from './core/geometry.js';
+import { getGeometry, expandBox, getEdges, measure, nodeEdgeData, edgeRoundIndex, stats as geoStats } from './core/geometry.js';
 import { toast } from './ui/dom.js';
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 
 class Emitter {
   constructor() { this._l = {}; }
@@ -61,6 +64,7 @@ export class Editor extends Emitter {
 
   // ---------------------------------------------------------------- document lifecycle
   load(doc) {
+    this.exitEdgeMode(false);
     this.editing = null;
     this.doc = doc;
     this.selection.clear();
@@ -103,6 +107,10 @@ export class Editor extends Emitter {
     this.doc.notes = state.notes.map((n) => ({ ...n, pos: [...n.pos] }));
     const ids = new Set(this.doc.nodes.map((n) => n.id));
     this.selection = new Set(state.selection.filter((id) => ids.has(id)));
+    if (this.edgeMode) {
+      if (ids.has(this.edgeMode.id) && this.selection.has(this.edgeMode.id)) { this.edgeMode.picked.clear(); this.edgeMode.hover = -1; }
+      else this.exitEdgeMode(false);
+    }
     this.dupState = null;
     this.alignAnchor = null;
     this.sync();
@@ -134,6 +142,10 @@ export class Editor extends Emitter {
       const solid = mesh.userData.solidMaterial;
       if (solid && solid !== mesh.material) solid.dispose();
       this.meshes.delete(id);
+    }
+    if (this.edgeMode) {
+      if (!this.meshes.has(this.edgeMode.id)) this.exitEdgeMode(false);
+      else this._syncEdgeOverlay();
     }
     this.viewport.requestRender();
   }
@@ -178,7 +190,8 @@ export class Editor extends Emitter {
   }
 
   _syncOutline(mesh, selected) {
-    const want = selected ? selLineMat : this.settings.edges ? edgeLineMat : null;
+    const picking = this.edgeMode && this.edgeMode.id === mesh.userData.id;
+    const want = selected && !picking ? selLineMat : this.settings.edges && !picking ? edgeLineMat : null;
     let line = mesh.userData.line;
     if (!want) {
       if (line) { mesh.remove(line); mesh.userData.line = null; }
@@ -218,6 +231,7 @@ export class Editor extends Emitter {
   movableNodes() { return this.selectedNodes().filter((n) => !n.locked); }
 
   select(ids, { add = false, toggle = false } = {}) {
+    this.exitEdgeMode(false);
     if (!add && !toggle) this.selection.clear();
     for (const id of ids) {
       if (toggle && this.selection.has(id)) this.selection.delete(id);
@@ -298,6 +312,7 @@ export class Editor extends Emitter {
 
   setTool(tool) {
     if (this.placing && tool !== 'place') this.cancelPlace();
+    if (tool !== 'select') this.exitEdgeMode(false);
     this.tool = this.tool === tool && tool !== 'select' && tool !== 'place' ? 'select' : tool;
     if (this.tool !== 'align') this.alignAnchor = null;
     this.viewport.canvas.style.cursor = ['workplane', 'ruler', 'note'].includes(this.tool) ? 'crosshair' : '';
@@ -334,22 +349,199 @@ export class Editor extends Emitter {
     return { node: this.node(hit.object.userData.id), point: hit.point.clone(), normal, mesh: hit.object };
   }
 
+  // ---------------------------------------------------------------- edge rounding
+  // Edge mode: the sharp edges of the one selected shape or group are drawn over it and can be
+  // clicked to pick them, then rounded with their own radius. Edges are stored by where they
+  // are on the shape (node.edgeRounds), so they survive resizing and edits nearby.
+
+  enterEdgeMode() {
+    const nodes = this.movableNodes();
+    if (nodes.length !== 1 || nodes[0].hidden) return false;
+    const d = nodeEdgeData(nodes[0]);
+    if (d.tooDetailed) { toast('This shape has too much detail to pick edges', 'warn', 4000); return false; }
+    if (!d.chains.length) { toast('This shape has no sharp edges to round', 'warn', 4000); return false; }
+    this.edgeMode = { id: nodes[0].id, picked: new Set(), hover: -1 };
+    this.refreshOutlines();
+    this._syncEdgeOverlay();
+    this.emit('selection');
+    return true;
+  }
+
+  exitEdgeMode(emit = true) {
+    if (!this.edgeMode) return;
+    const mesh = this.meshes.get(this.edgeMode.id);
+    this.edgeMode = null;
+    if (mesh && mesh.userData.edgeOverlay) {
+      for (const l of mesh.userData.edgeOverlay) { mesh.remove(l); l.geometry.dispose(); l.material.dispose(); }
+      mesh.userData.edgeOverlay = null;
+    }
+    this.viewport.canvas.style.cursor = '';
+    this.refreshOutlines();
+    if (emit) this.emit('selection');
+  }
+
+  /** Edge mode state for the inspector: the node, its edges, which are picked and their radii. */
+  edgeInfo() {
+    const em = this.edgeMode;
+    const node = em && this.node(em.id);
+    if (!node) return null;
+    const d = nodeEdgeData(node);
+    const idx = edgeRoundIndex(node);
+    const radii = idx.map((k) => (k === undefined ? undefined : node.edgeRounds[k].r));
+    return { node, count: d.chains.length, picked: [...em.picked], radii, rounded: radii.filter((r) => r > 0).length };
+  }
+
+  pickAllEdges(on = true) {
+    if (!this.edgeMode) return;
+    const d = nodeEdgeData(this.node(this.edgeMode.id));
+    this.edgeMode.picked = new Set(on ? d.chains.map((_, i) => i) : []);
+    this._syncEdgeOverlay();
+    this.emit('selection');
+  }
+
+  /** Round the picked edges with radius r (0 removes their rounding). */
+  async roundPickedEdges(r) {
+    const em = this.edgeMode;
+    const node = em && this.node(em.id);
+    if (!node || !em.picked.size) return;
+    const d = nodeEdgeData(node);
+    const idx = edgeRoundIndex(node);
+    const replaced = new Set([...em.picked].map((i) => idx[i]).filter((k) => k !== undefined));
+    const keep = (node.edgeRounds || []).filter((_, k) => !replaced.has(k));
+    const added = r > 0 ? [...em.picked].map((i) => ({ sig: d.sigs[i], r })) : [];
+    const next = [...keep, ...added];
+    await this._busy(() => {
+      if (next.length) node.edgeRounds = next; else delete node.edgeRounds;
+      this.sync();
+      this.commit();
+    });
+    if (r > 0) {
+      const failed = geoStats.edgeRoundsFailed || 0;
+      if (failed) toast(failed === added.length ? 'Those edges could not be rounded (try a smaller radius)' : `${failed} edge${failed > 1 ? 's' : ''} could not be rounded`, 'warn', 4000);
+    }
+    this.emit('selection');
+  }
+
+  _syncEdgeOverlay() {
+    const em = this.edgeMode;
+    const node = em && this.node(em.id);
+    const mesh = em && this.meshes.get(em.id);
+    if (!node || !mesh) return;
+    const d = nodeEdgeData(node);
+    if (em.key !== d.key) { if (em.key) em.picked.clear(); em.key = d.key; } // edges were re-found: old picks no longer apply
+    const idx = edgeRoundIndex(node);
+    const pos = [], col = [];
+    const C = { base: new THREE.Color(0x9aa7b8), round: new THREE.Color(0xff9800), pick: new THREE.Color(0x29c5ff), hover: new THREE.Color(0xffffff) };
+    d.lines.forEach((pts, i) => {
+      const c = i === em.hover ? C.hover : em.picked.has(i) ? C.pick : idx[i] !== undefined ? C.round : C.base;
+      const n = pts.length, segs = d.chains[i].closed ? n : n - 1;
+      for (let k = 0; k < segs; k++) {
+        const a = pts[k], b = pts[(k + 1) % n];
+        pos.push(a.x, a.y, a.z, b.x, b.y, b.z);
+        col.push(c.r, c.g, c.b, c.r, c.g, c.b);
+      }
+    });
+    const geo = new LineSegmentsGeometry();
+    geo.setPositions(pos);
+    geo.setColors(col);
+    let lines = mesh.userData.edgeOverlay;
+    if (!lines) {
+      // thick lines, plus a faint copy drawn through the model so edges on the far side can still be found
+      const behind = new LineSegments2(geo, new LineMaterial({ vertexColors: true, linewidth: 1.5, transparent: true, opacity: 0.25, depthTest: false }));
+      const front = new LineSegments2(geo, new LineMaterial({ vertexColors: true, linewidth: 3 }));
+      behind.renderOrder = 5; front.renderOrder = 6;
+      for (const l of [behind, front]) { l.raycast = () => {}; mesh.add(l); }
+      lines = mesh.userData.edgeOverlay = [behind, front];
+    } else {
+      const old = lines[0].geometry;
+      for (const l of lines) l.geometry = geo;
+      old.dispose();
+    }
+    for (const l of lines) l.material.resolution.set(this.viewport.width, this.viewport.height);
+    mesh.updateMatrixWorld(true);
+    this.viewport.requestRender();
+  }
+
+  /** Index of the edge under the pointer (nearest on screen, not hidden by the model), or -1. */
+  _pickEdge(e) {
+    const em = this.edgeMode;
+    const node = this.node(em.id), mesh = this.meshes.get(em.id);
+    if (!node || !mesh) return -1;
+    const vp = this.viewport;
+    const d = nodeEdgeData(node);
+    const idx = edgeRoundIndex(node);
+    const rect = vp.canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const W = mesh.matrixWorld;
+    const a = new THREE.Vector3(), b = new THREE.Vector3(), pa = {}, pb = {};
+    const cands = [];
+    d.lines.forEach((pts, i) => {
+      let best = Infinity, at = null;
+      const n = pts.length, segs = d.chains[i].closed ? n : n - 1;
+      for (let k = 0; k < segs; k++) {
+        a.copy(pts[k]).applyMatrix4(W); b.copy(pts[(k + 1) % n]).applyMatrix4(W);
+        vp.project(a, pa); vp.project(b, pb);
+        if (pa.behind || pb.behind) continue;
+        const dx = pb.x - pa.x, dy = pb.y - pa.y, L = dx * dx + dy * dy;
+        const t = L > 0 ? Math.min(1, Math.max(0, ((mx - pa.x) * dx + (my - pa.y) * dy) / L)) : 0;
+        const dist = Math.hypot(pa.x + t * dx - mx, pa.y + t * dy - my);
+        if (dist < best) { best = dist; at = a.clone().lerp(b, t); }
+      }
+      if (best < 10) cands.push({ i, dist: best, at });
+    });
+    if (!cands.length) return -1;
+    cands.sort((p, q) => p.dist - q.dist);
+    const ray = vp.rayFromClient(e.clientX, e.clientY);
+    const hits = vp.pick(e.clientX, e.clientY, [...this.meshes.values()].filter((m) => m.visible));
+    const front = hits.length ? hits[0].distance : Infinity;
+    const s = node.matrix;
+    const scale = Math.max(Math.hypot(s[0], s[1], s[2]), Math.hypot(s[4], s[5], s[6]), Math.hypot(s[8], s[9], s[10]));
+    for (const c of cands) {
+      const along = c.at.clone().sub(ray.origin).dot(ray.direction);
+      // a rounded edge sits off the surface (or inside a filled corner), so allow for its radius
+      const r = idx[c.i] !== undefined ? node.edgeRounds[idx[c.i]].r : 0;
+      if (along <= front + vp.unitsPerPixel(c.at) * 8 + r * scale * 1.5) return c.i;
+    }
+    return -1;
+  }
+
+  _edgeHover(e) {
+    const i = this._pickEdge(e);
+    this.viewport.canvas.style.cursor = i >= 0 ? 'pointer' : '';
+    if (i !== this.edgeMode.hover) { this.edgeMode.hover = i; this._syncEdgeOverlay(); }
+  }
+
+  _edgeClick(e) {
+    const em = this.edgeMode;
+    const i = this._pickEdge(e);
+    if (i < 0) {
+      const hit = this.pickNode(e);
+      if (hit && hit.node.id !== em.id) this.select([hit.node.id]); // clicking another shape leaves edge mode
+      return;
+    }
+    if (em.picked.has(i)) em.picked.delete(i); else em.picked.add(i);
+    this._syncEdgeOverlay();
+    this.emit('selection');
+  }
+
   // ---------------------------------------------------------------- pointer handling
   _hover(e) {
     if (this.disabled) return;
+    if (this.edgeMode) return this._edgeHover(e);
     if (this.tool === 'workplane' || this.tool === 'ruler' || this.tool === 'note' || this.placing) return;
     const hit = this.pickNode(e);
     this.viewport.canvas.style.cursor = hit && !hit.node.locked ? 'move' : '';
   }
 
   _dblclick(e) {
-    if (this.disabled) return;
+    if (this.disabled || this.edgeMode) return;
     const hit = this.pickNode(e);
     if (hit) this.emit('dblclick', hit.node);
   }
 
   _leftDown(e) {
     if (this.disabled || this.placing) return; // handled by the placement listeners
+    if (this.edgeMode) return this._edgeClick(e);
     if (this.tool === 'workplane') return this._pickWorkplane(e);
     if (this.tool === 'ruler') {
       const p = this.planePoint(e);
@@ -737,6 +929,7 @@ export class Editor extends Emitter {
 
   /** Open a group for editing: its parts become ordinary shapes until exitGroup(). */
   enterGroup(node) {
+    this.exitEdgeMode(false);
     if (this.editing || !node || node.type !== 'group' || node.locked) return false;
     const gm = mat4(node.matrix);
     const kids = node.children.map((c) => {
@@ -759,6 +952,7 @@ export class Editor extends Emitter {
 
   /** Close the group opened with enterGroup(), re-combining its parts (and anything added meanwhile). */
   async exitGroup() {
+    this.exitEdgeMode(false);
     const e = this.editing;
     if (!e) return;
     this.editing = null;

@@ -167,7 +167,7 @@ export class Gizmo {
 
   // ---------------------------------------------------------------- state
   _boxOnly() {
-    const nodes = this.editor.selectedNodes();
+    const nodes = this.editor.edgeMode ? [] : this.editor.selectedNodes(); // no handles while picking edges
     const b = nodes.length ? this.editor.bounds(nodes) : null;
     this.box = b && !b.isEmpty() ? b : null;
     this.viewport.requestRender();
