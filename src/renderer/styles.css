@@ -432,7 +432,14 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .sketch-main { display: flex; gap: 14px; align-items: flex-start; }
 .sketch-canvas { width: 760px; max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 8px; cursor: crosshair; touch-action: none; outline: none; }
 .sketch-canvas:focus-visible { box-shadow: 0 0 0 2px var(--accent, #4c8dff); }
-.sketch-side { width: 240px; flex: none; display: flex; flex-direction: column; gap: 8px; max-height: 460px; overflow: auto; }
+.sketch-side { width: 262px; flex: none; display: flex; flex-direction: column; gap: 8px; max-height: 460px; overflow: auto; }
+.sketch-side.inspector-like { gap: 0; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; align-self: stretch; }
+.sketch-side .insp-section:last-child { border-bottom: 0; }
+.xyz.xy { grid-template-columns: 46px repeat(2, 1fr); }
+.sketch-angle { font-size: 11.5px; color: var(--muted); padding-left: 2px; }
+.swatch-sketch { background: #3fa7a3; }
+.sketch-bar .btn-icon { width: 34px; padding: 0; justify-content: center; }
+.sketch-bar .sep { width: 1px; align-self: stretch; background: var(--border); margin: 2px 4px; }
 .sketch-side h4 { margin: 6px 0 0; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; opacity: .7; }
 .sketch-field { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
 .sketch-field .input { width: 96px; }
