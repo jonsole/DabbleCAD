@@ -455,6 +455,41 @@ function cornerPiece(api, V, ends, r) {
 }
 
 /**
+ * Where three chamfered convex edges with the same size meet, cut the corner off with a flat
+ * triangle through the points where the chamfer bands meet on each face (the CAD "chamfer
+ * corner"). The piece removed is the pyramid between the corner and that triangle's plane.
+ */
+function chamferCorner(api, V, ends, d) {
+  if (ends.length !== 3) return null;
+  const e = ends.map((x) => x.dir.clone().normalize());
+  // on the face between edges i and j, the two chamfer lines cross at V + d/sin(angle) (ei + ej)
+  const Q = [[0, 1], [0, 2], [1, 2]].map(([i, j]) => {
+    const sin = e[i].clone().cross(e[j]).length();
+    return sin < 1e-3 ? null : V.clone().addScaledVector(e[i].clone().add(e[j]), d / sin);
+  });
+  if (Q.some((q) => !q)) return null;
+  const N = Q[1].clone().sub(Q[0]).cross(Q[2].clone().sub(Q[0]));
+  if (N.lengthSq() < 1e-12) return null;
+  N.normalize();
+  const off = Q[0].clone().sub(V).dot(N);
+  const tips = [];
+  for (const dir of e) {
+    const den = dir.dot(N);
+    if (Math.abs(den) < 1e-6 || off / den <= 0) return null;
+    tips.push(V.clone().addScaledVector(dir, off / den));
+  }
+  // move the corner point outwards so the pyramid's sides sit just outside the faces, leaving
+  // the triangle itself exactly in place
+  const mid = tips[0].clone().add(tips[1]).add(tips[2]).multiplyScalar(1 / 3);
+  const apex = V.clone().addScaledVector(V.clone().sub(mid).normalize(), 4 * EPS);
+  try {
+    return api.Manifold.hull([apex.toArray(), ...tips.map((p) => p.toArray())]);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Round or chamfer the given edges of a closed solid. items: [{ chain, r, t }] in the geometry's
  * own frame, t = 'round' (r is the radius) or 'chamfer' (r is the set-back along each face).
  * `allChains` are all the edges of the solid, used to tell edges made by inside fills from
@@ -518,22 +553,23 @@ export function filletEdges(geo, items, allChains = []) {
     }
 
     const cuts = build(outside);
-    // ball patches where three rounded outside edges meet
+    // corners where three outside edges of the same type and size meet: a ball patch for
+    // rounds, a flat triangle for chamfers
     const corners = [];
     for (const it of mergeItems(outside)) {
       const ch = it.chain;
-      if (it.t === 'chamfer' || ch.closed) continue;
+      if (ch.closed) continue;
       const n = ch.points.length, last = ch.segA.length - 1;
-      corners.push({ V: ch.points[0], nA: ch.segA[0], nB: ch.segB[0], dir: ch.points[1].clone().sub(ch.points[0]).normalize(), r: it.r });
-      corners.push({ V: ch.points[n - 1], nA: ch.segA[last], nB: ch.segB[last], dir: ch.points[n - 2].clone().sub(ch.points[n - 1]).normalize(), r: it.r });
+      corners.push({ V: ch.points[0], nA: ch.segA[0], nB: ch.segB[0], dir: ch.points[1].clone().sub(ch.points[0]).normalize(), r: it.r, t: it.t });
+      corners.push({ V: ch.points[n - 1], nA: ch.segA[last], nB: ch.segB[last], dir: ch.points[n - 2].clone().sub(ch.points[n - 1]).normalize(), r: it.r, t: it.t });
     }
     const used = new Set();
     for (const c of corners) {
       if (used.has(c)) continue;
       const group = corners.filter((o) => near(o.V, c.V));
       group.forEach((o) => used.add(o));
-      if (group.length !== 3 || group.some((o) => Math.abs(o.r - c.r) > 1e-6)) continue;
-      const piece = cornerPiece(api, c.V, group, c.r);
+      if (group.length !== 3 || group.some((o) => Math.abs(o.r - c.r) > 1e-6 || o.t !== c.t)) continue;
+      const piece = c.t === 'chamfer' ? chamferCorner(api, c.V, group, c.r) : cornerPiece(api, c.V, group, c.r);
       if (piece) { made.push(piece); cuts.push(piece); }
     }
     if (cuts.length) { result = result.subtract(unionOf(cuts)); made.push(result); }
