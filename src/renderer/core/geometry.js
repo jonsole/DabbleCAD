@@ -208,6 +208,29 @@ function roundEdges(base, radius, style) {
   return toCreasedNormals(out, style === 'bevel' ? 0.2 : CREASE);
 }
 
+/**
+ * The node's own matrix scales its geometry after this runs, so rounding the unit-sized shape
+ * would stretch the radius along any resized axis. Instead stretch the shape first, round it at
+ * its real size, then undo the stretch so the matrix puts it back (and normals stay correct).
+ */
+function roundInWorldScale(base, node) {
+  const m = node.matrix || [];
+  const axis = (i) => Math.max(1e-6, Math.hypot(m[i] ?? 0, m[i + 1] ?? 0, m[i + 2] ?? 0) || 1);
+  const sx = axis(0), sy = axis(4), sz = axis(8);
+  if (Math.abs(sx - 1) < 1e-6 && Math.abs(sy - 1) < 1e-6 && Math.abs(sz - 1) < 1e-6) {
+    return roundEdges(base, node.round, node.roundStyle);
+  }
+  const pre = new THREE.BufferGeometry();
+  for (const name of ['position', 'color']) if (base.attributes[name]) pre.setAttribute(name, base.attributes[name].clone());
+  if (base.index) pre.setIndex(base.index.clone());
+  pre.scale(sx, sy, sz);
+  pre.computeBoundingBox();
+  const out = roundEdges(pre, node.round, node.roundStyle);
+  if (!out.attributes.normal) return base.clone(); // rounding was skipped: keep the original shape
+  out.scale(1 / sx, 1 / sy, 1 / sz);
+  return out;
+}
+
 function emptyGeometry() {
   const g = new THREE.BufferGeometry();
   for (const name of ['position', 'normal', 'color']) g.setAttribute(name, new THREE.BufferAttribute(new Float32Array(0), 3));
@@ -223,7 +246,7 @@ export function getGeometry(node) {
     return g;
   }
   if (node.round > 0) {
-    g = finalize(roundEdges(getGeometry({ ...node, round: 0 }), node.round, node.roundStyle));
+    g = finalize(roundInWorldScale(getGeometry({ ...node, round: 0 }), node));
   } else if (node.type === 'group') {
     g = finalize(buildGroup(node));
   } else {

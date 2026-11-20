@@ -54,7 +54,11 @@ function paramKey(params) {
 }
 
 // A string that fully determines the geometry of a node (not its own transform / colour).
-const roundKey = (node) => (node.round > 0 ? '~' + (node.roundStyle === 'bevel' ? 'b' : 'r') + round5(node.round) : '');
+const scaleKey = (node) => {
+  const m = node.matrix || [];
+  return [0, 4, 8].map((i) => round5(Math.hypot(m[i] ?? 0, m[i + 1] ?? 0, m[i + 2] ?? 0))).join(',');
+};
+const roundKey = (node) => (node.round > 0 ? '~' + (node.roundStyle === 'bevel' ? 'b' : 'r') + round5(node.round) + '*' + scaleKey(node) : '');
 
 export function geomKey(node) {
   if (node.round > 0) return geomKey({ ...node, round: 0 }) + roundKey(node);
