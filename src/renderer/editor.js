@@ -13,6 +13,24 @@ class Emitter {
   emit(evt, data) { for (const fn of this._l[evt] || []) fn(data); }
 }
 
+/**
+ * Thick edge lines that win the depth test against the faces they lie on. An inside (valley)
+ * edge is the deepest point of its corner, so without this the faces either side hide most of
+ * the line. Each end is pulled 1.5% of its distance toward the camera along its own view ray,
+ * which leaves it at the same place on screen.
+ */
+function edgeLineMaterial() {
+  const m = new LineMaterial({ vertexColors: true, linewidth: 3 });
+  m.onBeforeCompile = (shader) => {
+    shader.vertexShader = shader.vertexShader.replace(
+      'vec4 end = modelViewMatrix * vec4( instanceEnd, 1.0 );',
+      `vec4 end = modelViewMatrix * vec4( instanceEnd, 1.0 );
+      if ( projectionMatrix[ 2 ][ 3 ] == - 1.0 ) { start.xyz *= 0.985; end.xyz *= 0.985; }
+      else { start.z += 0.6; end.z += 0.6; }`);
+  };
+  return m;
+}
+
 const SEL_COLOR = 0x29c5ff;
 const selLineMat = new THREE.LineBasicMaterial({ color: SEL_COLOR });
 const edgeLineMat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.32 });
@@ -491,7 +509,7 @@ export class Editor extends Emitter {
     if (!lines) {
       // thick lines, plus a faint copy drawn through the model so edges on the far side can still be found
       const behind = new LineSegments2(geo, new LineMaterial({ vertexColors: true, linewidth: 1.5, transparent: true, opacity: 0.25, depthTest: false }));
-      const front = new LineSegments2(geo, new LineMaterial({ vertexColors: true, linewidth: 3 }));
+      const front = new LineSegments2(geo, edgeLineMaterial());
       behind.renderOrder = 5; front.renderOrder = 6;
       for (const l of [behind, front]) { l.raycast = () => {}; mesh.add(l); }
       lines = mesh.userData.edgeOverlay = [behind, front];
@@ -534,19 +552,35 @@ export class Editor extends Emitter {
     }
     if (!cands.length) return null;
     cands.sort((p, q) => p.dist - q.dist);
-    const ray = vp.rayFromClient(e.clientX, e.clientY);
-    const hits = vp.pick(e.clientX, e.clientY, [...this.meshes.values()].filter((m) => m.visible));
-    const front = hits.length ? hits[0].distance : Infinity;
+    const meshes = [...this.meshes.values()].filter((m) => m.visible);
     for (const c of cands) {
-      const along = c.at.clone().sub(ray.origin).dot(ray.direction);
-      // a rounded edge sits off the surface (or inside a filled corner), so allow for its size
+      // Visible if nothing is hit before the edge on a ray aimed straight at it. (Aiming through
+      // the pointer instead hides inside edges: beside a valley the surface is nearer than the edge.)
       const k = edgeRoundIndex(c.node)[c.i];
-      const r = k !== undefined ? c.node.edgeRounds[k].r : 0;
+      const r = k !== undefined ? c.node.edgeRounds[k].r : 0; // a shaped edge sits off the surface
       const m = c.node.matrix;
       const scale = Math.max(Math.hypot(m[0], m[1], m[2]), Math.hypot(m[4], m[5], m[6]), Math.hypot(m[8], m[9], m[10]));
-      if (along <= front + vp.unitsPerPixel(c.at) * 8 + r * scale * 1.5) return { id: c.id, i: c.i };
+      if (this._edgeVisible(c.at, meshes, vp.unitsPerPixel(c.at) * 3 + r * scale * 1.5)) return { id: c.id, i: c.i };
     }
     return null;
+  }
+
+  _edgeVisible(point, meshes, tol) {
+    const vp = this.viewport, cam = vp.camera;
+    let origin, dir;
+    if (vp.isOrtho) {
+      dir = vp.viewDirection();
+      origin = point.clone().addScaledVector(dir, -1e5);
+    } else {
+      origin = cam.getWorldPosition(new THREE.Vector3());
+      dir = point.clone().sub(origin).normalize();
+    }
+    const dist = point.distanceTo(origin);
+    const rc = this._edgeRay || (this._edgeRay = new THREE.Raycaster());
+    rc.set(origin, dir);
+    rc.far = dist + 1;
+    const hits = rc.intersectObjects(meshes, false);
+    return !hits.length || hits[0].distance >= dist - tol;
   }
 
   _edgeHover(e) {
