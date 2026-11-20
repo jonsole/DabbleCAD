@@ -224,7 +224,9 @@ export class Editor extends Emitter {
 
   _syncOutline(mesh, selected) {
     const picking = this.edgeMode && this.edgeMode.id === mesh.userData.id;
-    const want = selected && !picking ? selLineMat : this.settings.edges && !picking ? edgeLineMat : null;
+    // while picking edges, the shape keeps its ordinary edge lines (if shown) instead of the
+    // selection outline; selected edges are drawn on top
+    const want = selected && !picking ? selLineMat : this.settings.edges ? edgeLineMat : null;
     let line = mesh.userData.line;
     if (!want) {
       if (line) { mesh.remove(line); mesh.userData.line = null; }
