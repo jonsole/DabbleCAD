@@ -175,6 +175,12 @@ function buildGroup(node) {
   }
 }
 
+// Facets around the rounding ball. 8 only gives each rounded edge two flat facets (it reads as a
+// chamfer), so use a smooth ball for simple shapes. The Minkowski sum costs roughly
+// triangles x segments^2 on non-convex meshes, so back off as the mesh gets heavier.
+// A multiple of 4 keeps the quarter arcs even.
+const roundSegments = (tris) => Math.max(8, Math.min(32, 4 * Math.floor(Math.sqrt(50000 / Math.max(tris, 1)) / 4)));
+
 export const ROUND_LIMIT = 6000; // triangles; beyond this the operation takes too long to be usable
 
 /**
@@ -193,7 +199,7 @@ function roundEdges(base, radius, style) {
   if (!(r > 0.01)) return base.clone();
   const flat = base.index ? base.toNonIndexed() : base;
   const out = withSolid(flat, (api, s, k) => {
-    const ball = k(api.Manifold.sphere(r, style === 'bevel' ? 4 : 8));
+    const ball = k(api.Manifold.sphere(r, style === 'bevel' ? 4 : roundSegments(tris)));
     const scale = size.map((v) => (v - 2 * r) / v);
     const small = k(k(k(s.translate(-c[0], -c[1], -c[2])).scale(scale)).translate(c[0], c[1], c[2]));
     return small.minkowskiSum(ball);
