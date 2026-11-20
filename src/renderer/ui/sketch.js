@@ -97,14 +97,26 @@ function setInteriorAngle(it, i, deg) {
   let area = 0;
   for (let k = 0; k < n; k++) { const p = pts[k], q = pts[(k + 1) % n]; area += p[0] * q[1] - q[0] * p[1]; }
   const s = area >= 0 ? 1 : -1;
-  const a = pts[(i - 1 + n) % n], b = pts[i], c = pts[(i + 1) % n];
+  const ia = (i - 1 + n) % n, ic = (i + 1) % n;
+  const a = pts[ia], b = pts[i], c = pts[ic];
   const u = [a[0] - b[0], a[1] - b[1]], lu = Math.hypot(u[0], u[1]);
-  const len = Math.hypot(c[0] - b[0], c[1] - b[1]);
-  if (lu < 1e-9 || len < 1e-9) return false;
-  const d = rot([u[0] / lu, u[1] / lu], -s * rad(deg));
-  pts[(i + 1) % n] = [+(b[0] + d[0] * len).toFixed(4), +(b[1] + d[1] * len).toFixed(4)];
-  return true;
+  const v = [c[0] - b[0], c[1] - b[1]], lv = Math.hypot(v[0], v[1]);
+  if (lu < 1e-9 || lv < 1e-9) return false;
+  if (!isLocked(it, ic)) { // swing the outgoing edge: the next point moves
+    const d = rot([u[0] / lu, u[1] / lu], -s * rad(deg));
+    pts[ic] = [+(b[0] + d[0] * lv).toFixed(4), +(b[1] + d[1] * lv).toFixed(4)];
+    return true;
+  }
+  if (!isLocked(it, ia)) { // next point is locked: swing the incoming edge, the previous point moves
+    const d = rot([v[0] / lv, v[1] / lv], s * rad(deg));
+    pts[ia] = [+(b[0] + d[0] * lu).toFixed(4), +(b[1] + d[1] * lu).toFixed(4)];
+    return true;
+  }
+  return 'locked';
 }
+
+const isLocked = (it, i) => !!(it.lock && it.lock[i]);
+const anyLocked = (it) => it.type === 'poly' && !!(it.lock && it.lock.some(Boolean));
 
 function moveItem(it, dx, dy) {
   if (it.type === 'rect') { it.x += dx; it.y += dy; }
@@ -140,7 +152,7 @@ export function sketchPolys(items) {
   return polys.map((p) => ({ outer: p.outer.map(shift), holes: p.holes.map((hh) => hh.map(shift)) }));
 }
 
-const clone = (it) => ({ ...it, pts: it.pts ? it.pts.map((p) => [...p]) : undefined });
+const clone = (it) => ({ ...it, pts: it.pts ? it.pts.map((p) => [...p]) : undefined, lock: it.lock ? [...it.lock] : undefined });
 
 /** Opens the sketch editor. Resolves to { polys, sketch, depth } or null. */
 export function sketchDialog(existing) {
@@ -156,6 +168,7 @@ export function sketchDialog(existing) {
     const undo = [];
     const remember = () => { undo.push(JSON.stringify(items)); if (undo.length > 50) undo.shift(); };
     const sel = () => items.find((i) => i.id === selected) || null;
+    const toastLocked = () => toast('This shape has locked points, so it can\'t be moved, resized or rotated. Unlock them in Points.');
 
     const scale = () => W / sheet; // px per mm
     const toPx = (p) => [W / 2 + p[0] * scale(), H / 2 - p[1] * scale()];
@@ -184,14 +197,15 @@ export function sketchDialog(existing) {
       const len = Math.hypot(ux, uy);
       if (len < 1e-6) { const u = rot([0, 1], f.a); ux = u[0]; uy = -u[1]; } else { ux /= len; uy /= len; }
       out.push({ kind: 'rotate', px: [top[0] + ux * ROT_OFFSET, top[1] + uy * ROT_OFFSET], from: top });
-      if (it.type === 'poly') it.pts.forEach((p, i) => out.push({ kind: 'vertex', i, px: toPx(p) }));
+      if (anyLocked(it)) out.length = 0; // a locked point pins the shape: no resizing or rotating
+      if (it.type === 'poly') it.pts.forEach((p, i) => out.push({ kind: 'vertex', i, locked: isLocked(it, i), px: toPx(p) }));
       return out;
     }
     const handleAt = (it, px) => {
       const list = handles(it);
       // vertices first (they sit on the outline), then rotate, then size handles
       const order = [...list.filter((x) => x.kind === 'vertex'), ...list.filter((x) => x.kind === 'rotate'), ...list.filter((x) => x.kind === 'size')];
-      return order.find((hd) => Math.hypot(hd.px[0] - px[0], hd.px[1] - px[1]) <= (hd.kind === 'rotate' ? 9 : HANDLE + 3)) || null;
+      return order.find((hd) => !hd.locked && Math.hypot(hd.px[0] - px[0], hd.px[1] - px[1]) <= (hd.kind === 'rotate' ? 9 : HANDLE + 3)) || null;
     };
     const cursorFor = (hd, it) => {
       if (!hd) return '';
@@ -256,13 +270,15 @@ export function sketchDialog(existing) {
         }
         const hs = handles(it);
         const r = hs.find((x) => x.kind === 'rotate');
-        ctx.strokeStyle = SEL; ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.moveTo(r.from[0], r.from[1]); ctx.lineTo(r.px[0], r.px[1]); ctx.stroke();
+        if (r) { ctx.strokeStyle = SEL; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(r.from[0], r.from[1]); ctx.lineTo(r.px[0], r.px[1]); ctx.stroke(); }
         for (const hd of hs) {
           if (hd.kind === 'size') {
             ctx.fillStyle = '#ffffff'; ctx.strokeStyle = '#1b1d22'; ctx.lineWidth = 1;
             ctx.fillRect(hd.px[0] - HANDLE, hd.px[1] - HANDLE, HANDLE * 2, HANDLE * 2);
             ctx.strokeRect(hd.px[0] - HANDLE + 0.5, hd.px[1] - HANDLE + 0.5, HANDLE * 2 - 1, HANDLE * 2 - 1);
+          } else if (hd.kind === 'vertex' && hd.locked) {
+            ctx.fillStyle = '#8a93a3'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
+            ctx.fillRect(hd.px[0] - 4.5, hd.px[1] - 4.5, 9, 9); ctx.strokeRect(hd.px[0] - 4.5, hd.px[1] - 4.5, 9, 9);
           } else if (hd.kind === 'vertex') {
             ctx.fillStyle = SEL; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
             ctx.beginPath(); ctx.arc(hd.px[0], hd.px[1], 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
@@ -293,7 +309,7 @@ export function sketchDialog(existing) {
         const wPx = out([0, -f.hy], 18), hPx = out([-f.hx, 0], 26);
         if (f.hx > 1e-6) label(fmt(f.hx * 2), wPx[0], wPx[1]);
         if (f.hy > 1e-6) label(fmt(f.hy * 2), hPx[0], hPx[1]);
-        if (drag && drag.kind === 'rotate') label(`${fmt(drag.deg)}°`, r.px[0], r.px[1] - 18);
+        if (drag && drag.kind === 'rotate' && r) label(`${fmt(drag.deg)}°`, r.px[0], r.px[1] - 18);
       }
       if (draft) {
         ctx.strokeStyle = SEL; ctx.lineWidth = 1.5;
@@ -337,7 +353,8 @@ export function sketchDialog(existing) {
         }
         const it = hit(rawMm(e));
         selected = it ? it.id : null;
-        if (it) { remember(); drag = { kind: 'move', last: p }; }
+        if (it && anyLocked(it)) toastLocked();
+        else if (it) { remember(); drag = { kind: 'move', last: p }; }
         panel(); draw();
       } else if (tool === 'poly') {
         if (!draft) draft = { type: 'poly', pts: [p], cut: false };
@@ -398,7 +415,7 @@ export function sketchDialog(existing) {
         const hd = it && handleAt(it, px);
         const over = hd ? null : hit(rawMm(e));
         hover = over ? over.id : null;
-        canvas.style.cursor = hd ? cursorFor(hd, it) : over ? 'move' : 'default';
+        canvas.style.cursor = hd ? cursorFor(hd, it) : over ? (anyLocked(over) ? 'not-allowed' : 'move') : 'default';
       }
       draw();
     });
@@ -430,6 +447,7 @@ export function sketchDialog(existing) {
       if (!it) return;
       remember();
       const c = { ...clone(it), id: nextId++ };
+      delete c.lock; // the copy is placed beside the original, so its points can't stay locked
       moveItem(c, snap || 1, -(snap || 1));
       items.push(c); selected = c.id; panel(); draw();
     };
@@ -447,6 +465,7 @@ export function sketchDialog(existing) {
       else if (ctrl && e.key.toLowerCase() === 'd') { stop(); duplicate(); }
       else if (e.key.startsWith('Arrow') && sel()) {
         stop();
+        if (anyLocked(sel())) { toastLocked(); return; }
         const d = (snap || 1) * (e.shiftKey ? 10 : 1);
         if (!e.repeat) remember();
         moveItem(sel(), e.key === 'ArrowLeft' ? -d : e.key === 'ArrowRight' ? d : 0, e.key === 'ArrowDown' ? -d : e.key === 'ArrowUp' ? d : 0);
@@ -508,18 +527,35 @@ export function sketchDialog(existing) {
           h('div', { class: 'xyz xy' }, h('span', {}, 'Size'), numField(() => f().hx * 2, (v) => setSize(0, v), { min: 0.1 }), numField(() => f().hy * 2, (v) => setSize(1, v), { min: 0.1 })),
           h('div', { class: 'xyz xy' }, h('span', {}, 'Rotate'), rotIn, h('span', { class: 'sketch-angle' }, it.type === 'poly' ? '' : `${fmt(it.rot || 0)}°`)),
         ];
+        if (anyLocked(it)) for (const el of rows.flatMap((r) => [...r.querySelectorAll('input')])) { el.disabled = true; el.title = 'Locked points pin this shape'; }
         side.append(section('Position & size', rows));
         if (it.type === 'poly') {
           const list = h('div', { class: 'sketch-points' },
-            h('div', { class: 'xyz xya' }, h('span', {}, ''), h('span', {}, 'X'), h('span', {}, 'Y'), h('span', {}, 'Angle')));
+            h('div', { class: 'xyz xya' }, h('span', {}, ''), h('span', {}, 'X'), h('span', {}, 'Y'), h('span', {}, 'Angle'), h('span', {}, '')));
+          const n = it.pts.length;
           it.pts.forEach((p, i) => {
-            const ang = numField(() => interiorAngles(it.pts)[i], (v) => { if (!setInteriorAngle(it, i, v)) toast('Angle must be between 0 and 360°'); }, { min: 0.1 });
+            const locked = isLocked(it, i);
+            const next = (i + 1) % n, prev = (i - 1 + n) % n;
+            const ang = numField(() => interiorAngles(it.pts)[i], (v) => {
+              const ok = setInteriorAngle(it, i, v);
+              if (ok === 'locked') toast('Both neighbouring points are locked');
+              else if (!ok) toast('Angle must be between 0 and 360°');
+            }, { min: 0.1 });
             ang.max = 359.9;
-            ang.title = `Interior angle at point ${i + 1}: point ${((i + 1) % it.pts.length) + 1} swings round to match`;
-            list.append(h('div', { class: 'xyz xya' }, h('span', {}, String(i + 1)),
-              numField(() => it.pts[i][0], (v) => { it.pts[i] = [v, it.pts[i][1]]; }),
-              numField(() => it.pts[i][1], (v) => { it.pts[i] = [it.pts[i][0], v]; }),
-              ang));
+            const mover = !isLocked(it, next) ? next : !isLocked(it, prev) ? prev : -1;
+            ang.title = mover < 0 ? 'Both neighbouring points are locked' : `Interior angle at point ${i + 1}: point ${mover + 1} moves to match`;
+            if (mover < 0) ang.disabled = true;
+            const x = numField(() => it.pts[i][0], (v) => { it.pts[i] = [v, it.pts[i][1]]; });
+            const y = numField(() => it.pts[i][1], (v) => { it.pts[i] = [it.pts[i][0], v]; });
+            if (locked) { x.disabled = true; y.disabled = true; }
+            const lockBtn = button({ icon: locked ? 'lock' : 'unlock', title: locked ? `Unlock point ${i + 1}` : `Lock point ${i + 1}`, cls: 'btn-ghost sketch-lock' + (locked ? ' active' : ''), onClick: () => {
+              remember();
+              const lock = it.lock ? [...it.lock] : new Array(n).fill(false);
+              lock[i] = !lock[i];
+              if (lock.some(Boolean)) it.lock = lock; else delete it.lock;
+              panel(); draw();
+            } });
+            list.append(h('div', { class: 'xyz xya' }, h('span', {}, String(i + 1)), x, y, ang, lockBtn));
           });
           side.append(section('Points', [list]));
         }
