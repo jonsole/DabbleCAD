@@ -20,7 +20,7 @@ class Emitter {
  * which leaves it at the same place on screen.
  */
 function edgeLineMaterial() {
-  const m = new LineMaterial({ vertexColors: true, linewidth: 3 });
+  const m = new LineMaterial({ color: SEL_COLOR, linewidth: 3 });
   m.onBeforeCompile = (shader) => {
     shader.vertexShader = shader.vertexShader.replace(
       'vec4 end = modelViewMatrix * vec4( instanceEnd, 1.0 );',
@@ -487,32 +487,28 @@ export class Editor extends Emitter {
     if (!node || !mesh) return;
     const d = nodeEdgeData(node);
     if (id === em.id && em.key !== d.key) { if (em.key) em.picked.clear(); em.key = d.key; } // edges were re-found
-    const idx = edgeRoundIndex(node);
+    // only the edge under the pointer and the selected edges are drawn, in the selection colour
     const active = id === em.id;
-    const pos = [], col = [];
-    const C = { base: new THREE.Color(0x9aa7b8), round: new THREE.Color(0xff9800), chamfer: new THREE.Color(0xd36bff), pick: new THREE.Color(0x29c5ff), hover: new THREE.Color(0xffffff) };
+    const pos = [];
     d.lines.forEach((pts, i) => {
       const hovered = em.hover && em.hover.id === id && em.hover.i === i;
-      const k = idx[i];
-      const c = hovered ? C.hover : active && em.picked.has(i) ? C.pick
-        : k !== undefined ? (node.edgeRounds[k].t === 'chamfer' ? C.chamfer : C.round) : C.base;
+      if (!hovered && !(active && em.picked.has(i))) return;
       const n = pts.length, segs = d.chains[i].closed ? n : n - 1;
       for (let s = 0; s < segs; s++) {
         const a = pts[s], b = pts[(s + 1) % n];
         pos.push(a.x, a.y, a.z, b.x, b.y, b.z);
-        col.push(c.r, c.g, c.b, c.r, c.g, c.b);
       }
     });
+    if (!pos.length) { this._dropEdgeOverlay(mesh); return; }
     const geo = new LineSegmentsGeometry();
-    if (pos.length) { geo.setPositions(pos); geo.setColors(col); }
+    geo.setPositions(pos);
     let lines = mesh.userData.edgeOverlay;
     if (!lines) {
-      // thick lines, plus a faint copy drawn through the model so edges on the far side can still be found
-      const behind = new LineSegments2(geo, new LineMaterial({ vertexColors: true, linewidth: 1.5, transparent: true, opacity: 0.25, depthTest: false }));
       const front = new LineSegments2(geo, edgeLineMaterial());
-      behind.renderOrder = 5; front.renderOrder = 6;
-      for (const l of [behind, front]) { l.raycast = () => {}; mesh.add(l); }
-      lines = mesh.userData.edgeOverlay = [behind, front];
+      front.renderOrder = 6;
+      front.raycast = () => {};
+      mesh.add(front);
+      lines = mesh.userData.edgeOverlay = [front];
     } else {
       const old = lines[0].geometry;
       for (const l of lines) l.geometry = geo;

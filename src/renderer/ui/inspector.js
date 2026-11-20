@@ -135,14 +135,9 @@ export class Inspector {
     const done = button({ icon: 'close', title: 'Done (Esc)', onClick: () => ed.exitEdgeMode() });
     this.host.append(h('div', { class: 'insp-head' }, h('div', { class: 'insp-title' }, 'Edges'), done));
     const body = [];
-    const swatch = (c) => h('span', { class: 'edge-swatch', style: { background: c } });
     if (!info.node || !info.picked.length) {
-      body.push(
-        h('div', { class: 'insp-note' }, 'Point at a shape to see its edges, then click an edge to pick it. Shift-click to pick several.'),
-        h('div', { class: 'insp-note' }, swatch('#ff9800'), 'Round  ', swatch('#d36bff'), 'Chamfer  ', swatch('#29c5ff'), 'Picked'),
-        h('div', { class: 'insp-note' }, 'Inside edges, where two shapes meet, appear once the shapes are grouped (Ctrl+G).'));
-      if (info.node) body.push(h('div', { class: 'insp-row-btns' }, button({ label: `Pick all ${info.count} edges`, cls: 'btn-outline', onClick: () => ed.pickAllEdges(true) })));
-      this.host.append(h('div', { class: 'insp-section' }, ...body));
+      if (info.node) body.push(h('div', { class: 'insp-row-btns' }, button({ label: 'Select All', cls: 'btn-outline', onClick: () => ed.pickAllEdges(true) })));
+      if (body.length) this.host.append(h('div', { class: 'insp-section' }, ...body));
       return;
     }
     const st = info.styles;
@@ -152,10 +147,8 @@ export class Inspector {
     const sameSize = sizes.length && sizes.every((r) => Math.abs(r - sizes[0]) < 1e-6);
     if (sameSize) this.edgeSize = sizes[0];
     const size = this.edgeSize ?? 2;
-    const name = info.node.name || kindName(info.node);
     const n = info.picked.length;
-    const where = info.inside === n ? (n > 1 ? ' (inside edges)' : ' (inside edge)') : info.inside ? ` (${info.inside} inside)` : '';
-    body.push(h('div', { class: 'insp-note' }, `${n} edge${n > 1 ? 's' : ''} of ${name}${where}`));
+    body.push(h('div', { class: 'insp-note' }, `${n} edge${n > 1 ? 's' : ''} selected`));
 
     const seg = h('div', { class: 'segmented edge-type' });
     for (const [t, label] of [['sharp', 'Sharp'], ['round', 'Round'], ['chamfer', 'Chamfer']]) {
@@ -164,7 +157,6 @@ export class Inspector {
       seg.append(b);
     }
     body.push(h('div', { class: 'edge-type-row' }, h('label', {}, 'Type'), seg));
-    if (types.size > 1) body.push(h('div', { class: 'insp-note' }, 'The picked edges have different types. Choose one to apply to all.'));
 
     if (type !== 'sharp') {
       const range = h('input', { type: 'range', min: 0.1, max: 10, step: 0.1, value: Math.min(10, size) });
@@ -179,12 +171,11 @@ export class Inspector {
       num.addEventListener('change', () => apply(parseFloat(num.value)));
       num.addEventListener('keydown', (e) => e.stopPropagation());
       body.push(h('div', { class: 'param' }, h('label', {}, type === 'chamfer' ? 'Size' : 'Radius'), range, num));
-      if (sizes.length && !sameSize) body.push(h('div', { class: 'insp-note' }, 'Mixed sizes. Set one to apply to all.'));
     }
     body.push(h('div', { class: 'insp-row-btns' },
-      button({ label: n === info.count ? 'Pick none' : `Pick all ${info.count}`, cls: 'btn-outline', onClick: () => ed.pickAllEdges(n !== info.count) }),
-      button({ label: 'Clear', cls: 'btn-outline', title: 'Unpick (Esc)', onClick: () => ed.clearEdgePicks() })));
-    if (info.node.locked) body.push(h('div', { class: 'insp-note' }, 'This shape is locked. Unlock it to change its edges.'));
+      button({ label: 'Select All', cls: 'btn-outline', onClick: () => ed.pickAllEdges(true) }),
+      button({ label: 'Unselect', cls: 'btn-outline', title: 'Unselect (Esc)', onClick: () => ed.clearEdgePicks() })));
+    if (info.node.locked) body.push(h('div', { class: 'insp-note' }, 'Locked')); 
     this.host.append(h('div', { class: 'insp-section' }, ...body));
   }
 
