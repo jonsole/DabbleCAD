@@ -4,6 +4,7 @@ import './slicer.css';
 import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { h, clear, button, icon, toast } from '../ui/dom.js';
+import { ViewCube } from '../view/viewcube.js';
 import { platform } from '../platform.js';
 import { CURAENGINE_URL } from '../config.js';
 import { exportModel, importFiles } from '../core/io.js';
@@ -25,6 +26,7 @@ export class SlicerWorkspace {
     this.app = app;
     this.root = root;
     this.active = false;
+    this.mode = 'model';
     this.ready = null;
     this.models = [];
     this.selected = null;
@@ -96,49 +98,66 @@ export class SlicerWorkspace {
   // ------------------------------------------------------------------ layout
   _build() {
     clear(this.root);
-    // left: the plate
-    this.modelList = h('div', { class: 'sl-models' });
-    this.transform = h('div', { class: 'sl-transform' });
-    const left = h('div', { class: 'sl-left' },
-      h('div', { class: 'sl-title' }, 'Plate'),
-      h('div', { class: 'sl-buttons' },
-        button({ label: 'Add design', icon: 'cube', cls: 'btn-outline', title: 'Put the whole 3D design on the plate (replaces the models from the design)', onClick: () => this.addFromDesign() }),
-        button({ label: 'Selected', icon: 'select', cls: 'btn-outline', title: 'Put only the shapes selected in 3D Design on the plate', onClick: () => this.addFromDesign({ selectedOnly: true }) }),
-        button({ label: 'Import…', icon: 'plus', cls: 'btn-outline', title: 'Add an STL, OBJ, 3MF or PLY file', onClick: () => this.importFiles() }),
-        button({ label: 'Arrange', icon: 'align', cls: 'btn-outline', title: 'Space the models out on the bed', onClick: () => this.arrange() })),
-      this.modelList, this.transform);
+    this.modelList = h('div', { class: 'outliner-list' });
+    this.plateCount = h('span', { class: 'sl-count' });
+    this.outliner = h('div', { class: 'outliner open' }, h('div', { class: 'outliner-head' }, h('span', { style: { flex: 1 } }, 'Plate'), this.plateCount), this.modelList);
 
-    // centre: 3D view and overlays
-    this.viewEl = h('div', { class: 'sl-view' });
-    this.modeSeg = h('div', { class: 'segmented sl-mode' },
-      button({ label: 'Model', cls: 'active', onClick: () => this.setMode('model') }),
-      button({ label: 'Preview', cls: 'disabled', onClick: () => this.setMode('preview') }));
-    this.viewBtns = h('div', { class: 'sl-viewbtns' },
-      button({ icon: 'home', title: 'Home view', cls: 'btn-ghost', onClick: () => this.scene.home() }),
-      button({ icon: 'fit', title: 'Top view', cls: 'btn-ghost', onClick: () => this.scene.top() }),
-      button({ icon: 'persp', title: 'Front view', cls: 'btn-ghost', onClick: () => this.scene.front() }));
-    this.banner = h('div', { class: 'sl-banner', hidden: true });
-    this.previewPanel = h('div', { class: 'sl-preview', hidden: true });
-    this.status = h('div', { class: 'sl-status', role: 'status' });
+    // top toolbar, built like the 3D Design one
+    this.modeSeg = h('div', { class: 'mode-group', role: 'group', 'aria-label': 'View' },
+      button({ label: 'Model', title: 'Show the models on the bed', cls: 'active', onClick: () => this.setMode('model') }),
+      button({ label: 'Preview', title: 'Show the sliced G-code layer by layer', cls: 'disabled', onClick: () => this.setMode('preview') }));
     this.progress = h('i');
     this.progressWrap = h('div', { class: 'sl-progress', hidden: true }, this.progress);
-    this.sliceBtn = button({ label: 'Slice', icon: 'export', cls: 'btn-primary sl-slice', onClick: () => this.slice() });
+    this.sliceBtn = button({ label: 'Slice', icon: 'export', cls: 'btn-primary sl-slice', title: 'Slice the plate to G-code', onClick: () => this.slice() });
     this.cancelBtn = button({ label: 'Cancel', cls: 'btn-outline', onClick: () => this.controller && this.controller.abort() });
     this.cancelBtn.hidden = true;
-    this.saveBtn = button({ label: 'Save G-code', icon: 'export', cls: 'btn-outline', onClick: () => this.saveGcode() });
+    this.saveBtn = button({ label: 'Save G-code', icon: 'export', cls: 'btn-outline', title: 'Save the G-code file', onClick: () => this.saveGcode() });
     this.saveBtn.hidden = true;
-    this.logEl = h('pre', { class: 'sl-log', hidden: true });
-    const bottom = h('div', { class: 'sl-bottom' }, this.status, this.progressWrap, h('div', { class: 'sl-bottom-btns' }, this.cancelBtn, this.saveBtn, this.sliceBtn));
-    const center = h('div', { class: 'sl-center' }, this.viewEl,
-      h('div', { class: 'sl-overlay-tl' }, this.modeSeg, this.viewBtns), this.banner, this.previewPanel, h('div', { class: 'sl-hint' }, 'Left-drag a model to move it · right-drag to orbit · middle-drag to pan · scroll to zoom'), bottom);
+    this.toolbar = h('div', { class: 'toolbar sl-toolbar', role: 'toolbar', 'aria-label': 'Slicer tools' },
+      button({ icon: 'list', title: 'Plate list', onClick: () => this.outliner.classList.toggle('open') }), h('span', { class: 'sep' }),
+      button({ icon: 'cube', label: 'Add design', title: 'Put the whole 3D design on the plate (replaces the models that came from the design)', onClick: () => this.addFromDesign() }),
+      button({ icon: 'select', label: 'Selected', title: 'Put only the shapes selected in 3D Design on the plate', onClick: () => this.addFromDesign({ selectedOnly: true }) }),
+      button({ icon: 'plus', label: 'Import', title: 'Add an STL, OBJ, 3MF or PLY file', onClick: () => this.importFiles() }), h('span', { class: 'sep' }),
+      button({ icon: 'duplicate', title: 'Copy the selected model', onClick: () => this.selected && this.duplicate(this.selected) }),
+      button({ icon: 'trash', title: 'Remove the selected model (Del)', onClick: () => this.selected && this.removeModel(this.selected) }), h('span', { class: 'sep' }),
+      button({ icon: 'align', title: 'Arrange: space the models out on the bed', onClick: () => this.arrange() }),
+      button({ icon: 'drop', title: 'Reset the selected model: undo rotation and scaling', onClick: () => this.resetSelected() }),
+      h('span', { class: 'spacer' }), this.modeSeg, h('span', { class: 'sep' }), this.progressWrap, this.cancelBtn, this.saveBtn, this.sliceBtn);
 
-    this.root.append(h('div', { class: 'sl-main' }, left, center, h('div', { class: 'sl-side' }, this.panel.el)));
+    // the 3D view, with the same floating pieces as 3D Design
+    this.viewEl = h('div', { class: 'viewport sl-view' });
+    this.status = h('div', { class: 'statusbar', role: 'status' });
+    this.banner = h('div', { class: 'mode-banner', hidden: true });
+    this.inspectorEl = h('div', { class: 'inspector sl-inspector' });
+    this.previewPanel = h('div', { class: 'sl-preview', hidden: true });
+    this.logEl = h('pre', { class: 'sl-log', hidden: true });
+    this.root.append(this.toolbar, h('div', { class: 'sl-main' }, this.outliner, this.viewEl, h('div', { class: 'side sl-side' }, this.panel.el)));
     this.scene = new SlicerScene(this.viewEl);
+    this.viewcube = new ViewCube(this.scene);
+    this.projBtn = button({ icon: 'persp', title: 'Switch between perspective and orthographic view', onClick: () => { this.scene.setProjection(this.scene.isOrtho ? 'perspective' : 'orthographic'); this.app.patchSettings({ projection: this.scene.isOrtho ? 'orthographic' : 'perspective' }); } });
+    this.viewEl.append(
+      h('div', { class: 'viewnav' }, this.viewcube.el, h('div', { class: 'navcol' },
+        button({ icon: 'home', title: 'Home view', onClick: () => this.scene.home() }),
+        button({ icon: 'fit', title: 'Fit the plate in view', onClick: () => this.fit() }),
+        button({ icon: 'plus', title: 'Zoom in', onClick: () => this.scene.zoomBy(0.75) }),
+        button({ icon: 'minus', title: 'Zoom out', onClick: () => this.scene.zoomBy(1 / 0.75) }),
+        this.projBtn)),
+      this.inspectorEl, this.previewPanel, this.status, this.banner);
     this.scene.onPick = (id) => this.select(id);
     this.scene.onMove = (m) => { this._markDirty(); this._renderTransformValues(m); };
     this.scene.onMoveEnd = () => { this._checkFit(); };
     document.addEventListener('keydown', (e) => this._key(e));
     this._renderModels();
+    this._renderTransform();
+  }
+
+  fit() { this.scene.home(); }
+
+  resetSelected() {
+    const m = this.selectedModel;
+    if (!m) return;
+    Object.assign(m, { rx: 0, ry: 0, rz: 0, sx: 100, sy: 100, sz: 100 });
+    this.scene.refreshModel(m); this._markDirty(); this._checkFit(); this._renderTransformValues();
   }
 
   _key(e) {
@@ -282,44 +301,52 @@ export class SlicerWorkspace {
   _renderModels() {
     if (!this.modelList) return;
     clear(this.modelList);
-    if (!this.models.length) this.modelList.append(h('div', { class: 'sl-empty' }, 'Nothing on the plate yet. Add the design or import a model file.'));
+    this.plateCount.textContent = this.models.length ? String(this.models.length) : '';
+    if (!this.models.length) this.modelList.append(h('div', { class: 'insp-note', style: { padding: '10px' } }, 'Nothing on the plate yet. Use Add design or Import.'));
     const bad = new Set(this.models.filter((m) => fitProblem(m, this.volume)).map((m) => m.id));
     for (const m of this.models) {
       const s = m.size;
-      this.modelList.append(h('div', { class: 'sl-model' + (m.id === this.selected ? ' on' : ''), onClick: () => this.select(m.id), tabindex: 0, onKeydown: (e) => { if (e.key === 'Enter') this.select(m.id); } },
-        h('div', { class: 'sl-model-name' }, bad.has(m.id) ? h('span', { class: 'sl-model-bad', title: fitProblem(m, this.volume) }, '⚠ ') : null, m.name),
-        h('small', {}, `${s.x.toFixed(1)} × ${s.y.toFixed(1)} × ${s.z.toFixed(1)} mm · ${Math.round(m.triangles).toLocaleString()} triangles`)));
+      this.modelList.append(h('div', { class: 'outliner-row' + (m.id === this.selected ? ' selected' : ''), title: `${s.x.toFixed(1)} × ${s.y.toFixed(1)} × ${s.z.toFixed(1)} mm · ${Math.round(m.triangles).toLocaleString()} triangles` + (bad.has(m.id) ? '\n' + fitProblem(m, this.volume) : ''), onClick: () => this.select(m.id), tabindex: 0, onKeydown: (e) => { if (e.key === 'Enter') this.select(m.id); } },
+        h('span', { class: 'dot', style: { background: bad.has(m.id) ? '#ffb74d' : 'var(--accent)' } }),
+        h('span', { class: 'name' }, m.name)));
     }
   }
 
   _renderTransform() {
-    clear(this.transform);
+    clear(this.inspectorEl);
     const m = this.selectedModel;
     this.fields = {};
+    this.inspectorEl.hidden = !m || this.mode === 'preview';
     if (!m) return;
-    const field = (key, label, unit, step = 1) => {
-      const input = h('input', { class: 'input', type: 'number', step, 'aria-label': label });
-      input.addEventListener('change', () => {
-        const v = parseFloat(input.value);
+    const input = (key, step, axis) => {
+      const el = h('input', { class: 'input' + (axis ? ' ax-' + axis : ''), type: 'number', step, 'aria-label': key });
+      el.addEventListener('change', () => {
+        const v = parseFloat(el.value);
         if (!Number.isFinite(v)) { this._renderTransformValues(); return; }
         if (key === 'scale') { if (v > 0) m.setUniformScale(v); } else m[key] = v;
         this.scene.refreshModel(m); this._markDirty(); this._checkFit(); this._renderTransformValues();
       });
-      input.addEventListener('keydown', (e) => e.stopPropagation());
-      this.fields[key] = input;
-      return h('label', { class: 'sl-field' }, h('span', {}, label), input, h('em', {}, unit));
+      el.addEventListener('keydown', (e) => e.stopPropagation());
+      this.fields[key] = el;
+      return el;
     };
     const turn = (axis) => () => { m[axis] = ((m[axis] + 90 + 180) % 360) - 180; this.scene.refreshModel(m); this._markDirty(); this._checkFit(); this._renderTransformValues(); };
-    this.transform.append(
-      h('div', { class: 'sl-title' }, 'Selected model'),
-      h('div', { class: 'sl-fields' }, field('x', 'X', 'mm', 0.5), field('y', 'Y', 'mm', 0.5), field('rx', 'Rotate X', '°', 15), field('ry', 'Rotate Y', '°', 15), field('rz', 'Rotate Z', '°', 15), field('scale', 'Scale', '%', 5)),
-      this.sizeNote = h('div', { class: 'sl-size' }),
-      h('div', { class: 'sl-buttons' },
-        button({ label: 'X 90°', cls: 'btn-outline', title: 'Tip the model over 90° around X', onClick: turn('rx') }),
-        button({ label: 'Y 90°', cls: 'btn-outline', title: 'Tip the model over 90° around Y', onClick: turn('ry') }),
-        button({ label: 'Reset', cls: 'btn-outline', title: 'Undo rotation and scaling', onClick: () => { Object.assign(m, { rx: 0, ry: 0, rz: 0, sx: 100, sy: 100, sz: 100 }); this.scene.refreshModel(m); this._markDirty(); this._checkFit(); this._renderTransformValues(); } }),
-        button({ label: 'Copy', cls: 'btn-outline', onClick: () => this.duplicate(m.id) }),
-        button({ label: 'Remove', cls: 'btn-outline', onClick: () => this.removeModel(m.id) })));
+    this.inspectorEl.append(
+      h('div', { class: 'insp-head' }, h('div', { class: 'insp-title', title: m.name }, m.name),
+        button({ icon: 'duplicate', title: 'Copy this model', cls: 'btn-ghost', onClick: () => this.duplicate(m.id) }),
+        button({ icon: 'trash', title: 'Remove this model (Del)', cls: 'btn-ghost', onClick: () => this.removeModel(m.id) })),
+      h('details', { class: 'insp-section', open: true },
+        h('summary', {}, 'Position & size'),
+        h('div', { class: 'xyz' }, h('span', {}, 'Move'), input('x', 0.5, 'x'), input('y', 0.5, 'y'), h('span', {}, 'mm')),
+        h('div', { class: 'xyz' }, h('span', {}, 'Scale'), input('scale', 5), h('span', {}, '%'), h('span', {})),
+        this.sizeNote = h('div', { class: 'insp-note' })),
+      h('details', { class: 'insp-section', open: true },
+        h('summary', {}, 'Rotation'),
+        h('div', { class: 'xyz' }, h('span', {}, 'Rotate'), input('rx', 15, 'x'), input('ry', 15, 'y'), input('rz', 15, 'z')),
+        h('div', { class: 'sl-insp-btns' },
+          button({ label: 'X 90°', cls: 'btn-outline', title: 'Tip the model over 90° around X', onClick: turn('rx') }),
+          button({ label: 'Y 90°', cls: 'btn-outline', title: 'Tip the model over 90° around Y', onClick: turn('ry') }),
+          button({ label: 'Reset', cls: 'btn-outline', title: 'Undo rotation and scaling', onClick: () => this.resetSelected() }))));
     this._renderTransformValues();
   }
 
@@ -335,8 +362,10 @@ export class SlicerWorkspace {
   setMode(mode) {
     if (mode === 'preview' && !this.result) return;
     this.scene.setMode(mode);
+    this.mode = mode;
     [...this.modeSeg.children].forEach((b, i) => b.classList.toggle('active', (i === 0) === (mode === 'model')));
     this.previewPanel.hidden = mode !== 'preview';
+    this._renderTransform();
     this.viewEl.classList.toggle('sl-previewing', mode === 'preview');
   }
 
@@ -376,7 +405,7 @@ export class SlicerWorkspace {
     this.cancelBtn.hidden = !busy;
     this.progressWrap.hidden = !busy;
     this.saveBtn.hidden = !this.result || busy;
-    this.sliceBtn.querySelector('.btn-label').textContent = this.result && this.dirty ? 'Slice again' : 'Slice';
+    const lbl = this.sliceBtn.querySelector('.btn-label'); if (lbl) lbl.textContent = this.result && this.dirty ? 'Slice again' : 'Slice';
     this.sliceBtn.classList.toggle('disabled', !this.models.length);
     this.modeSeg.children[1].classList.toggle('disabled', !this.result);
     if (busy) return;

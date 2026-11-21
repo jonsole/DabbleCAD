@@ -29,6 +29,11 @@ export class SlicerScene {
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(40, 1, 1, 6000);
     this.camera.up.set(0, 0, 1);
+    this.persp = this.camera;
+    this.ortho = new THREE.OrthographicCamera(-100, 100, 100, -100, -20000, 20000);
+    this.ortho.up.set(0, 0, 1);
+    this.renderListeners = [];
+    this._anim = null;
     this.controls = new OrbitControls(this.camera, this.dom);
     this.controls.enableDamping = false;
     this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
@@ -283,7 +288,8 @@ export class SlicerScene {
     const size = Math.max(this.volume.width, this.volume.depth, this.volume.height * 0.8);
     this.controls.target.copy(target);
     this.camera.position.copy(target).addScaledVector(dir, (size * 2.6) / k);
-    this.camera.near = Math.max(1, size / 200); this.camera.far = size * 20; this.camera.updateProjectionMatrix();
+    if (this.isOrtho) { this.camera.zoom = 1; this._orthoHalf = ((size * 2.6) / k) * Math.tan((this.persp.fov * Math.PI) / 360); this._fitOrtho(); }
+    else { this.camera.near = Math.max(1, size / 200); this.camera.far = size * 20; this.camera.updateProjectionMatrix(); }
     this.controls.update();
     this.requestRender();
   }
@@ -294,15 +300,76 @@ export class SlicerScene {
     if (!w || !h) return;
     this.renderer.setSize(w, h, false);
     this.dom.style.width = '100%'; this.dom.style.height = '100%';
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
+    this._aspect = w / h;
+    this.persp.aspect = this._aspect;
+    this.persp.updateProjectionMatrix();
+    this._fitOrtho();
     this.requestRender();
   }
   requestRender() {
     if (this._raf || this._disposed) return;
     this._raf = requestAnimationFrame(() => { this._raf = 0; this.render(); });
   }
-  render() { this.renderer.render(this.scene, this.camera); }
+  render() {
+    this.renderer.render(this.scene, this.camera);
+    for (const fn of this.renderListeners) fn();
+  }
+
+  // ------------------------------------------------------------------ the same camera API as the 3D Design viewport
+  // (the view cube and the zoom column are shared with it). theta/phi are spherical angles around
+  // the orbit target with Z up, exactly as in the 3D Design viewport.
+  onRender(fn) { this.renderListeners.push(fn); }
+  get isOrtho() { return this.camera === this.ortho; }
+  _offset() { return this.camera.position.clone().sub(this.controls.target); }
+  get theta() { const d = this._offset(); return Math.atan2(d.y, d.x); }
+  get phi() { const d = this._offset(); return Math.acos(Math.max(-1, Math.min(1, d.z / (d.length() || 1)))); }
+  set theta(v) { this._setSph({ theta: v }); }
+  set phi(v) { this._setSph({ phi: v }); }
+  _setSph({ theta, phi, radius }) {
+    const d = this._offset(), r = radius ?? (d.length() || 1);
+    const t = theta ?? Math.atan2(d.y, d.x), f = phi ?? Math.acos(Math.max(-1, Math.min(1, d.z / (d.length() || 1))));
+    const sp = Math.sin(f);
+    this.camera.position.copy(this.controls.target).add(new THREE.Vector3(sp * Math.cos(t), sp * Math.sin(t), Math.cos(f)).multiplyScalar(r));
+    this.camera.lookAt(this.controls.target);
+    this.controls.update();
+    this.requestRender();
+  }
+  _animateTo(to, ms = 240) {
+    const from = { theta: this.theta, phi: this.phi, radius: this._offset().length(), zoom: this.camera.zoom };
+    let dTheta = (to.theta ?? from.theta) - from.theta;
+    dTheta = ((dTheta + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI;   // the short way round
+    const start = performance.now(), token = {};
+    this._anim = token;
+    const step = (now) => {
+      if (this._anim !== token || this._disposed) return;
+      const k = Math.min(1, (now - start) / ms), e = 1 - Math.pow(1 - k, 3);
+      this._setSph({ theta: from.theta + dTheta * e, phi: from.phi + ((to.phi ?? from.phi) - from.phi) * e, radius: from.radius + ((to.radius ?? from.radius) - from.radius) * e });
+      if (to.zoom != null) { this.camera.zoom = from.zoom + (to.zoom - from.zoom) * e; this.camera.updateProjectionMatrix(); }
+      if (k < 1) requestAnimationFrame(step); else this._anim = null;
+    };
+    requestAnimationFrame(step);
+  }
+  viewFrom(theta, phi) { this._animateTo({ theta, phi: Math.min(Math.PI - 0.0006, Math.max(0.0006, phi)) }); }
+  zoomBy(factor) {
+    if (this.isOrtho) this._animateTo({ zoom: Math.min(50, Math.max(0.05, this.camera.zoom / factor)) }, 160);
+    else this._animateTo({ radius: Math.min(20000, Math.max(5, this._offset().length() * factor)) }, 160);
+  }
+  setProjection(mode) {
+    const toOrtho = mode === 'orthographic';
+    if (toOrtho === this.isOrtho) return;
+    const from = this.camera, to = toOrtho ? this.ortho : this.persp;
+    to.position.copy(from.position); to.quaternion.copy(from.quaternion); to.up.copy(from.up);
+    if (toOrtho) { to.zoom = 1; this._orthoHalf = Math.max(1, this._offset().length() * Math.tan((this.persp.fov * Math.PI) / 360)); }
+    this.camera = to; this.controls.object = to;
+    this._fitOrtho();
+    this.controls.update();
+    this.requestRender();
+  }
+  _fitOrtho() {
+    const half = this._orthoHalf || 100, a = this._aspect || 1;
+    this.ortho.left = -half * a; this.ortho.right = half * a; this.ortho.top = half; this.ortho.bottom = -half;
+    this.ortho.updateProjectionMatrix();
+  }
 
   dispose() {
     this._disposed = true;
