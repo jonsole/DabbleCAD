@@ -120,10 +120,12 @@ export class SlicerWorkspace {
       button({ icon: 'cube', label: 'Add design', title: 'Add the whole 3D design to the plate', onClick: () => this.addFromDesign() }),
       button({ icon: 'select', label: 'Selected', title: 'Add the shapes selected in 3D Design to the plate', onClick: () => this.addFromDesign({ selectedOnly: true }) }),
       button({ icon: 'plus', label: 'Import', title: 'Add an STL, OBJ, 3MF or PLY file', onClick: () => this.importFiles() }), h('span', { class: 'sep' }),
-      button({ icon: 'duplicate', title: 'Copy the selected model', onClick: () => this.selected && this.duplicate(this.selected) }),
-      button({ icon: 'trash', title: 'Remove the selected model (Del)', onClick: () => this.selected && this.removeModel(this.selected) }), h('span', { class: 'sep' }),
-      button({ icon: 'align', title: 'Arrange: space the models out on the bed', onClick: () => this.arrange() }),
-      button({ icon: 'drop', title: 'Reset the selected model: undo rotation and scaling', onClick: () => this.resetSelected() }),
+      this.undoBtn = button({ icon: 'undo', title: 'Undo (Ctrl+Z)', onClick: () => this.undo() }),
+      this.redoBtn = button({ icon: 'redo', title: 'Redo (Ctrl+Y)', onClick: () => this.redo() }), h('span', { class: 'sep' }),
+      this.dupBtn = button({ icon: 'duplicate', title: 'Copy the selected model', onClick: () => this.selected && this.duplicate(this.selected) }),
+      this.delBtn = button({ icon: 'trash', title: 'Remove the selected model (Del)', onClick: () => this.selected && this.removeModel(this.selected) }), h('span', { class: 'sep' }),
+      this.arrangeBtn = button({ icon: 'align', title: 'Arrange: space the models out on the bed', onClick: () => this.arrange() }),
+      this.resetBtn = button({ icon: 'drop', title: 'Reset the selected model: undo rotation and scaling', onClick: () => this.resetSelected() }),
       h('span', { class: 'spacer' }), this.modeSeg);
 
     // the 3D view, with the same floating pieces as 3D Design
@@ -175,10 +177,45 @@ export class SlicerWorkspace {
     this.scene.refreshModel(m); this._markDirty(); this._checkFit(); this._renderTransformValues();
   }
 
+  // ------------------------------------------------------------------ undo / redo of the plate
+  // Snapshots of every model's placement (and the selection). _checkpoint() runs after each finished
+  // edit and ignores calls that changed nothing, so it is safe to call from many places.
+  _snapshot() {
+    const items = this.models.map((m) => ({ m, v: { name: m.name, x: m.x, y: m.y, rx: m.rx, ry: m.ry, rz: m.rz, sx: m.sx, sy: m.sy, sz: m.sz, locked: !!m.locked, hidden: !!m.hidden } }));
+    return { items, selected: this.selected, key: JSON.stringify(items.map((i) => [i.m.id, i.v])) };
+  }
+  _checkpoint() {
+    if (this._restoring) return;
+    const snap = this._snapshot();
+    const h = this._hist || (this._hist = { stack: [], i: -1 });
+    const cur = h.stack[h.i];
+    if (cur && cur.key === snap.key) { cur.selected = snap.selected; return; }
+    h.stack.length = h.i + 1;
+    h.stack.push(snap);
+    if (h.stack.length > 100) h.stack.shift();
+    h.i = h.stack.length - 1;
+    this._syncTools();
+  }
+  _restore(snap) {
+    this._restoring = true;
+    this.models = snap.items.map(({ m, v }) => Object.assign(m, v));
+    const live = (id) => snap.items.some((i) => i.m.id === id && !i.v.hidden);
+    this.selected = live(this.selected) ? this.selected : live(snap.selected) ? snap.selected : null;
+    this.scene.setModels(this.models);
+    this.scene.setSelection(this.selected ? [this.selected] : []);
+    this._markDirty(); this._checkFit(); this._renderModels(); this._renderTransform(); this._updateBar();
+    this._restoring = false;
+  }
+  undo() { const h = this._hist; if (!h || h.i <= 0) return; this._checkpoint(); h.i = Math.max(0, h.i - 1); this._restore(h.stack[h.i]); this._syncTools(); }
+  redo() { const h = this._hist; if (!h || h.i >= h.stack.length - 1) return; h.i++; this._restore(h.stack[h.i]); this._syncTools(); }
+
   _key(e) {
     if (!this.active || !this.scene) return;
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+    const ctrl = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
+    if (ctrl && k === 'z') { e.preventDefault(); if (e.shiftKey) this.redo(); else this.undo(); return; }
+    if (ctrl && k === 'y') { e.preventDefault(); this.redo(); return; }
     if ((e.key === 'Delete' || e.key === 'Backspace') && this.selected) { e.preventDefault(); this.removeModel(this.selected); }
   }
 
@@ -220,6 +257,7 @@ export class SlicerWorkspace {
   }
 
   _checkFit() {
+    this._checkpoint();
     const bad = this._active().filter((m) => fitProblem(m, this.volume));
     this.scene.setProblems(bad.map((m) => m.id));
     clear(this.banner);
@@ -324,6 +362,7 @@ export class SlicerWorkspace {
   get selectedModel() { return this.models.find((m) => m.id === this.selected); }
 
   _renderModels() {
+    this._syncTools();
     if (!this.outliner || !this.outliner.classList.contains('open')) return;
     clear(this.outliner);
     const list = h('div', { class: 'outliner-list' });
@@ -333,7 +372,7 @@ export class SlicerWorkspace {
       const eye = h('button', { class: 'mini' + (m.hidden ? ' on' : ''), type: 'button', title: m.hidden ? 'Show' : 'Hide (left out of the slice)' }, icon(m.hidden ? 'eyeOff' : 'eye', 15));
       eye.addEventListener('click', (e) => { e.stopPropagation(); m.hidden = !m.hidden; if (m.hidden && this.selected === m.id) this.selected = null; this._modelsChanged(); });
       const lock = h('button', { class: 'mini' + (m.locked ? ' on' : ''), type: 'button', title: m.locked ? 'Unlock' : 'Lock (stops it being moved, changed or removed)' }, icon(m.locked ? 'lock' : 'unlock', 15));
-      lock.addEventListener('click', (e) => { e.stopPropagation(); m.locked = !m.locked; this._renderModels(); this._renderTransform(); this.scene.requestRender(); });
+      lock.addEventListener('click', (e) => { e.stopPropagation(); m.locked = !m.locked; this._checkpoint(); this._renderModels(); this._renderTransform(); this.scene.requestRender(); });
       const row = h('div', { class: 'outliner-row' + (m.id === this.selected ? ' selected' : '') + (m.hidden ? ' hidden-node' : ''), tabindex: 0,
         title: `${s.x.toFixed(1)} × ${s.y.toFixed(1)} × ${s.z.toFixed(1)} mm · ${Math.round(m.triangles).toLocaleString()} triangles` + (bad.has(m.id) ? '\n' + fitProblem(m, this.volume) : '') },
         h('span', { class: 'dot', style: { background: bad.has(m.id) ? '#ffb74d' : 'var(--accent)' } }),
@@ -375,7 +414,7 @@ export class SlicerWorkspace {
     const turn = (axis) => () => { m[axis] = ((m[axis] + 90 + 180) % 360) - 180; this.scene.refreshModel(m); this._markDirty(); this._checkFit(); this._renderTransformValues(); };
     this.inspectorEl.append(
       h('div', { class: 'insp-head' }, h('div', { class: 'insp-title', title: m.name }, m.name),
-        button({ icon: m.locked ? 'lock' : 'unlock', title: m.locked ? 'Unlock' : 'Lock', cls: m.locked ? 'active' : '', onClick: () => { m.locked = !m.locked; this._renderModels(); this._renderTransform(); this.scene.requestRender(); } }),
+        button({ icon: m.locked ? 'lock' : 'unlock', title: m.locked ? 'Unlock' : 'Lock', cls: m.locked ? 'active' : '', onClick: () => { m.locked = !m.locked; this._checkpoint(); this._renderModels(); this._renderTransform(); this.scene.requestRender(); } }),
         button({ icon: 'bulb', title: 'Hide (left out of the slice)', onClick: () => { m.hidden = true; if (this.selected === m.id) this.selected = null; this._modelsChanged(); } }),
         button({ icon: 'duplicate', title: 'Duplicate', onClick: () => this.duplicate(m.id) }),
         button({ icon: 'trash', title: 'Delete (Del)', onClick: () => this.removeModel(m.id) })),
@@ -395,6 +434,7 @@ export class SlicerWorkspace {
   }
 
   _renderTransformValues(m = this.selectedModel) {
+    this._syncTools();
     if (!m || !this.fields || !this.fields.x) return;
     const set = (k, v) => { if (this.fields[k] && document.activeElement !== this.fields[k]) this.fields[k].value = String(Number(v.toFixed(2))); };
     set('x', m.x); set('y', m.y); set('rx', m.rx); set('ry', m.ry); set('rz', m.rz); set('scale', m.sx);
@@ -480,7 +520,22 @@ export class SlicerWorkspace {
   }
 
   // ------------------------------------------------------------------ slicing
+  /** Grey out toolbar tools that do nothing right now (no selection, locked model, nothing to arrange). */
+  _syncTools() {
+    if (!this.dupBtn) return;
+    const m = this.selectedModel;
+    const off = (b, v) => { b.classList.toggle('disabled', !!v); b.setAttribute('aria-disabled', v ? 'true' : 'false'); };
+    const hs = this._hist;
+    off(this.undoBtn, !hs || hs.i <= 0);
+    off(this.redoBtn, !hs || hs.i >= hs.stack.length - 1);
+    off(this.dupBtn, !m);
+    off(this.delBtn, !m);
+    off(this.arrangeBtn, this._movable().length === 0);
+    off(this.resetBtn, !m || m.locked || (m.rx === 0 && m.ry === 0 && m.rz === 0 && m.sx === 100 && m.sy === 100 && m.sz === 100));
+  }
+
   _updateBar() {
+    this._syncTools();
     const busy = !!this.controller;
     this.sliceBtn.hidden = busy;
     this.cancelBtn.hidden = !busy;

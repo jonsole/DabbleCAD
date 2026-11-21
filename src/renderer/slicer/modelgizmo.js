@@ -74,6 +74,8 @@ export class ModelGizmo {
       const el = this._handle('gz-rot gz-rot-' + axis, title, icon('rotate', 22));
       this._add(el, pos);
       el.addEventListener('pointerdown', (e) => this._rotateDrag(e, axis));
+      el.addEventListener('pointerenter', () => { if (!this.dragKind) this._showProtractor(axis); });
+      el.addEventListener('pointerleave', () => { if (!this.dragKind) { this.protractor.visible = false; this.scene.requestRender(); } });
     };
     rot('z', (b, c, o) => [b.maxX + o, b.minY - o, 0], 'Rotate around Z (Shift: 45° steps)');
     rot('x', (b, c, o) => [c.x, b.maxY + o * 1.5, b.height], 'Rotate around X (Shift: 45° steps)');
@@ -225,6 +227,21 @@ export class ModelGizmo {
     }, () => this._commit(m, true));
   }
 
+  _showProtractor(axis) {
+    const m = this._model();
+    if (!m || m.locked) return;
+    const b = m.bounds;
+    const c = new THREE.Vector3((b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, m.zFloat ?? b.height / 2);
+    const basis = axis === 'x' ? new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0))
+      : axis === 'y' ? new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0))
+        : new THREE.Matrix4();
+    const sc = this._unitsPerPixel(c) * RING_PX;
+    this.protractor.matrix.copy(new THREE.Matrix4().makeTranslation(c.x, c.y, c.z)).multiply(basis).multiply(new THREE.Matrix4().makeScale(sc, sc, sc));
+    this.protractor.updateMatrixWorld(true);
+    this.protractor.visible = true;
+    this.scene.requestRender();
+  }
+
   _rotateDrag(e, axis) {
     const m = this._model();
     if (!m || m.locked) return;
@@ -247,13 +264,7 @@ export class ModelGizmo {
       const a = Math.atan2(-(ev.clientY - rect.top - cs.y), ev.clientX - rect.left - cs.x);
       return facing >= 0 ? a : -a;
     };
-    const basis = axis === 'x' ? new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0))
-      : axis === 'y' ? new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0))
-        : new THREE.Matrix4();
-    const sc = this._unitsPerPixel(c) * RING_PX;
-    this.protractor.matrix.copy(new THREE.Matrix4().makeTranslation(c.x, c.y, c.z)).multiply(basis).multiply(new THREE.Matrix4().makeScale(sc, sc, sc));
-    this.protractor.updateMatrixWorld(true);
-    this.protractor.visible = true;
+    this._showProtractor(axis);
     const R0 = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(
       THREE.MathUtils.degToRad(snap.rx), THREE.MathUtils.degToRad(snap.ry), THREE.MathUtils.degToRad(snap.rz), 'XYZ'));
     const zc = c.z;          // while turning, the model keeps its height instead of dropping onto the plate
