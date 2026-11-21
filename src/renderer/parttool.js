@@ -512,7 +512,7 @@ export class PartTool {
       return el;
     });
     this.arrowEls = [0, 1, 2].map((i) => {
-      const el = h('div', { class: 'gz-handle gz-lift gz-part-arrow' });
+      const el = h('div', { class: 'gz-handle gz-part-arrow' });
       el.style.display = 'none';
       el.addEventListener('pointerdown', (e) => this._arrowDown(e, i));
       this.layer.append(el);
@@ -527,7 +527,7 @@ export class PartTool {
       this.layer.append(el);
       return el;
     });
-    this.anchorEl = h('div', { class: 'gz-corner gz-part-mark' });
+    this.anchorEl = h('div', { class: 'gz-part-mark mk-picked' });
     this.anchorEl.style.display = 'none';
     this.layer.append(this.anchorEl);
     this.markEls = [];

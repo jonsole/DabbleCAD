@@ -135,7 +135,9 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .part-layer { z-index: 5; }
 .gz-part-label { background: #20242c; color: #fff; border-color: #58657a; }
 .gz-part-label.moved { background: #ffffff; color: #1b2330; border-color: #9aa7b8; }
-.gz-part-arrow { cursor: grab; transform-origin: 50% 50%; }
+/* own classes (not gz-lift / gz-corner) so they're never mistaken for the object handles */
+.gz-part-arrow { width: 0; height: 0; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 17px solid #20242c; filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff); cursor: grab; transform-origin: 50% 50%; }
+.gz-part-arrow.ax-n:hover { border-bottom-color: #ff5252; }
 .gz-part-arrow.dragging { cursor: grabbing; }
 .gz-part-arrow.ax-n.dragging { border-bottom-color: #ff5252; }
 .part-layer > .gz-part-tail { pointer-events: none; height: 3px; transform-origin: 0 50%; background: #20242c; box-shadow: 0 0 0 1px rgba(255,255,255,.75); border-radius: 2px; }
@@ -146,7 +148,7 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .gz-part-label.ax-x { border-left: 3px solid #ef5350; } .gz-part-label.ax-y { border-left: 3px solid #43a047; } .gz-part-label.ax-z { border-left: 3px solid #2f80ed; }
 .part-layer > .gz-part-mark { pointer-events: none; }
 .gz-part-mark.mk-plain { width: 8px; height: 8px; background: #20242c; border: 1.5px solid #fff; border-radius: 2px; }
-.gz-part-mark.mk-picked, .gz-part-mark.gz-corner { width: 11px; height: 11px; background: var(--handle); border: 1.5px solid var(--handle-border); border-radius: 2px; box-shadow: 0 0 0 1px rgba(255,255,255,.35); }
+.gz-part-mark.mk-picked { width: 11px; height: 11px; background: var(--handle); border: 1.5px solid var(--handle-border); border-radius: 2px; box-shadow: 0 0 0 1px rgba(255,255,255,.35); }
 .gz-part-mark.mk-hover { width: 11px; height: 11px; background: #ff5252; border: 1.5px solid var(--handle-border); border-radius: 2px; box-shadow: 0 0 0 1px rgba(255,255,255,.35); }
 .gz-rot { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 50%; color: #fff; background: rgba(24, 28, 36, 0.82); border: 1px solid rgba(255,255,255,.55); cursor: grab; }
 .gz-rot:hover { background: var(--select); color: #06202b; }
