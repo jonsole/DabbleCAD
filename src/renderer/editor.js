@@ -1387,6 +1387,11 @@ export class Editor extends Emitter {
   worldBounds(nodes = this.doc.nodes.filter((n) => !n.hidden)) { return this.bounds(nodes, true); }
 
   fitView() {
+    // Face, Edge and Corner modes: centre on the picked parts (or the shape being worked on)
+    if (this.parts.active || this.edgeMode) {
+      const box = this.parts.pickedBox();
+      if (box) { this.viewport.fit(box); return; }
+    }
     const sel = this.selectedNodes();
     const box = this.worldBounds(sel.length ? sel : undefined);
     if (box.isEmpty()) this.viewport.home(); else this.viewport.fit(box);

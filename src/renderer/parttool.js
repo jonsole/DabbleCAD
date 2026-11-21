@@ -333,6 +333,40 @@ export class PartTool {
     return AXES.map((a) => ({ ...a, dir: a.dir.clone().transformDirection(f) }));
   }
 
+  /**
+   * World box around the picked faces, edges or corners (for Fit in view), grown to at least
+   * a third of the shape's size so a single corner isn't zoomed right into. Null if none.
+   */
+  pickedBox() {
+    const ed = this.ed;
+    const box = new THREE.Box3();
+    let node = null;
+    if (this.mode) {
+      node = this.node();
+      const I = node && this.info(node);
+      if (!I) return null;
+      for (const j of this.picked) {
+        if (this.mode === 'face' && j < I.A.faces.length) for (const p of this.faceShape(I, j).pts) box.expandByPoint(I.toWorld(p));
+        if (this.mode === 'corner' && j < I.A.corners.length) box.expandByPoint(I.toWorld(I.vert(I.A.corners[j].v)));
+      }
+    } else if (ed.edgeMode && ed.edgeMode.id) {
+      node = ed.node(ed.edgeMode.id);
+      const mesh = node && ed.meshes.get(node.id);
+      if (!mesh) return null;
+      const d = nodeEdgeData(node);
+      for (const i of ed.edgeMode.picked) if (d.lines[i]) for (const p of d.lines[i]) box.expandByPoint(p.clone().applyMatrix4(mesh.matrixWorld));
+    }
+    if (!node) return null;
+    const whole = ed.worldBounds([node]);
+    if (box.isEmpty()) return whole.isEmpty() ? null : whole;
+    if (!whole.isEmpty()) {
+      const min = whole.getSize(new THREE.Vector3()).length() / 3;
+      const size = box.getSize(new THREE.Vector3()).length();
+      if (size < min) box.expandByScalar((min - size) / 2);
+    }
+    return box;
+  }
+
   /** Keys naming each shown edge by the shape's own vertices (stable while parts move). */
   chainKeys(node, I = this.info(node), d = nodeEdgeData(node)) {
     if (!I) return [];
