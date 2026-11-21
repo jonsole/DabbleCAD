@@ -16,6 +16,18 @@ import * as laserBox from './laser/boxmaker.js';
 import { platform } from './platform.js';
 import * as drive from './drive.js';
 
+// The app has its own right-click menus, so the browser's never shows, wherever the click
+// lands: the app opens its menu as the button comes up, and on Windows the browser's
+// 'contextmenu' event follows and lands on that menu rather than on the view. Text fields keep
+// the browser menu for copy, paste and spelling.
+const TEXT_INPUT = /^(text|search|email|url|tel|password|number)$/;
+document.addEventListener('contextmenu', (e) => {
+  const t = e.target;
+  const field = t instanceof Element && t.closest('textarea, [contenteditable=""], [contenteditable="true"], input');
+  if (field && (field.tagName !== 'INPUT' || TEXT_INPUT.test(field.type || 'text'))) return;
+  e.preventDefault();
+});
+
 const app = new App();
 // Handy for debugging and automated checks from DevTools (F12).
 window.dabble = app;
