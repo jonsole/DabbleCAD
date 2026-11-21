@@ -16,7 +16,8 @@ const LS = {
 const BROWSER_DEFAULTS = {
   theme: 'dark', gpu: 'auto', gpuAutoDisabled: false, antialias: true, shadows: true, edges: false,
   zoomInvert: false, orbitSpeed: 1, zoomSpeed: 1, autosave: true, units: 'mm', snap: 1, showDims: true,
-  projection: 'perspective', hardwareAcceleration: true, platform: 'browser', version: '1.0.0',
+  projection: 'perspective', hardwareAcceleration: true, platform: 'browser',
+  version: typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : '1.0.0', // from package.json at build time
 };
 
 function pickFiles({ filters = [], multi = false } = {}) {
@@ -47,7 +48,8 @@ function download({ defaultName = 'design', data }) {
 }
 
 const browser = {
-  getSettings: async () => ({ ...BROWSER_DEFAULTS, ...LS.get('dabble.settings', {}) }),
+  // the version always comes from this build (older saves stored one with the settings)
+  getSettings: async () => ({ ...BROWSER_DEFAULTS, ...LS.get('dabble.settings', {}), version: BROWSER_DEFAULTS.version }),
   setSettings: async (patch) => {
     const next = { ...BROWSER_DEFAULTS, ...LS.get('dabble.settings', {}), ...patch };
     LS.set('dabble.settings', next);

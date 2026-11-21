@@ -85,7 +85,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: DabbleCAD-${{ matrix.artifact }}
+          name: DabbleCAD-Plus-${{ matrix.artifact }}
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
@@ -121,13 +121,13 @@ jobs:
           const { createHash } = require('node:crypto');
           const { version } = require(process.cwd() + '/package.json');
           const names = [
-            `DabbleCAD-${version}-win-x64-setup.exe`,
-            `DabbleCAD-${version}-win-x64.zip`,
-            // `DabbleCAD-${version}-mac-arm64.dmg`, (Apple Silicon build disabled)
-            // `DabbleCAD-${version}-mac-arm64.zip`,
-            `DabbleCAD-${version}-mac-x64.dmg`,
-            `DabbleCAD-${version}-mac-x64.zip`,
-            `DabbleCAD-${version}-linux-x64.AppImage`,
+            `DabbleCAD-Plus-${version}-win-x64-setup.exe`,
+            `DabbleCAD-Plus-${version}-win-x64.zip`,
+            // `DabbleCAD-Plus-${version}-mac-arm64.dmg`, (Apple Silicon build disabled)
+            // `DabbleCAD-Plus-${version}-mac-arm64.zip`,
+            `DabbleCAD-Plus-${version}-mac-x64.dmg`,
+            `DabbleCAD-Plus-${version}-mac-x64.zip`,
+            `DabbleCAD-Plus-${version}-linux-x64.AppImage`,
           ].sort();
           const actual = fs.readdirSync('release-assets').sort();
           if (JSON.stringify(actual) !== JSON.stringify(names)) {

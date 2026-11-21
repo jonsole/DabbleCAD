@@ -32,7 +32,7 @@ that both run. CI uses separate native runners for that reason.
 To test an extracted Windows ZIP rather than the unpacked build directory:
 
 ```powershell
-node tools\test.js --app="C:\path\to\extracted\DabbleCAD.exe"
+node tools\test.js --app="C:\path\to\extracted\"DabbleCAD Plus.exe""
 ```
 
 The renderer is bundled by Vite. electron-builder's explicit file list includes
@@ -130,11 +130,11 @@ The initial release is intentionally unsigned by a trusted publisher:
 Only trust files from the official repository. Compare SHA-256 values:
 
 ```powershell
-Get-FileHash .\DabbleCAD-1.0.0-win-x64-setup.exe -Algorithm SHA256
+Get-FileHash .\DabbleCAD-Plus-1.0.0-win-x64-setup.exe -Algorithm SHA256
 ```
 
 ```sh
-shasum -a 256 DabbleCAD-1.0.0-mac-arm64.dmg
+shasum -a 256 DabbleCAD-Plus-1.0.0-mac-arm64.dmg
 ```
 
 Use the operating system's per-app approval flow only if you have verified and

@@ -1,3 +1,4 @@
+import { APP_NAME } from './brand.js';
 import { App } from './app.js';
 import * as shapes from './core/shapes.js';
 import * as doc from './core/doc.js';
@@ -24,7 +25,7 @@ app.init().catch((err) => {
   const boot = document.getElementById('boot');
   if (!boot) return;
   const sub = boot.querySelector('.boot-sub');
-  sub.textContent = 'DabbleCAD could not start: ' + (err && err.message ? err.message : err);
+  sub.textContent = `${APP_NAME} could not start: ` + (err && err.message ? err.message : err);
   // Most start-up failures are graphics related, so offer the software renderer.
   if (window.dabbleNative) {
     const btn = document.createElement('button');

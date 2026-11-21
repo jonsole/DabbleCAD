@@ -1,4 +1,5 @@
 // Application shell: layout, toolbars, keyboard shortcuts, auto-save and file handling.
+import { APP_NAME } from './brand.js';
 import * as THREE from 'three';
 import { initSolid } from './core/solid.js';
 import { h, clear, button, icon, toast, popupMenu, promptDialog, confirmDialog } from './ui/dom.js';
@@ -75,7 +76,7 @@ export class App {
       this.modeSeg.append(b);
     }
     this.themeBtn = button({ icon: 'sun', title: 'Switch between dark and light mode', onClick: () => this.setTheme(this.settings.theme === 'light' ? 'dark' : 'light') });
-    const logo = h('button', { class: 'logo', type: 'button', title: 'Your designs' }, this.logoMark(), h('span', { class: 'logo-name' }, 'DabbleCAD'));
+    const logo = h('button', { class: 'logo', type: 'button', title: 'Your designs' }, this.logoMark(), h('span', { class: 'logo-name' }, 'DabbleCAD', h('span', { class: 'logo-plus' }, 'Plus')));
     logo.addEventListener('click', () => this.dashboard.show());
     const topbar = h('div', { class: 'topbar', role: 'toolbar', 'aria-label': 'Design and file tools' }, logo, h('span', { class: 'sep' }), this.nameInput, this.saveState, h('span', { class: 'spacer' }),
       this.modeSeg, h('span', { class: 'sep' }),
@@ -83,7 +84,7 @@ export class App {
       button({ label: 'Export', icon: 'export', title: 'Download for 3D printing or sharing (Ctrl+E)', onClick: () => exportDialog(this) }),
       h('span', { class: 'sep' }), this.themeBtn,
       button({ icon: 'help', title: 'Help: shortcuts and getting started (?)', onClick: () => shortcutsDialog(this) }),
-      button({ icon: 'info', title: 'About DabbleCAD', onClick: () => aboutDialog(this) }),
+      button({ icon: 'info', title: `About ${APP_NAME}`, onClick: () => aboutDialog(this) }),
       button({ icon: 'settings', title: 'Settings', onClick: () => settingsDialog(this) }));
 
     // top-level workspaces sit directly beneath the DabbleCAD brand
@@ -356,7 +357,7 @@ export class App {
     return true;
   }
 
-  _title() { document.title = `${this.editor.doc.name} – DabbleCAD`; }
+  _title() { document.title = `${this.editor.doc.name} – ${APP_NAME}`; }
   _setSaveState(text) { this.saveState.textContent = text; }
 
   _markDirty() {
@@ -453,7 +454,7 @@ export class App {
     const u = await platform.checkUpdate().catch(() => null);
     if (!u) return;
     const link = h('a', { href: '#', onClick: (e) => { e.preventDefault(); updateDialog(this, u); } }, 'Update now');
-    toast(h('span', {}, `DabbleCAD ${u.latest} is available (you have ${u.current}). `, link), 'info', 15000);
+    toast(h('span', {}, `${APP_NAME} ${u.latest} is available (you have ${u.current}). `, link), 'info', 15000);
   }
 
   async exportScreenshot() {

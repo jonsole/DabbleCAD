@@ -14,11 +14,11 @@ if (appArg) {
 } else if (!packaged) {
   executable = require('electron');
 } else if (process.platform === 'win32') {
-  executable = path.join(root, 'release', version, 'win-unpacked', 'DabbleCAD.exe');
+  executable = path.join(root, 'release', version, 'win-unpacked', 'DabbleCAD Plus.exe');
 } else if (process.platform === 'darwin') {
-  executable = path.join(root, 'release', version, process.arch === 'arm64' ? 'mac-arm64' : 'mac', 'DabbleCAD.app', 'Contents', 'MacOS', 'DabbleCAD');
+  executable = path.join(root, 'release', version, process.arch === 'arm64' ? 'mac-arm64' : 'mac', 'DabbleCAD Plus.app', 'Contents', 'MacOS', 'DabbleCAD Plus');
 } else if (process.platform === 'linux') {
-  executable = path.join(root, 'release', version, 'linux-unpacked', 'dabblecad');
+  executable = path.join(root, 'release', version, 'linux-unpacked', 'dabblecad-plus');
 } else {
   throw new Error('Packaged smoke tests currently support Windows, macOS, and Linux only');
 }

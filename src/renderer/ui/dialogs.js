@@ -1,4 +1,5 @@
 // Dialogs: settings, grid, export, shortcuts, statistics, pattern, notes.
+import { APP_NAME } from '../brand.js';
 import { h, modal, button, toast, clear } from './dom.js';
 import { platform, isDesktop } from '../platform.js';
 import { EXPORT_FORMATS } from '../core/io.js';
@@ -34,7 +35,7 @@ function driveGroup(app, m) {
       out.push(row('Copy my designs to Drive', `Uploads every design ${here}, including ones made before you signed in.`,
         button({ label: 'Copy', icon: 'arrowUp', cls: 'btn-outline', onClick: () => driveAction(async () => { await drive.copyAllToDrive(); toast('Designs copied to Google Drive'); }) })));
     } else {
-      out.push(row('Google Drive', 'Keep your designs in a DabbleCAD folder in your Google Drive, so you have them on any computer. DabbleCAD can only see files it made.',
+      out.push(row('Google Drive', `Keep your designs in a DabbleCAD folder in your Google Drive, so you have them on any computer. ${APP_NAME} can only see files it made.`,
         button({ label: 'Sign in', icon: 'cloud', cls: 'btn-primary', onClick: () => driveAction(async () => { await drive.signIn(); reopen(); }) })));
     }
   }
@@ -56,7 +57,7 @@ export async function settingsDialog(app) {
   const software = /swiftshader|llvmpipe|software|basic render/i.test(renderer || '');
   const gpuOn = s.gpu !== 'off';
   let pendingRestart = false;
-  const restartNote = h('div', { class: 'insp-note', style: { display: 'none' } }, 'Restart DabbleCAD to apply this change. ',
+  const restartNote = h('div', { class: 'insp-note', style: { display: 'none' } }, `Restart ${APP_NAME} to apply this change. `,
     button({ label: 'Restart now', cls: 'btn-primary', onClick: async () => { if (await app.confirmLeave()) platform.relaunch(); } }));
   const needRestart = () => { pendingRestart = true; restartNote.style.display = ''; };
 
@@ -76,7 +77,7 @@ export async function settingsDialog(app) {
   const status = !gpu.hardwareAcceleration
     ? h('span', { class: 'gpu-warn' }, 'Software rendering is active (GPU acceleration is turned off).')
     : software
-      ? h('span', { class: 'gpu-warn' }, 'No usable GPU was detected, so DabbleCAD is rendering on the CPU.')
+      ? h('span', { class: 'gpu-warn' }, `No usable GPU was detected, so ${APP_NAME} is rendering on the CPU.`)
       : h('span', { class: 'gpu-ok' }, 'GPU acceleration is active.');
   const range = (key, min, max, step) => {
     const input = h('input', { type: 'range', min, max, step, value: s[key] });
@@ -86,7 +87,7 @@ export async function settingsDialog(app) {
 
   m.body.append(
     h('div', { class: 'set-group' }, h('h4', {}, 'Appearance'),
-      row('Theme', 'DabbleCAD starts in dark mode; switch to light any time.', themeSeg),
+      row('Theme', `${APP_NAME} starts in dark mode; switch to light any time.`, themeSeg),
       row('Shadows', 'Soft shadows on the workplane.', toggle(s.shadows !== false, (v) => app.patchSettings({ shadows: v }))),
       row('Show edges', 'Draw outline edges on every shape.', toggle(!!s.edges, (v) => app.patchSettings({ edges: v }))),
       row('Dimension labels', 'Show editable sizes next to the selection.', toggle(s.showDims !== false, (v) => app.patchSettings({ showDims: v })))),
@@ -102,7 +103,7 @@ export async function settingsDialog(app) {
       row('Invert zoom direction', null, toggle(!!s.zoomInvert, (v) => app.patchSettings({ zoomInvert: v })))),
     h('div', { class: 'set-group' }, h('h4', {}, 'Files'),
       row('Auto-save', 'Designs are saved to your library as you work.', toggle(s.autosave !== false, (v) => app.patchSettings({ autosave: v }))),
-      isDesktop ? row('Design library', 'Where DabbleCAD keeps your designs.', button({ label: 'Open folder', icon: 'folder', cls: 'btn-outline', onClick: () => platform.openDesignsFolder() })) : null),
+      isDesktop ? row('Design library', `Where ${APP_NAME} keeps your designs.`, button({ label: 'Open folder', icon: 'folder', cls: 'btn-outline', onClick: () => platform.openDesignsFolder() })) : null),
     driveGroup(app, m),
     isDesktop ? h('div', { class: 'set-group' }, h('h4', {}, '3D printing'),
       row('Slicer', s.slicerPath ? s.slicerPath : 'Not set: "Open in slicer" uses whatever app opens 3MF files on this computer.', h('div', { class: 'set-btns' },
@@ -110,10 +111,10 @@ export async function settingsDialog(app) {
         s.slicerPath ? button({ label: 'Clear', cls: 'btn-ghost', onClick: () => { app.patchSettings({ slicerPath: '' }); m.close(); settingsDialog(app); } }) : null)),
       row('Send to slicer as STL', 'Off sends 3MF, which keeps colours and separate parts.', toggle(s.slicerFormat === 'stl', (v) => app.patchSettings({ slicerFormat: v ? 'stl' : '3mf' })))) : null,
     isDesktop ? h('div', { class: 'set-group' }, h('h4', {}, 'Updates'),
-      row(`You have version ${s.version || ''}`, 'Looks on GitHub for a newer release, downloads it and installs it. Your designs and settings are kept.', button({ label: 'Check for updates', cls: 'btn-outline', onClick: () => { m.close(); updateDialog(app); } })),
+      row(`You have version ${s.version || ''}`, 'Looks for a newer release of this fork (github.com/jonsole/DabbleCAD), downloads it and installs it. Your designs and settings are kept.', button({ label: 'Check for updates', cls: 'btn-outline', onClick: () => { m.close(); updateDialog(app); } })),
       row('Tell me about new versions', 'Asks GitHub for the latest release when the app starts. Nothing about you or your designs is sent. Turn off to stay fully offline.', toggle(s.checkUpdates !== false, (v) => app.patchSettings({ checkUpdates: v })))) : null,
     h('div', { class: 'set-group' }, h('h4', {}, 'About'),
-      row(`DabbleCAD ${s.version || ''}`, 'Created by DJMcNewgent · open source under the Apache License 2.0.', button({ label: 'About', icon: 'info', cls: 'btn-outline', onClick: () => aboutDialog(app) }))));
+      row(`${APP_NAME} ${s.version || ''}`, 'jonsole\'s fork of DabbleCAD by DJMcNewgent · open source under the Apache License 2.0.', button({ label: 'About', icon: 'info', cls: 'btn-outline', onClick: () => aboutDialog(app) }))));
   void pendingRestart;
 }
 
@@ -223,7 +224,7 @@ export function updateDialog(app, known = null) {
       detail.textContent = '';
       setActions(closeBtn('OK'));
     } else {
-      status.textContent = `DabbleCAD ${u.latest} is available. You have ${u.current}.`;
+      status.textContent = `${APP_NAME} ${u.latest} is available. You have ${u.current}.`;
       const what = { install: 'It will be installed over this copy and the app will restart.', appimage: 'It will replace this AppImage and the app will restart.', open: 'The disk image will open so you can drag the new app into Applications.', reveal: 'The download will be shown in its folder so you can replace this copy.' }[u.mode] || '';
       detail.textContent = u.canInstall ? `${u.size ? megabytes(u.size) + ' download. ' : ''}${what} Your designs and settings stay where they are.` : 'There is no automatic download for this computer. Open the release page to get it.';
       setActions(closeBtn('Later'),
@@ -232,7 +233,7 @@ export function updateDialog(app, known = null) {
     }
   }
   async function download(u) {
-    status.textContent = `Downloading DabbleCAD ${u.latest}…`;
+    status.textContent = `Downloading ${APP_NAME} ${u.latest}…`;
     detail.textContent = 'Starting…'; bar.style.display = ''; bar.firstChild.style.width = '0%';
     setActions();
     onProgress = (p) => {
@@ -257,7 +258,7 @@ export function updateDialog(app, known = null) {
       detail.textContent = (done && done.error ? done.error + '. ' : '') + (done && done.file ? 'The download is at ' + done.file : '');
       setActions(closeBtn());
     } else if (done.quitting) {
-      status.textContent = `Installing DabbleCAD ${u.latest}. The app will close and reopen in a moment.`;
+      status.textContent = `Installing ${APP_NAME} ${u.latest}. The app will close and reopen in a moment.`;
     } else {
       status.textContent = done.dryRun ? 'Update verified (test run: not installed).' : done.mode === 'open' ? 'The new version is open. Drag it into Applications, then reopen DabbleCAD.' : 'The new version is in your downloads folder for this update.';
       detail.textContent = done.file || '';
@@ -269,7 +270,7 @@ export function updateDialog(app, known = null) {
 }
 
 const WELCOME = [
-  ['Welcome to DabbleCAD', 'Build things for 3D printing by combining simple shapes. This short guide covers the basics; it takes about a minute.', [
+  [`Welcome to ${APP_NAME}`, 'Build things for 3D printing by combining simple shapes. This short guide covers the basics; it takes about a minute.', [
     'Everything runs on this computer. Your designs are saved here automatically.',
     'You can reopen this guide any time from the ? button in the top bar.']],
   ['1. Put a shape on the workplane', null, [
@@ -400,18 +401,32 @@ const THIRD_PARTY = [
   ['qrcode-generator', 'MIT'], ['Clipper (clipper-lib)', 'Boost Software License 1.0'], ['Roboto font (Fontsource)', 'SIL Open Font License 1.1'],
 ];
 
+// This copy is a fork: it says whose fork it is and keeps the original author's credit and
+// copyright, as the Apache License asks.
+const FORK = { owner: 'jonsole', repo: 'https://github.com/jonsole/DabbleCAD', web: 'https://jonsole.github.io/DabbleCAD/' };
+const ORIGINAL = { author: 'DJMcNewgent', repo: 'https://github.com/DJMcNewgent/DabbleCAD' };
+
 export function aboutDialog(app) {
-  const m = modal({ title: 'About DabbleCAD', width: 480 });
-  const link = h('a', { href: 'https://github.com/DJMcNewgent', target: '_blank', rel: 'noreferrer', class: 'about-link' }, 'github.com/DJMcNewgent');
+  const m = modal({ title: `About ${APP_NAME}`, width: 500 });
+  const link = (url, text) => {
+    const a = h('a', { href: url, target: '_blank', rel: 'noreferrer', class: 'about-link' }, text);
+    // the desktop app opens links in the system browser
+    if (isDesktop) a.addEventListener('click', (e) => { e.preventDefault(); platform.openExternal(url); });
+    return a;
+  };
+  const strip = (url) => url.replace(/^https:\/\//, '').replace(/\/$/, '');
   m.body.append(
-    h('div', { class: 'about-head' }, app.logoMark(), h('div', {}, h('div', { class: 'about-name' }, 'DabbleCAD'), h('div', { class: 'insp-note' }, `Version ${app.settings.version || '1.0.0'}`))),
-    h('p', { class: 'modal-text' }, 'A desktop app for 3D design and laser work: build with shapes, holes and groups, then export for printing or send jobs to a laser.'),
+    h('div', { class: 'about-head' }, app.logoMark(), h('div', {}, h('div', { class: 'about-name' }, APP_NAME),
+      h('div', { class: 'insp-note' }, `Version ${app.settings.version || '1.0.0'} · ${FORK.owner}'s fork · ${isDesktop ? 'desktop app' : 'web version'}`))),
+    h('p', { class: 'modal-text' }, 'A 3D design and laser app for the desktop and the browser: build with shapes, holes and groups, shape faces, edges and corners, then export for printing or send jobs to a laser.'),
     h('div', { class: 'stat-grid' },
-      h('span', {}, 'Created by'), h('span', {}, 'DJMcNewgent'),
-      h('span', {}, 'GitHub'), h('span', {}, link),
+      h('span', {}, 'This fork'), h('span', {}, link(FORK.repo, strip(FORK.repo))),
+      h('span', {}, 'Web version'), h('span', {}, link(FORK.web, strip(FORK.web))),
+      h('span', {}, 'Report a problem'), h('span', {}, link(FORK.repo + '/issues', 'GitHub issues')),
+      h('span', {}, 'Original app'), h('span', {}, link(ORIGINAL.repo, `DabbleCAD by ${ORIGINAL.author}`)),
       h('span', {}, 'License'), h('span', {}, 'Apache License 2.0 (open source)')),
     h('p', { class: 'modal-text', style: { marginTop: '14px' } },
-      'Copyright © 2026 DJMcNewgent. DabbleCAD is free and open-source software released under the Apache License, Version 2.0: you may use, copy, modify and share it, provided the copyright, license and notice files are kept and changes are marked. It comes with no warranty.'),
+      `DabbleCAD was created by ${ORIGINAL.author} (copyright © 2026 ${ORIGINAL.author}). ${APP_NAME} is a modified version maintained by ${FORK.owner}, adding features such as Google Drive storage, Face, Edge and Corner modes, edge rounding and a richer Sketch editor. Both are free and open-source software under the Apache License, Version 2.0: you may use, copy, modify and share it, provided the copyright, license and notice files are kept and changes are marked. It comes with no warranty.`),
     h('details', { class: 'about-third' }, h('summary', {}, 'Open-source components'),
       h('div', { class: 'stat-grid' }, THIRD_PARTY.flatMap(([n, l]) => [h('span', {}, n), h('span', {}, l)]))),
     h('div', { class: 'modal-actions' }, isDesktop ? button({ label: 'Check for updates', cls: 'btn-outline', onClick: () => { m.close(); updateDialog(app); } }) : null, button({ label: 'Close', cls: 'btn-primary', onClick: () => m.close() })));

@@ -89,11 +89,11 @@ function signIn({ clientId, clientSecret, loginHint }, focusApp) {
       const code = url.searchParams.get('code');
       const error = url.searchParams.get('error');
       if (url.searchParams.get('state') !== state || (!code && !error)) {
-        res.writeHead(400, { 'Content-Type': 'text/html' }).end(page('Sign-in failed', 'Please try again from DabbleCAD.'));
+        res.writeHead(400, { 'Content-Type': 'text/html' }).end(page('Sign-in failed', 'Please try again from DabbleCAD Plus.'));
         return;
       }
       if (error) {
-        res.writeHead(200, { 'Content-Type': 'text/html' }).end(page('Sign-in cancelled', 'You can close this tab and return to DabbleCAD.'));
+        res.writeHead(200, { 'Content-Type': 'text/html' }).end(page('Sign-in cancelled', 'You can close this tab and return to DabbleCAD Plus.'));
         finish(new Error(error === 'access_denied' ? 'Sign-in was cancelled' : `Google sign-in failed (${error})`));
         return;
       }
@@ -104,7 +104,7 @@ function signIn({ clientId, clientSecret, loginHint }, focusApp) {
         });
         if (!r.ok || !r.data.access_token) throw new Error(r.data.error_description || r.data.error || `Google sign-in failed (${r.status})`);
         if (r.data.refresh_token) saveRefresh(r.data.refresh_token);
-        res.writeHead(200, { 'Content-Type': 'text/html' }).end(page('Signed in to Google Drive', 'You can close this tab and return to DabbleCAD.'));
+        res.writeHead(200, { 'Content-Type': 'text/html' }).end(page('Signed in to Google Drive', 'You can close this tab and return to DabbleCAD Plus.'));
         finish(null, { access_token: r.data.access_token, expires_in: r.data.expires_in, persistent: !memoryOnly });
       } catch (e) {
         res.writeHead(200, { 'Content-Type': 'text/html' }).end(page('Sign-in failed', String(e.message || e)));

@@ -42,7 +42,7 @@ export class Dashboard {
 
     this.el = h('div', { class: 'dashboard' },
       h('div', { class: 'dash-head' },
-        h('div', { class: 'logo', style: { cursor: 'default' } }, app.logoMark(), h('span', { class: 'logo-name' }, 'DabbleCAD')),
+        h('div', { class: 'logo', style: { cursor: 'default' } }, app.logoMark(), h('span', { class: 'logo-name' }, 'DabbleCAD', h('span', { class: 'logo-plus' }, 'Plus'))),
         h('span', { class: 'spacer' }),
         this.driveBtn,
         button({ label: 'Open file…', icon: 'folder', cls: 'btn-outline', title: 'Open a .dabble file from disk', onClick: () => app.openFile() }),

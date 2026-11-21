@@ -6,10 +6,11 @@ const fs = require('node:fs');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 
-const REPO = 'DJMcNewgent/DabbleCAD';
+// This fork's releases (the original app's would replace the fork's features).
+const REPO = 'jonsole/DabbleCAD';
 const API = `https://api.github.com/repos/${REPO}/releases/latest`;
 const DOWNLOAD_PREFIX = `https://github.com/${REPO}/releases/download/`;
-const HEADERS = { Accept: 'application/vnd.github+json', 'User-Agent': 'DabbleCAD' };
+const HEADERS = { Accept: 'application/vnd.github+json', 'User-Agent': 'DabbleCAD-Plus' };
 
 const parts = (v) => String(v).replace(/^v/, '').split('.').map((n) => parseInt(n, 10) || 0);
 function isNewer(latest, current) {
@@ -22,13 +23,13 @@ function isNewer(latest, current) {
 function pickAsset(version, { platform = process.platform, arch = process.arch, execPath = process.execPath, env = process.env } = {}) {
   if (platform === 'win32') {
     // the installer leaves an uninstaller beside the app; the portable ZIP does not
-    const installed = fs.existsSync(path.join(path.dirname(execPath), 'Uninstall DabbleCAD.exe'));
+    const installed = fs.existsSync(path.join(path.dirname(execPath), 'Uninstall DabbleCAD Plus.exe'));
     return installed
-      ? { name: `DabbleCAD-${version}-win-x64-setup.exe`, mode: 'install' }
-      : { name: `DabbleCAD-${version}-win-x64.zip`, mode: 'reveal' };
+      ? { name: `DabbleCAD-Plus-${version}-win-x64-setup.exe`, mode: 'install' }
+      : { name: `DabbleCAD-Plus-${version}-win-x64.zip`, mode: 'reveal' };
   }
-  if (platform === 'darwin') return { name: `DabbleCAD-${version}-mac-${arch === 'arm64' ? 'arm64' : 'x64'}.dmg`, mode: 'open' };
-  if (platform === 'linux') return { name: `DabbleCAD-${version}-linux-x64.AppImage`, mode: env.APPIMAGE ? 'appimage' : 'reveal' };
+  if (platform === 'darwin') return { name: `DabbleCAD-Plus-${version}-mac-${arch === 'arm64' ? 'arm64' : 'x64'}.dmg`, mode: 'open' };
+  if (platform === 'linux') return { name: `DabbleCAD-Plus-${version}-linux-x64.AppImage`, mode: env.APPIMAGE ? 'appimage' : 'reveal' };
   return null;
 }
 
@@ -96,13 +97,13 @@ function registerUpdater({ ipcMain, app, net, shell, getWindow, getSettings, smo
     const file = path.join(dir, info.asset);
     try {
       fs.mkdirSync(dir, { recursive: true });
-      const sumsRes = await net.fetch(info.sumsUrl, { headers: { 'User-Agent': 'DabbleCAD' } });
+      const sumsRes = await net.fetch(info.sumsUrl, { headers: { 'User-Agent': 'DabbleCAD-Plus' } });
       if (!sumsRes.ok) throw new Error('Could not fetch the checksum list');
       const line = (await sumsRes.text()).split(/\r?\n/).find((l) => l.trim().endsWith('  ' + info.asset) || l.trim().endsWith(' *' + info.asset));
       const expected = line ? line.trim().split(/\s+/)[0].toLowerCase() : null;
       if (!expected || !/^[0-9a-f]{64}$/.test(expected)) throw new Error('The release has no checksum for this file');
 
-      const res = await net.fetch(info.url, { headers: { 'User-Agent': 'DabbleCAD' } });
+      const res = await net.fetch(info.url, { headers: { 'User-Agent': 'DabbleCAD-Plus' } });
       if (!res.ok || !res.body) throw new Error(`The download failed with status ${res.status}`);
       const total = Number(res.headers.get('content-length')) || info.size || 0;
       const hash = crypto.createHash('sha256');

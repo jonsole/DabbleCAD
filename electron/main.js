@@ -20,6 +20,21 @@ const DEV_URL = argValue('dev-url');
 if (SMOKE) {
   // Keep test runs away from the user's real designs and settings.
   app.setPath('userData', path.join(os.tmpdir(), 'dabblecad-smoke-' + process.pid));
+} else {
+  // This fork was called DabbleCAD before it became DabbleCAD Plus, and kept its library in a
+  // folder of that name. On first start, copy the designs and settings across (a copy, so the
+  // original DabbleCAD app, if installed, keeps its own).
+  try {
+    const now = app.getPath('userData');
+    const old = path.join(app.getPath('appData'), 'DabbleCAD');
+    if (now !== old && fs.existsSync(old) && !fs.existsSync(path.join(now, 'designs')) && !fs.existsSync(path.join(now, 'settings.json'))) {
+      fs.mkdirSync(now, { recursive: true });
+      for (const name of ['designs', 'settings.json']) {
+        const from = path.join(old, name);
+        if (fs.existsSync(from)) fs.cpSync(from, path.join(now, name), { recursive: true });
+      }
+    }
+  } catch (err) { console.warn('Could not copy the old DabbleCAD library', err); }
 }
 
 // ---------------------------------------------------------------- settings
@@ -143,7 +158,7 @@ function createWindow() {
     minWidth: 980,
     minHeight: 620,
     show: false,
-    title: 'DabbleCAD',
+    title: 'DabbleCAD Plus',
     icon: path.join(__dirname, '..', 'build', 'icon.png'),
     backgroundColor: settings.theme === 'light' ? '#f3f5f8' : '#16181d',
     autoHideMenuBar: true,
@@ -345,7 +360,8 @@ ipcMain.handle('dialog:pick-app', async () => {
 
 registerUpdater({ ipcMain, app, net, shell, getWindow: () => win, getSettings: () => settings, smoke: !!SMOKE, argValue });
 ipcMain.handle('shell:open-external', (_e, url) => {
-  if (typeof url === 'string' && /^https:\/\/github\.com\/DJMcNewgent\//.test(url)) shell.openExternal(url);
+  // only this fork's, the original app's and the web version's pages
+  if (typeof url === 'string' && /^https:\/\/(github\.com\/(jonsole|DJMcNewgent)\/|jonsole\.github\.io\/)/.test(url)) shell.openExternal(url);
 });
 ipcMain.handle('shell:reveal', (_e, p) => { if (typeof p === 'string' && fs.existsSync(p)) shell.showItemInFolder(p); });
 

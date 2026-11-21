@@ -402,7 +402,7 @@ export function depthMapStudio(ws) {
       for (let i = 0; i < cut.length; i++) cut[i] = plain[i] < level ? 0 : 1;
       files[`slice-${String(s).padStart(3, '0')}.png`] = encodeGrayPNG(cut, w, hgt, 8, false);
     }
-    files['readme.txt'] = new TextEncoder().encode(`DabbleCAD depth map slices\r\n${N - 1} masks, black = engrave on that pass.\r\nRun slice-001 first. Each pass removes about ${(o.depthMM / (N - 1)).toFixed(4)} mm.\r\nWidth ${o.widthMM} mm, ${w} x ${hgt} px.\r\n`);
+    files['readme.txt'] = new TextEncoder().encode(`DabbleCAD Plus depth map slices\r\n${N - 1} masks, black = engrave on that pass.\r\nRun slice-001 first. Each pass removes about ${(o.depthMM / (N - 1)).toFixed(4)} mm.\r\nWidth ${o.widthMM} mm, ${w} x ${hgt} px.\r\n`);
     const path = await platform.saveDialog({ title: 'Export slice masks', defaultName: 'depth-map-slices.zip', filters: [{ name: 'Zip archive', extensions: ['zip'] }], data: zipSync(files) });
     if (path) toast('Saved ' + path);
   }

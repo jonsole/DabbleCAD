@@ -1,6 +1,13 @@
 <p align="center"><img src="docs/logo.png" alt="DabbleCAD" width="560"></p>
 
-# DabbleCAD
+# DabbleCAD Plus
+
+**DabbleCAD Plus** is jonsole's fork of [DabbleCAD](https://github.com/DJMcNewgent/DabbleCAD)
+by [DJMcNewgent](https://github.com/DJMcNewgent). It adds a web version
+([jonsole.github.io/DabbleCAD](https://jonsole.github.io/DabbleCAD/)), Google Drive storage,
+Object / Face / Edge / Corner modes, per-edge rounding and chamfers, face stacking and a
+richer Sketch editor. Designs are ordinary `.dabble` files, so they open in either app.
+The rest of this README describes the app as a whole.
 
 **One offline, open-source app for 3D design, laser projects, and depth maps.**
 
@@ -18,13 +25,13 @@ Model a part, bring its outline into the laser workspace, or turn it into a reli
 without exporting and re-importing between apps. DabbleCAD runs locally, your designs
 stay on your computer, and it needs no account and no internet connection.
 
-**[Download the latest release](https://github.com/DJMcNewgent/DabbleCAD/releases/latest)**
-for Windows or Mac. It is free, and there is nothing to sign up for.
+**[Download the latest release](https://github.com/jonsole/DabbleCAD/releases/latest)**
+for Windows or Mac, or [use it in your browser](https://jonsole.github.io/DabbleCAD/). It is free, and there is nothing to sign up for.
 See [first launch](#first-launch) for the one-time security prompt.
 
-[All releases](https://github.com/DJMcNewgent/DabbleCAD/releases) ·
-[Report a bug](https://github.com/DJMcNewgent/DabbleCAD/issues) ·
-[Ask a question](https://github.com/DJMcNewgent/DabbleCAD/discussions) ·
+[All releases](https://github.com/jonsole/DabbleCAD/releases) ·
+[Report a bug](https://github.com/jonsole/DabbleCAD/issues) ·
+[Original DabbleCAD](https://github.com/DJMcNewgent/DabbleCAD) ·
 [Contribute](CONTRIBUTING.md)
 
 ![Resizing a box on the workplane and orbiting the view in DabbleCAD](docs/demo.gif)
@@ -93,23 +100,23 @@ they carry over to the new version.
 
 ## Download and install
 
-Published builds are attached to [GitHub Releases](https://github.com/DJMcNewgent/DabbleCAD/releases),
+Published builds are attached to [GitHub Releases](https://github.com/jonsole/DabbleCAD/releases),
 not GitHub's automatically generated **Source code** archives. Open the
-[latest release](https://github.com/DJMcNewgent/DabbleCAD/releases/latest) and
+[latest release](https://github.com/jonsole/DabbleCAD/releases/latest) and
 pick the file for your computer under **Assets**.
 
 Each release provides:
 
-- **Windows x64 installer:** `DabbleCAD-VERSION-win-x64-setup.exe`.
+- **Windows x64 installer:** `DabbleCAD-Plus-VERSION-win-x64-setup.exe`.
   Run the installer and choose the installation folder.
-- **Windows x64 portable ZIP:** `DabbleCAD-VERSION-win-x64.zip`.
-  Extract the entire archive, then run `DabbleCAD.exe`. No installation is required;
+- **Windows x64 portable ZIP:** `DabbleCAD-Plus-VERSION-win-x64.zip`.
+  Extract the entire archive, then run `DabbleCAD Plus.exe`. No installation is required;
   keep the other extracted files beside the executable.
-- **Mac, Apple Silicon:** `DabbleCAD-VERSION-mac-arm64.dmg` and `.zip`.
-- **Mac, Intel:** `DabbleCAD-VERSION-mac-x64.dmg` and `.zip`.
+- **Mac, Apple Silicon:** `DabbleCAD-Plus-VERSION-mac-arm64.dmg` and `.zip`.
+- **Mac, Intel:** `DabbleCAD-Plus-VERSION-mac-x64.dmg` and `.zip`.
   Open the DMG and drag DabbleCAD to Applications, or extract the ZIP and move the
   `.app` bundle to Applications. Choose the build matching **About This Mac**.
-- **Linux x64 AppImage:** `DabbleCAD-VERSION-linux-x64.AppImage`, starting with
+- **Linux x64 AppImage:** `DabbleCAD-Plus-VERSION-linux-x64.AppImage`, starting with
   the release after 1.0.0. Mark it executable (`chmod +x`), then run it. It passes
   the automated suites with software rendering but has not yet been checked by hand
   on desktop Linux distributions; reports are welcome.
@@ -129,7 +136,7 @@ approve only this app:
 
 **Windows**
 
-1. Run the installer, or `DabbleCAD.exe` from the extracted ZIP.
+1. Run the installer, or `DabbleCAD Plus.exe` from the extracted ZIP.
 2. If a blue **Windows protected your PC** window appears, select **More info**.
 3. Confirm the app name, then select **Run anyway**.
 
@@ -311,7 +318,7 @@ Requires **Node.js 24.x**, npm, and a desktop session. Node.js is not needed to 
 a downloaded release.
 
 ```sh
-git clone https://github.com/DJMcNewgent/DabbleCAD.git
+git clone https://github.com/jonsole/DabbleCAD.git
 cd DabbleCAD
 npm ci
 npm start

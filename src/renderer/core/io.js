@@ -208,7 +208,7 @@ function writeSTL(geos) {
   for (const g of geos) tris += g.attributes.position.count / 3;
   const buf = new ArrayBuffer(84 + tris * 50);
   const dv = new DataView(buf);
-  const header = 'DabbleCAD binary STL';
+  const header = 'DabbleCAD Plus binary STL';
   for (let i = 0; i < header.length; i++) dv.setUint8(i, header.charCodeAt(i));
   let o = 84;
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3(), n = new THREE.Vector3();
@@ -228,7 +228,7 @@ function writeSTL(geos) {
 }
 
 function writeOBJ(nodes, geos) {
-  const out = ['# DabbleCAD OBJ export (millimetres, Z up)'];
+  const out = ['# DabbleCAD Plus OBJ export (millimetres, Z up)'];
   let offset = 1;
   const f = (v) => +v.toFixed(5);
   // colour attributes are linear; OBJ vertex colours are read as sRGB

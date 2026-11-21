@@ -327,7 +327,7 @@ export function toGcode(plan, doc, machine) {
   // stock Marlin needs the G word on every move (implicit modal motion is an optional build flag)
   const modal = fl !== 'marlin';
   const [ox, oy] = offsetFor(doc, plan, machine);
-  const out = [`; DabbleCAD Laser job`, `; ${new Date().toISOString().slice(0, 19).replace('T', ' ')}`,
+  const out = [`; DabbleCAD Plus laser job`, `; ${new Date().toISOString().slice(0, 19).replace('T', ' ')}`,
     `; Controller: ${fl}   Bounds: ${plan.bounds ? `${n3(plan.bounds.w)} x ${n3(plan.bounds.h)} mm` : 'empty'}   Est. time: ${formatTime(plan.stats.time)}`,
     'G21', 'G90'];
   if (doc.startFrom === 'current') out.push('G92 X0 Y0 ; job starts at the current position');
