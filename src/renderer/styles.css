@@ -516,3 +516,8 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .outliner:not(.open) + .splitter { display: none; }
 body.resizing { cursor: col-resize; user-select: none; -webkit-user-select: none; }
 body.resizing iframe, body.resizing canvas { pointer-events: none; }
+.inspector .insp-head { cursor: grab; }
+.inspector.dragging .insp-head { cursor: grabbing; }
+.inspector.dragging { user-select: none; -webkit-user-select: none; }
+.shape-grid { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); }
+.side-tools { grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); }

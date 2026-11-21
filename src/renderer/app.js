@@ -7,6 +7,7 @@ import { platform } from './platform.js';
 import { Viewport, HOME_VIEW } from './view/viewport.js';
 import { ViewCube } from './view/viewcube.js';
 import { addResizer } from './ui/resizer.js';
+import { makeDraggable } from './ui/draggable.js';
 import { Gizmo, formatLength } from './view/gizmo.js';
 import { buildVoxels, disposeVoxels } from './view/voxels.js';
 import { Editor } from './editor.js';
@@ -149,6 +150,7 @@ export class App {
       this.projBtn)));
 
     this.inspectorEl = h('div', { class: 'inspector' });
+    makeDraggable(this.inspectorEl, { key: '3d-inspector' });
     this.banner = h('div', { class: 'mode-banner' });
     this.status = h('div', { class: 'statusbar' });
     this.snapSel = h('select', { class: 'select', title: 'Snap Grid' });

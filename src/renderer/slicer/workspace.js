@@ -6,6 +6,7 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { h, clear, button, icon, toast } from '../ui/dom.js';
 import { ViewCube } from '../view/viewcube.js';
 import { addResizer } from '../ui/resizer.js';
+import { makeDraggable } from '../ui/draggable.js';
 import { platform } from '../platform.js';
 import { CURAENGINE_URL } from '../config.js';
 import { exportModel, importFiles } from '../core/io.js';
@@ -129,6 +130,7 @@ export class SlicerWorkspace {
     this.status = h('div', { class: 'statusbar', role: 'status' });
     this.banner = h('div', { class: 'mode-banner', hidden: true });
     this.inspectorEl = h('div', { class: 'inspector sl-inspector' });
+    makeDraggable(this.inspectorEl, { key: 'slicer-inspector' });
     this.previewPanel = h('div', { class: 'sl-preview', hidden: true });
     this.logEl = h('pre', { class: 'sl-log', hidden: true });
     this.root.append(this.toolbar, h('div', { class: 'sl-main' }, this.outliner, this.viewEl, h('div', { class: 'side sl-side' }, this.panel.el)));
@@ -362,8 +364,10 @@ export class SlicerWorkspace {
     const turn = (axis) => () => { m[axis] = ((m[axis] + 90 + 180) % 360) - 180; this.scene.refreshModel(m); this._markDirty(); this._checkFit(); this._renderTransformValues(); };
     this.inspectorEl.append(
       h('div', { class: 'insp-head' }, h('div', { class: 'insp-title', title: m.name }, m.name),
-        button({ icon: 'duplicate', title: 'Copy this model', cls: 'btn-ghost', onClick: () => this.duplicate(m.id) }),
-        button({ icon: 'trash', title: 'Remove this model (Del)', cls: 'btn-ghost', onClick: () => this.removeModel(m.id) })),
+        button({ icon: m.locked ? 'lock' : 'unlock', title: m.locked ? 'Unlock' : 'Lock', cls: m.locked ? 'active' : '', onClick: () => { m.locked = !m.locked; this._renderModels(); this._renderTransform(); this.scene.requestRender(); } }),
+        button({ icon: 'bulb', title: 'Hide (left out of the slice)', onClick: () => { m.hidden = true; if (this.selected === m.id) this.selected = null; this._modelsChanged(); } }),
+        button({ icon: 'duplicate', title: 'Duplicate', onClick: () => this.duplicate(m.id) }),
+        button({ icon: 'trash', title: 'Delete (Del)', onClick: () => this.removeModel(m.id) })),
       h('details', { class: 'insp-section', open: true },
         h('summary', {}, 'Position & size'),
         h('div', { class: 'xyz' }, h('span', {}, 'Move'), input('x', 0.5, 'x'), input('y', 0.5, 'y'), h('span', {}, 'mm')),
