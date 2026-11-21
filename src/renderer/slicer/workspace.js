@@ -14,7 +14,7 @@ import { bakedWorldGeometry } from '../core/geometry.js';
 import { loadDefinitions } from './defs.js';
 import { SettingsStore } from './settings.js';
 import { buildIndex } from './taxonomy.js';
-import { Profiles } from './profiles.js';
+import { Profiles, FILAMENT_DENSITY } from './profiles.js';
 import { SettingsPanel } from './settingspanel.js';
 import { PlateModel, fitProblem, arrange } from './model.js';
 import { SlicerScene } from './scene.js';
@@ -123,17 +123,21 @@ export class SlicerWorkspace {
       button({ icon: 'trash', title: 'Remove the selected model (Del)', onClick: () => this.selected && this.removeModel(this.selected) }), h('span', { class: 'sep' }),
       button({ icon: 'align', title: 'Arrange: space the models out on the bed', onClick: () => this.arrange() }),
       button({ icon: 'drop', title: 'Reset the selected model: undo rotation and scaling', onClick: () => this.resetSelected() }),
-      h('span', { class: 'spacer' }), this.modeSeg, h('span', { class: 'sep' }), this.progressWrap, this.cancelBtn, this.saveBtn, this.sliceBtn);
+      h('span', { class: 'spacer' }), this.modeSeg);
 
     // the 3D view, with the same floating pieces as 3D Design
     this.viewEl = h('div', { class: 'viewport sl-view' });
-    this.status = h('div', { class: 'statusbar', role: 'status' });
+    this.status = h('span', { class: 'sl-status', role: 'status' });
+    this.statusSub = h('div', { class: 'sl-sum-sub' });
+    this.footer = h('div', { class: 'sl-footer' },
+      h('div', { class: 'sl-sum-title' }, h('svg', { viewBox: '0 0 24 24', width: 17, height: 17, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8, 'stroke-linecap': 'round', class: 'icon' }, h('path', { d: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2' })), this.status), this.statusSub, this.progressWrap,
+      h('div', { class: 'sl-footer-btns' }, this.cancelBtn, this.saveBtn, this.sliceBtn));
     this.banner = h('div', { class: 'mode-banner', hidden: true });
     this.inspectorEl = h('div', { class: 'inspector sl-inspector' });
     makeDraggable(this.inspectorEl, { key: 'slicer-inspector' });
     this.previewPanel = h('div', { class: 'sl-preview', hidden: true });
     this.logEl = h('pre', { class: 'sl-log', hidden: true });
-    this.root.append(this.toolbar, h('div', { class: 'sl-main' }, this.outliner, this.viewEl, h('div', { class: 'side sl-side' }, this.panel.el)));
+    this.root.append(this.toolbar, h('div', { class: 'sl-main' }, this.outliner, this.viewEl, h('div', { class: 'side sl-side' }, this.panel.el, this.footer)));
     addResizer(this.outliner, { side: 'left', key: 'slicer-outliner', min: 170, max: 460 });
     addResizer(this.root.querySelector('.sl-side'), { side: 'right', key: 'slicer-side', min: 300, max: 760 });
     this.scene = new SlicerScene(this.viewEl);
@@ -146,13 +150,14 @@ export class SlicerWorkspace {
         button({ icon: 'plus', title: 'Zoom in', onClick: () => this.scene.zoomBy(0.75) }),
         button({ icon: 'minus', title: 'Zoom out', onClick: () => this.scene.zoomBy(1 / 0.75) }),
         this.projBtn)),
-      this.inspectorEl, this.previewPanel, this.status, this.banner);
+      this.inspectorEl, this.previewPanel, this.banner);
     this.scene.onPick = (id) => this.select(id);
     this.scene.onMove = (m) => { this._markDirty(); this._renderTransformValues(m); };
     this.scene.onMoveEnd = () => { this._checkFit(); };
     document.addEventListener('keydown', (e) => this._key(e));
     this._renderModels();
     this._renderTransform();
+    this._updateBar();
   }
 
   fit() { this.scene.home(); }
@@ -442,11 +447,21 @@ export class SlicerWorkspace {
     this.sliceBtn.classList.toggle('disabled', !this._active().length);
     this.modeSeg.children[1].classList.toggle('disabled', !this.result);
     if (busy) return;
+    const st = this.store;
     if (this.result) {
-      const s = this.result.summary;
-      const parts = [s.layers ? `${s.layers} layers` : null, s.seconds ? `about ${formatTime(s.seconds)}` : null, s.filamentM ? `${s.filamentM.toFixed(2)} m of filament` : null].filter(Boolean);
-      this.status.textContent = (this.dirty ? 'Out of date: you changed something since slicing. ' : '') + parts.join(' · ');
+      const r = this.result.summary;
+      const g = r.filamentM ? Math.PI * Math.pow(st.get('material_diameter') / 2, 2) * r.filamentM * (FILAMENT_DENSITY[this.profiles.current('filament').id] ?? 1.24) : null;   // mm² x m = cm³
+      this.status.textContent = this.dirty ? 'Out of date' : (r.seconds ? formatTime(r.seconds) : 'Sliced');
       this.status.classList.toggle('sl-stale', this.dirty);
+      this.statusSub.textContent = this.dirty ? 'You changed something since slicing. Slice again to update.'
+        : [g ? `about ${Math.round(g)} g` : null, r.filamentM ? `${r.filamentM.toFixed(2)} m` : null, r.layers ? `${r.layers} layers` : null].filter(Boolean).join(' · ');
+      this.statusSub.classList.toggle('sl-stale', this.dirty);
+    } else {
+      const n = this._active().length;
+      this.status.textContent = 'Not sliced yet';
+      this.status.classList.remove('sl-stale');
+      this.statusSub.classList.remove('sl-stale');
+      this.statusSub.textContent = n ? `${n} model${n === 1 ? '' : 's'} on the plate` : 'Add a model to the plate first';
     }
   }
 
@@ -459,7 +474,7 @@ export class SlicerWorkspace {
     this.controller = new AbortController();
     this.log = []; this.logEl.hidden = true;
     this._updateBar();
-    this.status.classList.remove('sl-stale');
+    this.status.classList.remove('sl-stale'); this.statusSub.textContent = '';
     this.status.textContent = 'Slicing…';
     this.progress.style.width = '0';
     try {
@@ -485,8 +500,8 @@ export class SlicerWorkspace {
       this.controller = null;
       this._updateBar();
       const cancelled = err && err.name === 'AbortError';
-      this.status.textContent = cancelled ? 'Cancelled.' : (err.message || String(err));
-      if (!cancelled) { toast(this.status.textContent, 'warn', 6000); this.logEl.textContent = this.log.join('\n'); }
+      this.status.textContent = cancelled ? 'Cancelled' : 'Could not slice'; this.statusSub.textContent = cancelled ? '' : (err.message || String(err));
+      if (!cancelled) { toast(this.statusSub.textContent, 'warn', 6000); this.logEl.textContent = this.log.join('\n'); }
     }
   }
 

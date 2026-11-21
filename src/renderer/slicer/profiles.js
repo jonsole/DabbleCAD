@@ -180,3 +180,6 @@ export class Profiles {
     return d.scope;
   }
 }
+
+/** g/cm³, to estimate the weight of the filament a print uses (user presets assume PLA). */
+export const FILAMENT_DENSITY = { pla: 1.24, petg: 1.27, abs: 1.04, asa: 1.07, tpu: 1.21 };

@@ -5,6 +5,18 @@ import { platform } from '../platform.js';
 import { SCOPES, SCOPE_ORDER, LEVELS, levelOf, levelRank } from './taxonomy.js';
 
 const fmt = (v) => (typeof v === 'number' ? String(Number(v.toFixed(5))) : String(v));
+const isFormula = (d) => typeof d.value === 'string' && /[A-Za-z_]{2,}/.test(d.value.replace(/'[^']*'|"[^"]*"/g, '').replace(/\b(True|False|None)\b/g, ''));
+const svgIcon = (d, size = 18) => h('svg', { viewBox: '0 0 24 24', width: size, height: size, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.7, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', class: 'icon' }, h('path', { d }));
+const PAGE_ICONS = {
+  quality: 'M12 3l9 5-9 5-9-5 9-5zM3 13l9 5 9-5', strength: 'M4 4h16v16H4zM4 12h16M12 4v16', speed: 'M4 18a9 9 0 1 1 16 0M12 18l4-6',
+  travel: 'M4 12h14M13 7l5 5-5 5', support: 'M3 20h18M6 20v-8M12 20V8M18 20v-8M4 8h16', adhesion: 'M3 17h18M6 17v-4h12v4M9 13V9h6v4',
+  others: 'M5 12h.01M12 12h.01M19 12h.01',
+  basic: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 11v6M12 7.500v.500', gcode: 'M8 7l-5 5 5 5M16 7l5 5-5 5M14 5l-4 14',
+  extruder: 'M8 3h8v6l-2 3h-4l-2-3zM12 12v4M10 20h4', motion: 'M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3',
+  filament: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
+  cooling: 'M12 10.500a1.500 1.500 0 1 0 0 3 1.500 1.500 0 0 0 0-3zM12 10.500C12 6 14 3 17 4c2 1 1 4-2 6M13.500 12c4.500 0 7.500 2 6.500 5-1 2-4 1-6-2M12 13.500c0 4.500-2 7.500-5 6.500-2-1-1-4 2-6M10.500 12C6 12 3 10 4 7c1-2 4-1 6 2',
+  advanced: 'M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M14 4v4M8 10v4M16 16v4',
+};
 const isLong = (d) => d.type === 'polygon' || d.type === 'polygons' || /gcode|_code$/.test(d.key) || (typeof d.default === 'string' && d.default.includes('\n'));
 
 export class SettingsPanel {
@@ -40,7 +52,11 @@ export class SettingsPanel {
     this.levelSeg = h('div', { class: 'segmented sl-levels', role: 'group', 'aria-label': 'How many settings to show' });
     for (const [id, label] of LEVELS) this.levelSeg.append(button({ label, cls: 'sl-level', title: id === 'simple' ? 'The settings most people change' : id === 'advanced' ? 'Everything except experimental settings' : 'Every setting', onClick: () => { this.profiles.setLevel(id); this._renderBody(); this._levelUi(); } }));
     this.body = h('div', { class: 'sl-body' });
-    this.el = h('div', { class: 'sl-settings' }, this.tabs, this.presetBar, this.blurb, h('div', { class: 'sl-tools' }, this.search, this.levelSeg), this.body);
+    this.rail = h('div', { class: 'sl-rail', role: 'navigation', 'aria-label': 'Jump to a section' });
+    this.bodyWrap = h('div', { class: 'sl-bodywrap' }, this.rail, this.body);
+    this._spy = 0;
+    this.body.addEventListener('scroll', () => { if (!this._spy) this._spy = requestAnimationFrame(() => { this._spy = 0; this._spyUpdate(); }); });
+    this.el = h('div', { class: 'sl-settings' }, this.tabs, this.presetBar, this.blurb, h('div', { class: 'sl-tools' }, this.search, this.levelSeg), this.bodyWrap);
     // arrow keys, Delete and friends belong to the fields in here, not to the workspace shortcuts
     this.el.addEventListener('keydown', (e) => e.stopPropagation());
     this._levelUi();
@@ -104,7 +120,7 @@ export class SettingsPanel {
     for (const c of [...this.body.children]) c.remove();
     for (const r of this.results) this._dropRow(r);
     this.results = [];
-    if (this.query) { this._renderResults(); return; }
+    if (this.query) { this.rail.hidden = true; this._renderResults(); return; }
     const wrap = h('div', { class: 'sl-secs' });
     this.activeSecs = [];
     for (const [id, label] of SCOPES[this.scope].pages) {
@@ -116,6 +132,42 @@ export class SettingsPanel {
     this.active = null;
     this.body.append(wrap);
     this.refresh();
+    this._buildRail();
+  }
+
+  /** The icon strip down the left: one button per visible section, to jump straight to it. */
+  _buildRail() {
+    clear(this.rail);
+    this.rail.hidden = !!this.query;
+    this.railBtns = new Map();
+    if (this.query) return;
+    for (const sec of this.activeSecs) {
+      const label = SCOPES[sec.scope].pages.find(([p]) => p === sec.id)[1];
+      const b = h('button', { class: 'sl-rail-btn', type: 'button', title: label, 'aria-label': label, onClick: () => this._goSection(sec) }, svgIcon(PAGE_ICONS[sec.id] || PAGE_ICONS.others));
+      this.railBtns.set(sec, b);
+      this.rail.append(b);
+    }
+    this._spyUpdate();
+  }
+
+  _goSection(sec) {
+    this.open.add(sec.key);
+    this._syncSection(sec);
+    sec.el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    sec.head.classList.add('sl-flash');
+    setTimeout(() => sec.head.classList.remove('sl-flash'), 1200);
+  }
+
+  _spyUpdate() {
+    if (!this.railBtns || this.query) return;
+    const top = this.body.getBoundingClientRect().top;
+    let cur = null;
+    for (const sec of this.activeSecs) {
+      if (sec.el.hidden) continue;
+      if (sec.el.getBoundingClientRect().top - top <= 40) cur = sec;
+    }
+    if (!cur) cur = this.activeSecs.find((x) => !x.el.hidden) || null;
+    for (const [sec, b] of this.railBtns) { b.classList.toggle('active', sec === cur); b.hidden = sec.el.hidden; }
   }
 
   _section(scope, id, label) {
@@ -186,11 +238,11 @@ export class SettingsPanel {
     const d = node.def, store = this.store;
     const el = h('div', { class: 'sl-row', dataset: { key: d.key } });
     const name = h('span', { class: 'sl-name', title: d.description, tabindex: 0 }, d.label);
-    const mod = h('span', { class: 'sl-mod', title: 'Changed from the preset', hidden: true });
-    const reset = button({ icon: 'undo', title: 'Back to the preset value', cls: 'btn-ghost sl-reset', size: 14, onClick: () => this.profiles.resetKey(d.key) });
-    reset.hidden = true;
+    const reset = button({ icon: 'undo', title: 'Back to the preset value', cls: 'btn-ghost sl-ico sl-reset', size: 14, onClick: () => this.profiles.resetKey(d.key) });
+    const formula = isFormula(d);
+    const fx = formula ? h('button', { class: 'sl-ico sl-fx', type: 'button', onClick: () => { if (store.isOverridden(d.key)) store.reset(d.key); } }, 'fx') : h('span', { class: 'sl-ico' });
     const chev = node.children.length && !withBadge ? h('button', { class: 'sl-chev', type: 'button', 'aria-label': 'Show related settings', onClick: () => { this.expanded.set(d.key, !this._isOpen(node)); this.refresh(); } }, '▸') : null;
-    const desc = h('div', { class: 'sl-desc', hidden: true }, d.description, h('code', {}, d.key));
+    const desc = h('div', { class: 'sl-desc', hidden: true }, d.description, formula ? h('div', { class: 'sl-formula' }, 'Calculated by default: ', h('code', {}, String(d.value).replace(/\s+/g, ' ').slice(0, 200))) : null, h('code', {}, d.key));
     const toggleDesc = () => { desc.hidden = !desc.hidden; };
     name.addEventListener('click', toggleDesc);
     name.addEventListener('keydown', (e) => { if (e.key === 'Enter') toggleDesc(); });
@@ -198,9 +250,9 @@ export class SettingsPanel {
     const ctl = this._makeControl(d);
     const unit = d.unit ? h('span', { class: 'sl-unit' }, d.unit) : null;
     const long = isLong(d);
-    const head = h('div', { class: 'sl-head' }, chev, name, mod, reset);
+    const head = h('div', { class: 'sl-head' }, chev, name, long ? [reset, fx] : null);
     const badge = withBadge ? (() => { const sc = SCOPES[node.scope]; const page = sc.pages.find(([p]) => p === node.page)[1]; return h('span', { class: 'sl-badge', style: { '--scope': sc.color }, title: `${sc.label} › ${page}`, onClick: () => { this.setScope(node.scope, node.page); this.focusKey(d.key); } }, `${sc.label} › ${page}`); })() : null;
-    el.append(h('div', { class: 'sl-line' + (long ? ' sl-long' : ''), style: { paddingLeft: depth * 14 + 'px' } }, head, h('div', { class: 'sl-ctl' }, ctl.el, unit)), badge || [], desc);
+    el.append(h('div', { class: 'sl-line' + (long ? ' sl-long' : ''), style: { paddingLeft: depth * 14 + 'px' } }, head, h('div', { class: 'sl-ctl' }, long ? null : [reset, fx], h('div', { class: 'sl-inwrap' }, ctl.el, unit))), badge || [], desc);
 
     const row = { el, node, kids: null, ctl, refresh: () => {} };
     row.refresh = () => {
@@ -208,7 +260,12 @@ export class SettingsPanel {
       ctl.set(v);
       el.classList.toggle('sl-off', !on);
       const m = this.profiles.isModified(d.key);
-      mod.hidden = !m; reset.hidden = !m;
+      reset.style.visibility = m ? 'visible' : 'hidden';
+      if (formula) {
+        const own = store.isOverridden(d.key);
+        fx.classList.toggle('on', !own); fx.classList.toggle('ovr', own);
+        fx.title = own ? 'You set this yourself. Click to go back to the calculated value.' : 'Calculated from other settings. Type a value to override it.';
+      }
       const status = store.check(d.key);
       ctl.el.classList.toggle('sl-warn', status === 'warn');
       ctl.el.classList.toggle('sl-err', status === 'error');
@@ -297,6 +354,7 @@ export class SettingsPanel {
     }
     if (this.active) for (const r of this.active.rows) r.refresh();
     this._levelUi();
+    this._spyUpdate();
   }
 
   /** Jump to a setting: switch to its scope and page, make sure it is visible, scroll to it. */
