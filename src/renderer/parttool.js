@@ -423,6 +423,13 @@ export class PartTool {
   _buildHandles() {
     this.layer = h('div', { class: 'gizmo-layer part-layer' });
     this.vp.container.appendChild(this.layer);
+    // tails: a line from the square out to each arrow
+    this.tailEls = [0, 1, 2].map(() => {
+      const el = h('div', { class: 'gz-part-tail' });
+      el.style.display = 'none';
+      this.layer.append(el);
+      return el;
+    });
     this.arrowEls = [0, 1, 2].map((i) => {
       const el = h('div', { class: 'gz-handle gz-lift gz-part-arrow' });
       el.style.display = 'none';
@@ -449,7 +456,15 @@ export class PartTool {
   _setArrows(spec) {
     this.arrows = spec;
     if (spec) {
-      spec.axes.forEach((a, i) => { if (this.arrowEls[i]) this.arrowEls[i].title = a.name === 'n' ? 'Drag to move the face in or out' : `Drag to move along ${a.name.toUpperCase()}`; });
+      spec.axes.forEach((a, i) => {
+        if (!this.arrowEls[i]) return;
+        this.arrowEls[i].title = a.name === 'n' ? 'Drag to move the face in or out' : `Drag to move along ${a.name.toUpperCase()}`;
+        // X red, Y green, Z blue (as the X / Y / Z fields); a face's arrow is black like the lift arrow
+        for (const el of [this.arrowEls[i], this.tailEls[i], this.labelEls[i]]) {
+          el.classList.remove('ax-x', 'ax-y', 'ax-z', 'ax-n');
+          el.classList.add('ax-' + a.name);
+        }
+      });
     }
     this._layout();
     this.vp.requestRender();
@@ -546,7 +561,7 @@ export class PartTool {
       if (p.behind) el.style.display = 'none'; else place(el, p.x, p.y);
     });
     const A = this.arrows;
-    const hideAll = () => { this.anchorEl.style.display = 'none'; for (const el of [...this.arrowEls, ...this.labelEls]) el.style.display = 'none'; };
+    const hideAll = () => { this.anchorEl.style.display = 'none'; for (const el of [...this.arrowEls, ...this.labelEls, ...this.tailEls]) el.style.display = 'none'; };
     if (!A) { hideAll(); return; }
     vp.project(A.anchor, p);
     if (p.behind) { hideAll(); return; }
@@ -555,13 +570,17 @@ export class PartTool {
     const len = vp.unitsPerPixel(A.anchor) * 30;
     this.arrowEls.forEach((el, i) => {
       const a = A.axes[i];
-      const lab = this.labelEls[i];
-      if (!a) { el.style.display = 'none'; lab.style.display = 'none'; return; }
+      const lab = this.labelEls[i], tail = this.tailEls[i];
+      if (!a) { el.style.display = 'none'; lab.style.display = 'none'; tail.style.display = 'none'; return; }
       const q = vp.project(A.anchor.clone().addScaledVector(a.dir, len));
       const dx = q.x - ox, dy = q.y - oy, L = Math.hypot(dx, dy);
-      if (L < 8 && !(this.drag && this.drag.axis === a)) { el.style.display = 'none'; lab.style.display = 'none'; return; } // pointing at the camera
+      if (L < 8 && !(this.drag && this.drag.axis === a)) { el.style.display = 'none'; lab.style.display = 'none'; tail.style.display = 'none'; return; } // pointing at the camera
       const ux = L ? dx / L : 0, uy = L ? dy / L : -1;
       place(el, ox + ux * ARROW_PX, oy + uy * ARROW_PX, ` rotate(${Math.atan2(ux, -uy)}rad)`);
+      // the tail runs from the square to the base of the arrow
+      tail.style.display = '';
+      tail.style.width = `${Math.max(0, ARROW_PX - 9)}px`;
+      tail.style.transform = `translate(${Math.round(ox)}px, ${Math.round(oy) - 1}px) rotate(${Math.atan2(uy, ux)}rad)`;
       // beside the arrow, past its tip
       const w = lab.offsetWidth || 40, hh = lab.offsetHeight || 20;
       const r = ARROW_PX + 14 + Math.abs(ux) * w / 2 + Math.abs(uy) * hh / 2;
