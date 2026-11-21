@@ -13,7 +13,7 @@
 // starts a fresh worker for every slice.
 //
 // CuraEngine is licensed under the AGPL-3.0 and is loaded at run time from the engine package
-// (https://github.com/jonsole/jonsole-DabbleCAD-curaengine), not bundled with DabbleCAD.
+// (https://github.com/jonsole/DabbleCAD-curaengine), not bundled with DabbleCAD.
 
 /* global importScripts */
 var Module = {

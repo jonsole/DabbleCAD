@@ -85,7 +85,7 @@ export class SlicerWorkspace {
       h('div', { class: 'sl-buttons' }, button({ label: 'Try again', cls: 'btn-primary', onClick: retry }),
         button({ label: 'Use the default', cls: 'btn-outline', onClick: () => { input.value = new URL(CURAENGINE_URL, document.baseURI).href; retry(); } })),
       h('p', { class: 'sl-gate-err' }, `Could not load it: ${(err && err.message) || err}`),
-      h('p', {}, 'To host it yourself, publish the files from ', h('code', {}, 'github.com/jonsole/jonsole-DabbleCAD-curaengine'), ' on any static web server that allows cross-origin requests. If that server is not localhost, its address also has to be allowed in the Content-Security-Policy in index.html.')));
+      h('p', {}, 'To host it yourself, publish the files from ', h('code', {}, 'github.com/jonsole/DabbleCAD-curaengine'), ' on any static web server that allows cross-origin requests. If that server is not localhost, its address also has to be allowed in the Content-Security-Policy in index.html.')));
   }
 
   _persist(state) {
