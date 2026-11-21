@@ -1,7 +1,7 @@
 // Runs CuraEngine (compiled to WebAssembly) off the main thread.
 //
 // Protocol (all messages are plain objects):
-//   in : { cmd: 'slice', jobId, stl: ArrayBuffer, args: string[] }
+//   in : { cmd: 'slice', jobId, files: [{ name, data: ArrayBuffer }], args: string[] }
 //   out: { cmd: 'progress', jobId, value }      value 0..1
 //        { cmd: 'log', jobId, str }             engine stdout/stderr, for diagnostics
 //        { cmd: 'done', jobId, gcode }          gcode is a Uint8Array (transferred)
@@ -59,13 +59,13 @@ function withRealHeader(gcode) {
   return out;
 }
 
-async function slice({ stl, args }) {
+async function slice({ files, args }) {
   await ready;
   // the glue defines FS and callMain as globals; Module.FS is only an abort() stub in this build
   const FS = self.FS;
   FS.writeFile('fdmprinter.def.json', await fetchBytes('fdmprinter.def.json'));
   FS.writeFile('fdmextruder.def.json', await fetchBytes('fdmextruder.def.json'));
-  FS.writeFile('model.stl', new Uint8Array(stl));
+  for (const f of files) FS.writeFile(f.name, new Uint8Array(f.data));
   try {
     self.callMain(args);
   } catch (err) {

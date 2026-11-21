@@ -3,7 +3,6 @@ import * as THREE from 'three';
 import { h, modal, button, toast, clear, icon } from './dom.js';
 import { isDesktop } from '../platform.js';
 import { analyzePrint, printNodes, DEFAULT_BED } from '../core/printcheck.js';
-import { sliceDialog } from './slicedialog.js';
 
 const MARK = { ok: '✓', warn: '!', error: '✕' };
 
@@ -63,7 +62,7 @@ export function printCheckDialog(app, { selectedOnly = false } = {}) {
     h('div', { class: 'modal-actions' },
       button({ label: 'Check again', cls: 'btn-outline', onClick: () => run() }),
       isDesktop ? button({ label: 'Open in slicer', icon: 'export', cls: 'btn-outline', onClick: () => { m.close(); app.openInSlicer(selectedOnly); } }) : null,
-      button({ label: 'Slice to G-code', icon: 'export', cls: 'btn-outline', title: 'Slice in the browser with CuraEngine', onClick: () => { m.close(); sliceDialog(app, { selectedOnly }); } }),
+      button({ label: 'Slice to G-code', icon: 'export', cls: 'btn-outline', title: 'Open the Slicer workspace', onClick: () => { m.close(); app.openSlicer({ selectedOnly }); } }),
       button({ label: 'Export STL', icon: 'export', cls: 'btn-primary', onClick: () => { m.close(); app.exportAs('stl', selectedOnly); } })));
   void icon;
   run();
