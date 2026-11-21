@@ -416,15 +416,52 @@ export class SlicerWorkspace {
   _buildPreviewPanel() {
     const r = this.result, p = r.parsed;
     clear(this.previewPanel);
-    const slider = h('input', { type: 'range', class: 'sl-layer', min: 0, max: p.layers - 1, value: p.layers - 1, orient: 'vertical', 'aria-label': 'Top layer' });
-    const readout = h('div', { class: 'sl-layer-read' });
+    // Cura-style layer slider: a thin overlay on the right whose length follows the print height
+    const n = p.layers, last = Math.max(0, n - 1);
+    const topZ = p.layerZ[last] || 0;
+    const frac = Math.max(0.3, Math.min(1, topZ / Math.max(1, this.volume.height))) * 0.82;
+    const track = h('div', { class: 'sl-vs-track' }), fill = h('div', { class: 'sl-vs-fill' });
+    const mkHandle = (name) => h('div', { class: 'sl-vs-handle', tabindex: 0, role: 'slider', 'aria-label': name }, h('span', { class: 'sl-vs-tip' }));
+    const hTop = mkHandle('Top layer'), hLow = mkHandle('Bottom layer');
+    const slider = h('div', { class: 'sl-vs', style: { height: frac * 100 + '%' } }, track, fill, hLow, hTop);
+    const state = { lo: 0, hi: last };
     let only = false;
     const apply = () => {
-      const top = parseInt(slider.value, 10);
-      this.scene.setLayerRange(only ? top : 0, top);
-      readout.textContent = `Layer ${top + 1} / ${p.layers}\n${(p.layerZ[top] || 0).toFixed(2)} mm`;
+      const { lo, hi } = state;
+      const pct = (v) => (last ? v / last : 1) * 100;
+      hTop.style.bottom = `calc(${pct(hi)}% - 7px)`; hLow.style.bottom = `calc(${pct(lo)}% - 7px)`;
+      fill.style.bottom = pct(lo) + '%'; fill.style.height = (pct(hi) - pct(lo)) + '%';
+      hTop.firstChild.textContent = `${hi + 1}`; hLow.firstChild.textContent = `${lo + 1}`;
+      hTop.setAttribute('aria-valuenow', hi + 1); hLow.setAttribute('aria-valuenow', lo + 1);
+      hTop.title = `Layer ${hi + 1} of ${n} · ${(p.layerZ[hi] || 0).toFixed(2)} mm`;
+      hLow.title = `Layer ${lo + 1} of ${n} · ${(p.layerZ[lo] || 0).toFixed(2)} mm`;
+      hLow.style.display = only ? 'none' : '';
+      this.scene.setLayerRange(only ? hi : lo, hi);
     };
-    slider.addEventListener('input', apply);
+    const move = (which, v) => {
+      v = Math.max(0, Math.min(last, Math.round(v)));
+      if (which === 'hi') { state.hi = Math.max(v, state.lo); } else { state.lo = Math.min(v, state.hi); }
+      apply();
+    };
+    const wire = (el, which) => {
+      el.addEventListener('pointerdown', (e) => {
+        e.preventDefault(); el.setPointerCapture(e.pointerId); el.focus();
+        const onMove = (ev) => { const r = track.getBoundingClientRect(); move(which, last * (1 - (ev.clientY - r.top) / r.height)); };
+        const onUp = () => { el.removeEventListener('pointermove', onMove); el.removeEventListener('pointerup', onUp); };
+        el.addEventListener('pointermove', onMove); el.addEventListener('pointerup', onUp);
+      });
+      el.addEventListener('keydown', (e) => {
+        const d = e.key === 'ArrowUp' || e.key === 'ArrowRight' ? 1 : e.key === 'ArrowDown' || e.key === 'ArrowLeft' ? -1 : e.key === 'PageUp' ? 10 : e.key === 'PageDown' ? -10 : 0;
+        if (!d) return;
+        e.preventDefault(); e.stopPropagation(); move(which, state[which] + d);
+      });
+    };
+    wire(hTop, 'hi'); wire(hLow, 'lo');
+    slider.addEventListener('pointerdown', (e) => {   // click the track: move the nearer handle
+      if (e.target !== slider && e.target !== track && e.target !== fill) return;
+      const r = track.getBoundingClientRect(), v = last * (1 - (e.clientY - r.top) / r.height);
+      move(!only && Math.abs(v - state.lo) < Math.abs(v - state.hi) ? 'lo' : 'hi', v);
+    });
     const legend = h('div', { class: 'sl-legend' });
     for (const t of p.types.keys()) {
       const c = TYPE_COLORS[t] || TYPE_COLORS.DEFAULT;
@@ -438,7 +475,7 @@ export class SlicerWorkspace {
     const single = h('input', { type: 'checkbox' });
     single.addEventListener('change', () => { only = single.checked; apply(); });
     legend.append(h('label', { class: 'sl-legend-row' }, single, h('i', { class: 'sl-travel' }), 'Only this layer'));
-    this.previewPanel.append(h('div', { class: 'sl-slider-box' }, readout, slider), legend);
+    this.previewPanel.append(slider, legend);
     apply();
   }
 

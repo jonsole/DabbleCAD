@@ -26,12 +26,15 @@
 .sl-status.sl-stale, .statusbar.sl-stale { color: #ffb74d; }
 
 /* preview controls */
-.sl-preview { position: absolute; right: 14px; top: 14px; bottom: 14px; display: flex; gap: 10px; align-items: flex-start; pointer-events: none; z-index: 11; }
-.sl-preview > * { pointer-events: auto; box-shadow: var(--shadow); }
-.sl-slider-box { display: flex; flex-direction: column; align-items: center; gap: 8px; height: 100%; padding: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
-.sl-layer-read { white-space: pre; text-align: center; font: 11.5px/1.35 ui-monospace, Consolas, monospace; color: var(--muted); }
-.sl-layer { flex: 1; min-height: 80px; width: 22px; writing-mode: vertical-lr; direction: rtl; accent-color: var(--accent); }
-.sl-legend { order: -1; padding: 8px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.sl-preview { position: absolute; inset: 0; pointer-events: none; z-index: 11; }
+.sl-preview > * { pointer-events: auto; }
+.sl-vs { position: absolute; right: 22px; top: 50%; transform: translateY(-50%); width: 22px; cursor: pointer; touch-action: none; }
+.sl-vs-track { position: absolute; left: 50%; top: 0; bottom: 0; width: 3px; margin-left: -1.5px; border-radius: 2px; background: color-mix(in srgb, var(--muted) 55%, transparent); }
+.sl-vs-fill { position: absolute; left: 50%; width: 3px; margin-left: -1.5px; border-radius: 2px; background: var(--accent); }
+.sl-vs-handle { position: absolute; left: 50%; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: #fff; border: 2px solid var(--accent); box-shadow: 0 1px 4px rgba(0,0,0,.5); cursor: grab; outline: none; }
+.sl-vs-handle:hover, .sl-vs-handle:focus-visible { background: var(--accent); }
+.sl-vs-tip { position: absolute; right: 20px; top: 50%; transform: translateY(-50%); padding: 1px 6px; border-radius: 4px; font: 600 11px/1.4 ui-monospace, Consolas, monospace; background: var(--panel); color: var(--text, #fff); border: 1px solid var(--border); white-space: nowrap; pointer-events: none; }
+.sl-legend { position: absolute; right: 104px; top: 14px; order: -1; padding: 8px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
 .sl-legend-row { display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
 .sl-legend-row i { width: 12px; height: 12px; border-radius: 3px; flex: none; }
 .sl-legend-row i.sl-travel { background: transparent; border: 1px dashed var(--muted); }
