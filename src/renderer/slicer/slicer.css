@@ -80,7 +80,7 @@
 .sl-line.sl-long { flex-direction: column; align-items: stretch; gap: 4px; }
 .sl-line.sl-long .sl-ctl { width: 100%; }
 .sl-head { display: flex; align-items: center; gap: 5px; min-width: 0; flex: 1; }
-.sl-name { cursor: pointer; overflow-wrap: anywhere; }
+.sl-name { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .sl-name:hover { text-decoration: underline dotted; }
 .sl-mod { width: 7px; height: 7px; border-radius: 50%; background: var(--scope); flex: none; }
 .sl-reset { width: 22px; height: 22px; }
@@ -88,6 +88,7 @@
 .sl-ctl { display: flex; align-items: center; gap: 2px; flex: none; }
 .sl-inwrap { position: relative; width: 150px; }
 .sl-inwrap:has(input[type='number']) { width: 104px; }
+.sl-inwrap:not(:has(.input, .select)) { width: auto; }
 .sl-inwrap .input, .sl-inwrap .select { width: 100%; box-sizing: border-box; height: 24px; font-size: 12.5px; }
 .sl-inwrap .input[type='number'] { padding-right: 36px; padding-left: 8px; text-align: right; }
 .sl-inwrap .sl-unit { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); pointer-events: none; min-width: 0; }
