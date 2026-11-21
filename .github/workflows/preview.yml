@@ -1,0 +1,57 @@
+name: Publish branch preview
+
+# Builds the web app from this branch and publishes it to a separate preview repository's
+# GitHub Pages site, so the live site (built from main) is untouched. Runs on every push to the
+# branch below. Delete this file when the branch is merged.
+#
+# One-time setup:
+#   1. Create the repository named in PREVIEW_REPO (empty is fine) and turn on Pages for its
+#      main branch (Settings, Pages, deploy from branch, root).
+#   2. Create a fine-grained personal access token limited to that repository with
+#      "Contents: read and write", and save it in THIS repository as the Actions secret
+#      PREVIEW_DEPLOY_TOKEN.
+
+on:
+  push:
+    branches: [feature/curaengine-slicer]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: preview
+  cancel-in-progress: true
+
+env:
+  PREVIEW_REPO: jonsole/DabbleCAD-preview
+
+jobs:
+  preview:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      - run: npm run build
+
+      - name: Publish dist to the preview repository
+        env:
+          TOKEN: ${{ secrets.PREVIEW_DEPLOY_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then echo "::error::Add the PREVIEW_DEPLOY_TOKEN secret (see the comments at the top of this file)"; exit 1; fi
+          touch dist/.nojekyll
+          cd dist
+          git init -q -b main
+          git config user.name "github-actions"
+          git config user.email "actions@users.noreply.github.com"
+          git add -A
+          git commit -q -m "Preview of ${GITHUB_REF_NAME} at ${GITHUB_SHA::7}"
+          git push -q --force "https://x-access-token:${TOKEN}@github.com/${PREVIEW_REPO}.git" main
+          echo "Preview: https://${PREVIEW_REPO%%/*}.github.io/${PREVIEW_REPO##*/}/" >> "$GITHUB_STEP_SUMMARY"
