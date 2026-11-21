@@ -289,6 +289,12 @@ export class PartTool {
    * For edges, j is the index of the edge in the shape before its own edits.
    */
   target() {
+    const t = this._target();
+    if (t) t.edits = t.node.shapeEdits ? [...t.node.shapeEdits] : [];
+    return t;
+  }
+
+  _target() {
     const ed = this.ed;
     if (this.mode) {
       const node = this.node();
@@ -348,7 +354,7 @@ export class PartTool {
 
   /** Current move of each target item: a number (faces, mm) or a world vector (edges, corners). */
   values(t) {
-    const edits = t.node.shapeEdits || [];
+    const edits = t.edits;
     const m = t.I.match;
     const list = t.kind === 'f' ? m.faces : t.kind === 'e' ? m.chains : m.corners;
     return t.items.map(({ j }) => {
@@ -364,7 +370,7 @@ export class PartTool {
    * vectors in the workplane's axes for edges and corners). A zero move removes the edit.
    */
   editsWith(t, vals) {
-    const edits = [...(t.node.shapeEdits || [])];
+    const edits = [...t.edits]; // the edits t.I.match was worked out for (not mid-drag ones)
     const m = t.I.match;
     const list = t.kind === 'f' ? m.faces : t.kind === 'e' ? m.chains : m.corners;
     const drop = new Set();
