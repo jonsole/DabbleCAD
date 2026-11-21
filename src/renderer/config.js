@@ -20,8 +20,8 @@ export const GOOGLE_DESKTOP_CLIENT_SECRET = import.meta.env.VITE_GOOGLE_DESKTOP_
 /**
  * Where the CuraEngine package for the Slicer workspace is served from (a folder URL ending in "/").
  * CuraEngine is AGPL-3.0, so it is kept out of this Apache-2.0 repository and downloaded at run time
- * from its own repository: https://github.com/jonsole/DabbleCAD-curaengine (publish it with GitHub
+ * from its own repository: https://github.com/jonsole/jonsole-DabbleCAD-curaengine (publish it with GitHub
  * Pages). It can be changed in the Slicer workspace. A site you host yourself must also be allowed in
  * the Content-Security-Policy of index.html.
  */
-export const CURAENGINE_URL = 'https://jonsole.github.io/DabbleCAD-curaengine/';
+export const CURAENGINE_URL = 'https://jonsole.github.io/jonsole-DabbleCAD-curaengine/';

@@ -192,7 +192,7 @@ storage instead and are separate from the desktop library.
   OrcaSlicer-style into **Printer**, **Filament** and **Process** with their own presets, modified markers and
   resets, so it is always clear what a setting belongs to. Single extruder only; no per-model settings.
   CuraEngine is AGPL-3.0, so it is not bundled: it is a separate package
-  (<https://github.com/jonsole/DabbleCAD-curaengine>) loaded at run time from the address in
+  (<https://github.com/jonsole/jonsole-DabbleCAD-curaengine>) loaded at run time from the address in
   `src/renderer/config.js`, which keeps this repository Apache-2.0.
 - **Open in slicer:** send the design straight to your slicer from the Export dialog.
 - A getting-started guide on first launch (reopen it from the **?** button).

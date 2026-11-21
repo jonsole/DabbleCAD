@@ -28,7 +28,7 @@ distributed under the MIT license reproduced below.
 
 - **CuraEngine** (WebAssembly build by SynDaver Labs, from Symple Slicer) and the Cura setting definitions are
   **not part of this repository**. They live in the separate AGPL-3.0 repository
-  <https://github.com/jonsole/DabbleCAD-curaengine> and are loaded at run time by the Slicer workspace, which runs
+  <https://github.com/jonsole/jonsole-DabbleCAD-curaengine> and are loaded at run time by the Slicer workspace, which runs
   the engine as a separate program in a Web Worker. CuraEngine is licensed under the **GNU AGPL-3.0**; the
   definitions under the LGPL-3.0. Source: <https://github.com/SynDaverCO/CuraEngine>
 
