@@ -6,6 +6,7 @@ import { EXPORT_FORMATS } from '../core/io.js';
 import { formatLength } from '../view/gizmo.js';
 import { countShapes } from '../core/doc.js';
 import { printCheckDialog } from './printdialog.js';
+import { sliceDialog } from './slicedialog.js';
 import * as drive from '../drive.js';
 import { driveAction } from './dashboard.js';
 
@@ -179,6 +180,7 @@ export function exportDialog(app) {
     h('div', { class: 'insp-note' }, 'Holes are never exported on their own. Hidden shapes are skipped. Sizes are in millimetres.'),
     h('div', { class: 'modal-actions' },
       button({ label: 'Print check', icon: 'stats', cls: 'btn-outline', title: 'Look for problems before you print', onClick: () => { m.close(); printCheckDialog(app, { selectedOnly }); } }),
+      button({ label: 'Slice to G-code', icon: 'export', cls: 'btn-outline', title: 'Slice in the browser with CuraEngine', onClick: () => { m.close(); sliceDialog(app, { selectedOnly }); } }),
       isDesktop ? button({ label: 'Open in slicer', icon: 'export', cls: 'btn-outline', title: 'Send the design straight to your slicer', onClick: () => { m.close(); app.openInSlicer(selectedOnly); } }) : null));
 }
 

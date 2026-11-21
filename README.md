@@ -187,6 +187,9 @@ storage instead and are separate from the desktop library.
 - **Print check:** before exporting, find shapes that are not closed solids, parts
   floating above the plate, thin walls, steep overhangs, and designs too big for
   your printer bed, with a one-click fix for resting the design on the plate.
+- **Slice to G-code:** slice the design right in the browser with CuraEngine (WebAssembly) and download
+  Marlin-style G-code, from the Export dialog or Print check. Basic settings only; see
+  `src/renderer/public/curaengine/README-curaengine.md` for the engine's AGPL licensing.
 - **Open in slicer:** send the design straight to your slicer from the Export dialog.
 - A getting-started guide on first launch (reopen it from the **?** button).
 - Blocks and Bricks views.
@@ -342,7 +345,8 @@ DabbleCAD is an early project, not a claim of production certification.
 
 - Rounding or bevelling edges keeps the overall size but makes holes and gaps
   slightly tighter, and very detailed shapes are refused because they take too long.
-- The print check is a quick geometric estimate, not a slicer. Imported meshes that
+- The built-in slicer exposes a small set of settings, has no G-code preview, and uses a generic Marlin start/end
+  script, so review the G-code before printing. The print check is a quick geometric estimate. Imported meshes that
   are not closed solids fall back to a simpler grouping method.
 - Generator threads use a rounded printable profile, not a machined ISO thread. Print
   a bolt and nut pair and adjust the clearance before relying on a fit.
