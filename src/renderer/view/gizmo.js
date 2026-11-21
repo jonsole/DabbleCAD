@@ -20,7 +20,7 @@ export function parseLength(text, units) {
   return units === 'in' ? v * 25.4 : units === 'brick' ? v * 8 : v;
 }
 
-function protractor() {
+export function protractor() {
   const pts = [];
   const seg = (a, r0, r1) => pts.push(Math.cos(a) * r0, Math.sin(a) * r0, 0, Math.cos(a) * r1, Math.sin(a) * r1, 0);
   for (let i = 0; i < 360; i++) {

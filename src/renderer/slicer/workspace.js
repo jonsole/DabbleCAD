@@ -18,6 +18,7 @@ import { Profiles, FILAMENT_DENSITY } from './profiles.js';
 import { SettingsPanel } from './settingspanel.js';
 import { PlateModel, fitProblem, arrange } from './model.js';
 import { SlicerScene } from './scene.js';
+import { ModelGizmo } from './modelgizmo.js';
 import { writeBinaryStl, buildArgs, runEngine, gcodeSummary, formatTime } from './engine.js';
 import { parseGcode, TYPE_COLORS, TYPE_LABELS } from './gcodeview.js';
 
@@ -151,6 +152,11 @@ export class SlicerWorkspace {
         button({ icon: 'minus', title: 'Zoom out', onClick: () => this.scene.zoomBy(1 / 0.75) }),
         this.projBtn)),
       this.inspectorEl, this.previewPanel, this.banner);
+    this.gizmo = new ModelGizmo(this.scene, {
+      getModel: () => this.selectedModel,
+      active: () => this.mode !== 'preview',
+      onChange: (m, final) => { this.scene.refreshModel(m); this._markDirty(); this._renderTransformValues(m); if (final) this._checkFit(); },
+    });
     this.scene.onPick = (id) => this.select(id);
     this.scene.onMove = (m) => { this._markDirty(); this._renderTransformValues(m); };
     this.scene.onMoveEnd = () => { this._checkFit(); };
