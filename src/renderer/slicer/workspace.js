@@ -19,6 +19,7 @@ import { SettingsPanel } from './settingspanel.js';
 import { PlateModel, fitProblem, arrange } from './model.js';
 import { SlicerScene } from './scene.js';
 import { ModelGizmo } from './modelgizmo.js';
+import { bestOrientation } from './orient.js';
 import { writeBinaryStl, buildArgs, runEngine, gcodeSummary, formatTime } from './engine.js';
 import { parseGcode, TYPE_COLORS, TYPE_LABELS } from './gcodeview.js';
 
@@ -125,6 +126,7 @@ export class SlicerWorkspace {
       this.dupBtn = button({ icon: 'duplicate', title: 'Copy the selected model', onClick: () => this.selected && this.duplicate(this.selected) }),
       this.delBtn = button({ icon: 'trash', title: 'Remove the selected model (Del)', onClick: () => this.selected && this.removeModel(this.selected) }), h('span', { class: 'sep' }),
       this.arrangeBtn = button({ icon: 'align', title: 'Arrange: space the models out on the bed', onClick: () => this.arrange() }),
+      this.orientBtn = button({ icon: 'rotate', label: 'Orient', title: 'Auto-orient for printing: turn the selected model (or every model if none is selected) to need the least support', onClick: () => this.autoOrient() }),
       this.resetBtn = button({ icon: 'drop', title: 'Reset the selected model: undo rotation and scaling', onClick: () => this.resetSelected() }),
       h('span', { class: 'spacer' }), this.modeSeg);
 
@@ -169,6 +171,30 @@ export class SlicerWorkspace {
   }
 
   fit() { this.scene.home(); }
+
+  /** Turn the selected model (all movable ones when nothing is selected) to the orientation needing the least support. */
+  autoOrient() {
+    const sel = this.selectedModel;
+    const targets = sel ? (sel.locked ? [] : [sel]) : this._movable();
+    if (!targets.length) { toast('Nothing to orient: select a model that is not locked.', 'warn'); return; }
+    const angle = this.store.get('support_angle') || 50;
+    toast('Finding the best orientation…', 'info', 1200);
+    setTimeout(() => {
+      let turned = 0, vol0 = 0, vol1 = 0;
+      for (const m of targets) {
+        const r = bestOrientation(m.geometry.attributes.position.array, [m.sx / 100, m.sy / 100, m.sz / 100], m, angle);
+        vol0 += r.before.supportVol; vol1 += r.after.supportVol;
+        if (!r.changed) continue;
+        Object.assign(m, { rx: r.rx, ry: r.ry, rz: r.rz });
+        turned++;
+      }
+      if (turned && targets.length > 1) arrange(this._movable(), this.volume);
+      this.scene.setModels(this.models);
+      this._markDirty(); this._checkFit(); this._renderTransform(); this._updateBar();
+      const cm3 = (v) => (v / 1000).toFixed(1);
+      toast(turned ? `Oriented ${turned} model${turned > 1 ? 's' : ''}: estimated support ${cm3(vol0)} → ${cm3(vol1)} cm³` : 'Already well oriented for printing.', turned ? 'ok' : 'info', 4000);
+    }, 30);
+  }
 
   resetSelected() {
     const m = this.selectedModel;
@@ -531,6 +557,7 @@ export class SlicerWorkspace {
     off(this.dupBtn, !m);
     off(this.delBtn, !m);
     off(this.arrangeBtn, this._movable().length === 0);
+    off(this.orientBtn, this._movable().length === 0);
     off(this.resetBtn, !m || m.locked || (m.rx === 0 && m.ry === 0 && m.rz === 0 && m.sx === 100 && m.sy === 100 && m.sz === 100));
   }
 
