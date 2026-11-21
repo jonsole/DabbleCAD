@@ -131,6 +131,16 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .gz-edge { width: 8px; height: 8px; background: #20242c; border: 1.5px solid #fff; border-radius: 2px; cursor: ew-resize; }
 .gz-lift { width: 0; height: 0; border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 17px solid #20242c; cursor: ns-resize; filter: drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff); }
 .gz-lift:hover { border-bottom-color: #ff5252; }
+/* Face / Edge / Corner modes: the same handles as for whole objects */
+.part-layer { z-index: 5; }
+.gz-part-label { background: #20242c; color: #fff; border-color: #58657a; }
+.gz-part-label.moved { background: #ffffff; color: #1b2330; border-color: #9aa7b8; }
+.gz-part-arrow { cursor: grab; transform-origin: 50% 50%; }
+.gz-part-arrow.dragging { cursor: grabbing; border-bottom-color: #ff5252; }
+.part-layer > .gz-part-mark { pointer-events: none; }
+.gz-part-mark.mk-plain { width: 8px; height: 8px; background: #20242c; border: 1.5px solid #fff; border-radius: 2px; }
+.gz-part-mark.mk-picked, .gz-part-mark.gz-corner { width: 11px; height: 11px; background: var(--handle); border: 1.5px solid var(--handle-border); border-radius: 2px; box-shadow: 0 0 0 1px rgba(255,255,255,.35); }
+.gz-part-mark.mk-hover { width: 11px; height: 11px; background: #ff5252; border: 1.5px solid var(--handle-border); border-radius: 2px; box-shadow: 0 0 0 1px rgba(255,255,255,.35); }
 .gz-rot { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 50%; color: #fff; background: rgba(24, 28, 36, 0.82); border: 1px solid rgba(255,255,255,.55); cursor: grab; }
 .gz-rot:hover { background: var(--select); color: #06202b; }
 .gz-rot-x { color: #ff8a80; } .gz-rot-y { color: #b9f6ca; } .gz-rot-z { color: #82b1ff; }

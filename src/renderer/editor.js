@@ -691,10 +691,7 @@ export class Editor extends Emitter {
   _hover(e) {
     if (this.disabled) return;
     if (this.parts.active) return this.parts.hoverAt(e);
-    if (this.edgeMode) {
-      if (this.parts.arrows && this.parts._arrowAt(e)) { this.viewport.canvas.style.cursor = 'grab'; return; }
-      return this._edgeHover(e);
-    }
+    if (this.edgeMode) return this._edgeHover(e);
     if (this.tool === 'workplane' || this.tool === 'ruler' || this.tool === 'note' || this.placing) return;
     const hit = this.pickNode(e);
     this.viewport.canvas.style.cursor = hit && !hit.node.locked ? 'move' : '';
@@ -708,7 +705,6 @@ export class Editor extends Emitter {
 
   _leftDown(e) {
     if (this.disabled || this.placing) return; // handled by the placement listeners
-    if ((this.edgeMode || this.parts.active) && this.parts.pointerDown(e)) return;
     if (this.parts.active) return this.parts.click(e);
     if (this.edgeMode) return this._edgeClick(e);
     if (this.tool === 'workplane') return this._pickWorkplane(e);

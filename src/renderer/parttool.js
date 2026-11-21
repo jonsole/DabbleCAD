@@ -7,7 +7,8 @@
 import * as THREE from 'three';
 import { nodeShapeEdits, nodeEdgeData, edgeRoundIndex } from './core/geometry.js';
 import { movedVertex } from './core/shapeedit.js';
-import { toast } from './ui/dom.js';
+import { formatLength, parseLength } from './view/gizmo.js';
+import { h, toast } from './ui/dom.js';
 
 const ACCENT = 0x3d8bfd;
 const AXES = [
@@ -15,7 +16,22 @@ const AXES = [
   { name: 'y', dir: new THREE.Vector3(0, 1, 0), color: 0x46a758 },
   { name: 'z', dir: new THREE.Vector3(0, 0, 1), color: 0x3e7bfa },
 ];
-const ARROW_PX = 70; // arrow length on screen
+const ARROW_PX = 40; // how far an arrow sits from the part it moves, on screen
+
+// drag with pointer capture on the handle, like the object handles
+function track(el, e, onMove, onEnd) {
+  try { el.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
+  const up = (ev) => {
+    try { el.releasePointerCapture(e.pointerId); } catch { /* released */ }
+    el.removeEventListener('pointermove', onMove);
+    el.removeEventListener('pointerup', up);
+    el.removeEventListener('pointercancel', up);
+    onEnd(ev);
+  };
+  el.addEventListener('pointermove', onMove);
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointercancel', up);
+}
 const pkey = (p) => Math.round(p.x * 1e3) + ',' + Math.round(p.y * 1e3) + ',' + Math.round(p.z * 1e3);
 const r4 = (v) => Math.round(v * 1e4) / 1e4;
 
@@ -34,7 +50,8 @@ export class PartTool {
     this.hoverId = null;
     this.arrows = null; // { group, origin, axes: [{ dir, color }] }
     this.drag = null;
-    this.vp.onRender(() => this._scaleArrows());
+    this._buildHandles();
+    this.vp.onRender(() => this._layout());
   }
 
   get active() { return !!this.mode; }
@@ -56,6 +73,7 @@ export class PartTool {
     this.mode = null;
     for (const mesh of this.ed.meshes.values()) this._dropOverlay(mesh);
     this._setArrows(null);
+    this._setMarks([]);
     this.vp.canvas.style.cursor = '';
     this.ed.refreshOutlines();
   }
@@ -120,10 +138,12 @@ export class PartTool {
     const ed = this.ed;
     if (this.id && !ed.meshes.has(this.id)) { this.id = null; this.picked.clear(); }
     if (this.hoverId && !ed.meshes.has(this.hoverId)) { this.hoverId = null; this.hover = null; }
+    this._marks = [];
     if (this.mode) {
       const show = new Set([this.id, this.hoverId].filter(Boolean));
       for (const [id, mesh] of ed.meshes) { this._dropOverlay(mesh); if (show.has(id)) this._buildOverlay(id); }
     }
+    this._setMarks(this._marks);
     this._placeArrows();
     this.vp.requestRender();
   }
@@ -151,28 +171,14 @@ export class PartTool {
       add(hov, 0.22);
     } else if (this.mode === 'corner') {
       const meshes = [...this.ed.meshes.values()].filter((m) => m.visible);
-      const sets = { plain: [], picked: [], hover: [] };
       const many = I.A.corners.length > 400; // too many to check: show only picked and hovered
       I.A.corners.forEach((c, j) => {
-        const p = I.vert(c.v);
-        const w = I.toWorld(p);
+        const w = I.toWorld(I.vert(c.v));
         const picked = id === this.id && this.picked.has(j);
         const hov = this.hover && this.hover.id === id && this.hover.i === j;
         if (!picked && !hov && (many || !this.ed._edgeVisible(w, meshes, this.vp.unitsPerPixel(w) * 3))) return;
-        const q = local(p);
-        (hov ? sets.hover : picked ? sets.picked : sets.plain).push(q.x, q.y, q.z);
+        this._marks.push({ w, cls: hov ? 'mk-hover' : picked ? 'mk-picked' : 'mk-plain' });
       });
-      const pts = (arr, size, color) => {
-        if (!arr.length) return;
-        const g = new THREE.BufferGeometry();
-        g.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
-        const m = new THREE.Points(g, new THREE.PointsMaterial({ color, size, sizeAttenuation: false, depthTest: false, transparent: true }));
-        m.renderOrder = 7;
-        group.add(m);
-      };
-      pts(sets.plain, 7, 0x8a94a6);
-      pts(sets.picked, 10, ACCENT);
-      pts(sets.hover, 12, ACCENT);
     }
     if (!group.children.length) return;
     group.traverse((x) => { x.raycast = () => {}; });
@@ -242,7 +248,6 @@ export class PartTool {
 
   hoverAt(e) {
     if (this.drag) return;
-    if (this._arrowAt(e)) { this.vp.canvas.style.cursor = 'grab'; this._setHover(this.hoverId, null); return; }
     const { underId, hit } = this._pick(e);
     this.vp.canvas.style.cursor = hit ? 'pointer' : '';
     this._setHover(underId || (hit && hit.id) || null, hit);
@@ -412,65 +417,169 @@ export class PartTool {
     ed.sync();
   }
 
-  // ---------------------------------------------------------------- arrows
-  _setArrows(spec) {
-    if (this.arrows) { this.vp.helpers.remove(this.arrows.group); this.arrows.group.traverse((x) => { if (x.geometry) x.geometry.dispose(); if (x.material) x.material.dispose(); }); }
-    this.arrows = null;
-    if (!spec) { this.vp.requestRender(); return; }
-    const group = new THREE.Group();
-    for (const a of spec.axes) {
-      const line = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.8, 8).rotateX(Math.PI / 2).translate(0, 0, 0.4), new THREE.MeshBasicMaterial({ color: a.color, depthTest: false }));
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.22, 16).rotateX(Math.PI / 2).translate(0, 0, 0.89), new THREE.MeshBasicMaterial({ color: a.color, depthTest: false }));
-      const arm = new THREE.Group();
-      arm.add(line, cone);
-      arm.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), a.dir.clone().normalize());
-      arm.traverse((x) => { x.renderOrder = 9; x.raycast = () => {}; });
-      group.add(arm);
-    }
-    group.position.copy(spec.anchor);
-    this.vp.helpers.add(group);
-    this.arrows = { group, ...spec };
-    this._scaleArrows();
+  // ---------------------------------------------------------------- handles
+  // Drawn like the object handles: black arrows (as the lift arrow) to drag along, a white
+  // square on what is being moved, and black squares on the corners that can be picked.
+  _buildHandles() {
+    this.layer = h('div', { class: 'gizmo-layer part-layer' });
+    this.vp.container.appendChild(this.layer);
+    this.arrowEls = [0, 1, 2].map((i) => {
+      const el = h('div', { class: 'gz-handle gz-lift gz-part-arrow' });
+      el.style.display = 'none';
+      el.addEventListener('pointerdown', (e) => this._arrowDown(e, i));
+      this.layer.append(el);
+      return el;
+    });
+    // the move along each arrow, on the model like the size labels; click to type a value
+    this.labelEls = [0, 1, 2].map((i) => {
+      const el = h('div', { class: 'gz-label gz-part-label' });
+      el.style.display = 'none';
+      el.addEventListener('pointerdown', (e) => e.stopPropagation());
+      el.addEventListener('click', () => this._editLabel(i));
+      this.layer.append(el);
+      return el;
+    });
+    this.anchorEl = h('div', { class: 'gz-corner gz-part-mark' });
+    this.anchorEl.style.display = 'none';
+    this.layer.append(this.anchorEl);
+    this.markEls = [];
+    this.marks = []; // [{ w: world point, cls }]
   }
 
-  _scaleArrows() {
-    if (!this.arrows) return;
-    const s = this.vp.unitsPerPixel(this.arrows.anchor) * ARROW_PX;
-    if (Math.abs(this.arrows.group.scale.x - s) > s * 1e-3) { this.arrows.group.scale.setScalar(s); this.vp.requestRender(); }
+  _setArrows(spec) {
+    this.arrows = spec;
+    if (spec) {
+      spec.axes.forEach((a, i) => { if (this.arrowEls[i]) this.arrowEls[i].title = a.name === 'n' ? 'Drag to move the face in or out' : `Drag to move along ${a.name.toUpperCase()}`; });
+    }
+    this._layout();
+    this.vp.requestRender();
   }
 
   _placeArrows() {
-    if (this.drag) { if (this.arrows) { this.arrows.anchor.copy(this.drag.anchor0).addScaledVector(this.drag.axis.dir, this.drag.delta); this.arrows.group.position.copy(this.arrows.anchor); } return; }
+    if (this.drag) {
+      if (this.arrows) this.arrows.anchor = this.drag.anchor0.clone().addScaledVector(this.drag.axis.dir, this.drag.delta);
+      this._updateLabels();
+      this._layout();
+      return;
+    }
     const t = this.target();
     if (!t || t.node.locked) { this._setArrows(null); return; }
-    this._setArrows({ anchor: t.anchor, axes: t.axes });
+    this._setArrows({ anchor: t.anchor, axes: t.axes, anchorMark: t.kind !== 'c' });
+    this._updateLabels(t);
   }
 
-  /** The arrow under the pointer, or null. */
-  _arrowAt(e) {
-    if (!this.arrows) return null;
-    const rect = this.vp.canvas.getBoundingClientRect();
-    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
-    const len = this.vp.unitsPerPixel(this.arrows.anchor) * ARROW_PX;
-    const o = this.vp.project(this.arrows.anchor);
-    let best = null;
-    for (const a of this.arrows.axes) {
-      const tip = this.vp.project(this.arrows.anchor.clone().addScaledVector(a.dir, len));
-      const dx = tip.x - o.x, dy = tip.y - o.y, L = dx * dx + dy * dy;
-      if (L < 64) continue; // pointing at the camera
-      const t = Math.min(1, Math.max(0.15, ((mx - o.x) * dx + (my - o.y) * dy) / L));
-      const d = Math.hypot(o.x + t * dx - mx, o.y + t * dy - my);
-      if (d < 9 && (!best || d < best.d)) best = { a, d };
-    }
-    return best && best.a;
+  /** Label text: the current move along each arrow ('mixed' when picked parts differ). */
+  _updateLabels(t = this.target()) {
+    if (!this.arrows || !t) return;
+    const vals = this.values(t);
+    this.arrows.axes.forEach((a, i) => {
+      const el = this.labelEls[i];
+      if (!el || this.editing === i) return;
+      const list = vals.map((v) => (typeof v === 'number' ? v : v[a.name]));
+      const same = list.every((x) => Math.abs(x - list[0]) < 1e-4);
+      const text = same ? formatLength(list[0], this.ed.units) : '–';
+      el.textContent = a.name === 'n' ? text : `${a.name.toUpperCase()} ${text}`;
+      el.classList.toggle('moved', same && Math.abs(list[0]) > 1e-6);
+      el._value = same ? list[0] : 0;
+    });
   }
 
-  /** Start dragging an arrow if the pointer is on one. Returns true when it took the press. */
-  pointerDown(e) {
-    const axis = this._arrowAt(e);
-    if (!axis) return false;
+  _editLabel(i) {
+    const A = this.arrows, el = this.labelEls[i];
+    if (!A || !A.axes[i] || this.editing != null || this.drag) return;
     const t = this.target();
-    if (!t || t.node.locked) return false;
+    if (!t || t.node.locked) return;
+    const axis = A.axes[i];
+    const input = h('input', { class: 'gz-input', type: 'text', value: formatLength(el._value || 0, this.ed.units) });
+    const initial = input.value;
+    this.editing = i;
+    el.textContent = '';
+    el.append(input);
+    el.classList.add('editing');
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = (apply, next) => {
+      if (done) return;
+      done = true;
+      this.editing = null;
+      el.classList.remove('editing');
+      const v = parseLength(input.value, this.ed.units);
+      input.remove();
+      if (apply && input.value.trim() !== initial.trim() && isFinite(v)) this.setValue(axis.name === 'n' ? 'x' : axis.name, v);
+      this._updateLabels();
+      if (next != null) setTimeout(() => this._editLabel(next), 0);
+    };
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') finish(true);
+      else if (e.key === 'Escape') finish(false);
+      else if (e.key === 'Tab' && A.axes.length > 1) { e.preventDefault(); finish(true, (i + 1) % A.axes.length); }
+    });
+    input.addEventListener('blur', () => finish(true));
+  }
+
+  /** Corner squares (Corner mode), as world points with their look. */
+  _setMarks(marks) {
+    this.marks = marks;
+    while (this.markEls.length < marks.length) {
+      const el = h('div', { class: 'gz-part-mark' });
+      this.layer.insertBefore(el, this.anchorEl);
+      this.markEls.push(el);
+    }
+    this.markEls.forEach((el, i) => {
+      const m = marks[i];
+      if (!m) { el.style.display = 'none'; return; }
+      el.className = 'gz-part-mark ' + m.cls;
+    });
+    this._layout();
+  }
+
+  /** Put the handles where their points are on screen (every rendered frame). */
+  _layout() {
+    if (!this.layer) return;
+    const vp = this.vp, p = {};
+    const place = (el, x, y, extra = '') => { el.style.display = ''; el.style.transform = `translate(${Math.round(x)}px, ${Math.round(y)}px) translate(-50%, -50%)${extra}`; };
+    this.marks.forEach((m, i) => {
+      const el = this.markEls[i];
+      vp.project(m.w, p);
+      if (p.behind) el.style.display = 'none'; else place(el, p.x, p.y);
+    });
+    const A = this.arrows;
+    const hideAll = () => { this.anchorEl.style.display = 'none'; for (const el of [...this.arrowEls, ...this.labelEls]) el.style.display = 'none'; };
+    if (!A) { hideAll(); return; }
+    vp.project(A.anchor, p);
+    if (p.behind) { hideAll(); return; }
+    const ox = p.x, oy = p.y;
+    if (A.anchorMark) place(this.anchorEl, ox, oy); else this.anchorEl.style.display = 'none';
+    const len = vp.unitsPerPixel(A.anchor) * 30;
+    this.arrowEls.forEach((el, i) => {
+      const a = A.axes[i];
+      const lab = this.labelEls[i];
+      if (!a) { el.style.display = 'none'; lab.style.display = 'none'; return; }
+      const q = vp.project(A.anchor.clone().addScaledVector(a.dir, len));
+      const dx = q.x - ox, dy = q.y - oy, L = Math.hypot(dx, dy);
+      if (L < 8 && !(this.drag && this.drag.axis === a)) { el.style.display = 'none'; lab.style.display = 'none'; return; } // pointing at the camera
+      const ux = L ? dx / L : 0, uy = L ? dy / L : -1;
+      place(el, ox + ux * ARROW_PX, oy + uy * ARROW_PX, ` rotate(${Math.atan2(ux, -uy)}rad)`);
+      // beside the arrow, past its tip
+      const w = lab.offsetWidth || 40, hh = lab.offsetHeight || 20;
+      const r = ARROW_PX + 14 + Math.abs(ux) * w / 2 + Math.abs(uy) * hh / 2;
+      place(lab, ox + ux * r, oy + uy * r);
+    });
+  }
+
+  _arrowDown(e, i) {
+    if (!this.arrows || !this.arrows.axes[i] || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.startDrag(e, this.arrows.axes[i], e.currentTarget);
+  }
+
+  /** Drag the picked parts along an arrow. */
+  startDrag(e, axis, el) {
+    const t = this.target();
+    if (!t || t.node.locked) return;
     const ed = this.ed;
     const startVals = this.values(t);
     const startEdits = t.node.shapeEdits ? [...t.node.shapeEdits] : null;
@@ -491,18 +600,18 @@ export class PartTool {
       return (w0.dot(d) - w0.dot(ray.direction) * b) / den;
     };
     const t0 = along(e);
-    if (t0 == null) return false;
+    if (t0 == null) return;
     const snap = ed.snap > 0 ? ed.snap : 0;
     const local = axis.dir.clone().transformDirection(ed.frameInv); // the axis in workplane terms
     this.drag = { axis, anchor0: t.anchor.clone(), delta: 0 };
-    this.vp.canvas.style.cursor = 'grabbing';
+    el.classList.add('dragging');
     let last = 0, raf = 0;
     const apply = () => {
       const vals = startVals.map((v) => (t.kind === 'f' ? v + last : v.clone().addScaledVector(local, last)));
       if (em) em.key = null; // keep the picked edges while their shape changes
       this.applyEdits(t.node, this.editsWith(t, vals), { live: true });
     };
-    ed._track(e, (ev) => {
+    track(el, e, (ev) => {
       const tt = along(ev);
       if (tt == null) return;
       let delta = tt - t0;
@@ -514,14 +623,13 @@ export class PartTool {
     }, () => {
       cancelAnimationFrame(raf);
       this.drag = null;
-      this.vp.canvas.style.cursor = '';
+      el.classList.remove('dragging');
       restore();
       if (!last) { ed.sync(); this.refresh(); return; }
       // re-apply from the starting state so rounded edges and picked edges follow their edges
       const vals = startVals.map((v) => (t.kind === 'f' ? v + last : v.clone().addScaledVector(local, last)));
       this.commitEdits(t.node, this.editsWith(t, vals));
     });
-    return true;
   }
 
   /** Set the moves of the target and make an undo step (from the panel or after a drag). */
