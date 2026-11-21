@@ -11,9 +11,10 @@ export class SettingsPanel {
   constructor({ store, defs, index, info, profiles }) {
     Object.assign(this, { store, defs, index, info, profiles });
     this.scope = 'process';
-    this.page = {};            // scope -> page id
-    for (const s of SCOPE_ORDER) this.page[s] = SCOPES[s].pages.find(([p]) => this.index[s][p].length)[0];
-    this.pageEls = new Map();  // `${scope}/${page}` -> { el, rows }
+    this.open = new Set();     // `${scope}/${page}` sections the person has expanded
+    for (const s of SCOPE_ORDER) this.open.add(`${s}/${SCOPES[s].pages.find(([p]) => this.index[s][p].length)[0]}`);
+    this.secs = new Map();     // `${scope}/${page}` -> { el, head, body, count, pg, built }
+    this.activeSecs = [];
     this.expanded = new Map(); // key -> bool (user's choice)
     this.query = '';
     this.results = [];         // rows currently in the search results
@@ -38,9 +39,8 @@ export class SettingsPanel {
     this.search.addEventListener('input', () => { clearTimeout(this._st); this._st = setTimeout(() => { this.query = this.search.value.trim().toLowerCase(); this._renderBody(); }, 120); });
     this.levelSeg = h('div', { class: 'segmented sl-levels', role: 'group', 'aria-label': 'How many settings to show' });
     for (const [id, label] of LEVELS) this.levelSeg.append(button({ label, cls: 'sl-level', title: id === 'simple' ? 'The settings most people change' : id === 'advanced' ? 'Everything except experimental settings' : 'Every setting', onClick: () => { this.profiles.setLevel(id); this._renderBody(); this._levelUi(); } }));
-    this.pageBar = h('div', { class: 'sl-pages', role: 'tablist', 'aria-label': 'Settings page' });
     this.body = h('div', { class: 'sl-body' });
-    this.el = h('div', { class: 'sl-settings' }, this.tabs, this.presetBar, this.blurb, h('div', { class: 'sl-tools' }, this.search, this.levelSeg), this.pageBar, this.body);
+    this.el = h('div', { class: 'sl-settings' }, this.tabs, this.presetBar, this.blurb, h('div', { class: 'sl-tools' }, this.search, this.levelSeg), this.body);
     // arrow keys, Delete and friends belong to the fields in here, not to the workspace shortcuts
     this.el.addEventListener('keydown', (e) => e.stopPropagation());
     this._levelUi();
@@ -51,7 +51,7 @@ export class SettingsPanel {
 
   setScope(scope, page) {
     this.scope = scope;
-    if (page) this.page[scope] = page;
+    if (page) this.open.add(`${scope}/${page}`);
     this.query = ''; this.search.value = '';
     this._renderBody();
   }
@@ -62,15 +62,7 @@ export class SettingsPanel {
     for (const s of SCOPE_ORDER) this.tabBtns[s].classList.toggle('active', s === this.scope && !this.query);
     this.blurb.textContent = this.query ? 'Search results from the printer, filament and process settings.' : sc.blurb;
     this._renderPresetBar();
-    clear(this.pageBar);
-    if (this.query) return;
-    for (const [id, label] of sc.pages) {
-      if (!this.index[this.scope][id].length) continue;
-      const b = h('button', { class: 'sl-page' + (this.page[this.scope] === id ? ' active' : ''), type: 'button', role: 'tab', onClick: () => { this.page[this.scope] = id; this._renderChrome(); this._renderBody(); } }, label);
-      this.pageBar.append(b);
-    }
   }
-
   _renderPresetBar() {
     clear(this.presetBar);
     const scope = this.scope, p = this.profiles;
@@ -113,16 +105,45 @@ export class SettingsPanel {
     for (const r of this.results) this._dropRow(r);
     this.results = [];
     if (this.query) { this._renderResults(); return; }
-    const key = `${this.scope}/${this.page[this.scope]}`;
-    let pg = this.pageEls.get(key);
-    if (!pg) {
-      pg = { el: h('div', { class: 'sl-list' }), rows: [] };
-      for (const node of this.index[this.scope][this.page[this.scope]]) this._addNode(pg, pg.el, node, 0);
-      this.pageEls.set(key, pg);
+    const wrap = h('div', { class: 'sl-secs' });
+    this.activeSecs = [];
+    for (const [id, label] of SCOPES[this.scope].pages) {
+      if (!this.index[this.scope][id].length) continue;
+      const sec = this._section(this.scope, id, label);
+      this.activeSecs.push(sec);
+      wrap.append(sec.el);
     }
-    this.active = pg;
-    this.body.append(pg.el);
+    this.active = null;
+    this.body.append(wrap);
     this.refresh();
+  }
+
+  _section(scope, id, label) {
+    const key = `${scope}/${id}`;
+    let sec = this.secs.get(key);
+    if (sec) return sec;
+    sec = { key, scope, id, pg: { el: h('div', { class: 'sl-list' }), rows: [] }, built: false };
+    sec.count = h('span', { class: 'sl-sec-mod', hidden: true });
+    sec.chev = h('span', { class: 'sl-sec-chev', 'aria-hidden': 'true' }, '▸');
+    sec.head = h('button', { class: 'sl-sec-head', type: 'button', 'aria-expanded': 'false', onClick: () => { this.open.has(key) ? this.open.delete(key) : this.open.add(key); this._syncSection(sec); } }, sec.chev, h('span', { class: 'sl-sec-name' }, label), sec.count);
+    sec.body = h('div', { class: 'sl-sec-body', hidden: true }, sec.pg.el);
+    sec.el = h('section', { class: 'sl-sec' }, sec.head, sec.body);
+    this.secs.set(key, sec);
+    return sec;
+  }
+
+  /** Open or close a section, building its rows the first time it is opened. */
+  _syncSection(sec) {
+    const open = this.open.has(sec.key);
+    if (open && !sec.built) {
+      sec.built = true;
+      for (const node of this.index[sec.scope][sec.id]) this._addNode(sec.pg, sec.pg.el, node, 0);
+    }
+    sec.el.classList.toggle('open', open);
+    sec.body.hidden = !open;
+    sec.chev.textContent = open ? '▾' : '▸';
+    sec.head.setAttribute('aria-expanded', String(open));
+    if (open) for (const r of sec.pg.rows) r.refresh();
   }
 
   _renderResults() {
@@ -264,9 +285,17 @@ export class SettingsPanel {
       m.title = `${n} setting${n === 1 ? '' : 's'} changed from the ${SCOPES[s].label.toLowerCase()} preset`;
     }
     this._renderPresetBar();
-    if (!this.active) return;
-    // children are refreshed by their own row, top-level rows come from the page list
-    for (const r of this.active.rows) r.refresh();
+    const rank = levelRank[this.profiles.level];
+    const mods = new Set(this.profiles.modifiedKeys(this.scope));
+    for (const sec of this.activeSecs) {
+      const nodes = this.index[sec.scope][sec.id];
+      sec.el.hidden = !nodes.some((n) => this._anyVisible(n, rank));
+      const n = [...mods].filter((k) => { const i = this.info.get(k); return i && i.page === sec.id; }).length;
+      sec.count.hidden = !n; sec.count.textContent = n;
+      sec.count.title = `${n} setting${n === 1 ? '' : 's'} changed in this section`;
+      this._syncSection(sec);
+    }
+    if (this.active) for (const r of this.active.rows) r.refresh();
     this._levelUi();
   }
 
@@ -275,7 +304,7 @@ export class SettingsPanel {
     const n = this.info.get(key);
     if (!n) return;
     if (this.query) { this.query = ''; this.search.value = ''; }
-    this.scope = n.scope; this.page[n.scope] = n.page;
+    this.scope = n.scope; this.open.add(`${n.scope}/${n.page}`);
     if (levelRank[levelOf(n.def)] > levelRank[this.profiles.level]) this.profiles.setLevel(levelOf(n.def));
     // open any collapsed parents
     for (let p = n.def.parent; p; p = this.defs.get(p).parent) this.expanded.set(p, true);
