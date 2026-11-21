@@ -267,7 +267,7 @@ export class SettingsPanel {
       ctl.set(v);
       el.classList.toggle('sl-off', !on);
       const m = this.profiles.isModified(d.key);
-      reset.style.visibility = m ? 'visible' : 'hidden';
+      reset.style.display = m ? '' : 'none';
       if (formula) {
         const own = store.isOverridden(d.key);
         fx.classList.toggle('on', !own); fx.classList.toggle('ovr', own);
