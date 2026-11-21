@@ -94,6 +94,9 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 /* ---------- tool bar ---------- */
 .toolbar { height: 44px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 10px; background: var(--panel); border-bottom: 1px solid var(--border); }
 .toolbar .btn { height: 34px; min-width: 36px; }
+.mode-group { display: flex; gap: 2px; padding: 2px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--border); }
+.mode-group .btn { height: 30px; min-width: 34px; border-color: transparent; }
+.mode-group .btn.active { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 
 /* ---------- main ---------- */
 .main { flex: 1; min-height: 0; display: flex; }

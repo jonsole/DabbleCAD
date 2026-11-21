@@ -11,10 +11,11 @@ export class Inspector {
     this.editor = editor;
     this.host = host;
     this.app = app;
-    this.open = { params: true, transform: false, edges: false };
+    this.open = { params: true, transform: false, edges: false, partmove: true };
     this.numberFields = [];
     editor.on('selection', () => this.render());
     editor.on('transform', () => this.updateNumbers());
+    editor.on('partmove', () => this._updateMoveFields());
     host.addEventListener('pointerdown', (e) => e.stopPropagation());
     host.addEventListener('wheel', (e) => e.stopPropagation(), { passive: true });
   }
@@ -27,6 +28,7 @@ export class Inspector {
     clear(this.host);
     this.numberFields = [];
     if (ed.edgeMode) return this._renderEdgePanel();
+    if (ed.parts.active) return this._renderPartPanel();
     if (!nodes.length || ed.placing) return;
     const first = nodes[0];
     const allLocked = nodes.every((n) => n.locked);
@@ -125,6 +127,11 @@ export class Inspector {
       rows.push(h('div', { class: 'insp-note' }, `${n} edge${n > 1 ? 's' : ''} rounded or chamfered.`),
         h('div', { class: 'insp-row-btns' }, button({ label: 'Apply Edges', cls: 'btn-outline', title: 'Make the rounded and chamfered edges a permanent part of the shape (Ctrl+Z to undo)', onClick: () => ed.applyEdges(node) }), button({ label: 'Make all sharp', cls: 'btn-outline', onClick: () => ed._busy(() => ed.patchSelection((x) => (x.id === node.id ? { edgeRounds: undefined } : {}))) })));
     }
+    const moves = (node.shapeEdits || []).length;
+    if (moves) {
+      rows.push(h('div', { class: 'insp-note' }, `${moves} face, edge or corner move${moves > 1 ? 's' : ''}.`),
+        h('div', { class: 'insp-row-btns' }, button({ label: 'Reset all moves', cls: 'btn-outline', onClick: () => ed.parts.resetAll(node) })));
+    }
     return rows;
   }
 
@@ -180,6 +187,76 @@ export class Inspector {
         ...(canApply ? [applyBtn()] : [])));
     if (node.locked) rows.push(h('div', { class: 'insp-note' }, 'Locked'));
     this.host.append(this._section('edgetool', 'Edges', rows));
+    const t = ed.parts.target();
+    if (t && !node.locked) this.host.append(this._section('partmove', 'Move', this._moveRows(t)));
+  }
+
+  // Face and Corner modes: shown in place of the shape inspector.
+  _renderPartPanel() {
+    const ed = this.editor, parts = ed.parts;
+    const node = parts.node();
+    const word = parts.mode === 'face' ? 'face' : 'corner';
+    const done = button({ icon: 'close', title: 'Done (Esc)', onClick: () => ed.setTool('select') });
+    this.host.append(h('div', { class: 'insp-head' }, h('div', { class: 'insp-title' }, node ? node.name || kindName(node) : word === 'face' ? 'Faces' : 'Corners'), done));
+    if (!node) return;
+    if (node.locked) { this.host.append(h('div', { class: 'insp-section' }, h('div', { class: 'insp-note' }, 'Locked'))); return; }
+    const t = parts.target();
+    if (this.open.partmove === undefined) this.open.partmove = true;
+    if (t) {
+      const n = t.items.length;
+      this.host.append(this._section('partmove', 'Move', [
+        h('div', { class: 'insp-note' }, `${n} ${word}${n > 1 ? 's' : ''} selected`),
+        ...this._moveRows(t),
+      ]));
+    }
+    const moves = (node.shapeEdits || []).length;
+    if (moves) {
+      this.host.append(this._section('partall', 'Shape', [
+        h('div', { class: 'insp-note' }, `${moves} face, edge or corner move${moves > 1 ? 's' : ''} on this shape.`),
+        h('div', { class: 'insp-row-btns' }, button({ label: 'Reset all moves', cls: 'btn-outline', onClick: () => parts.resetAll(node) })),
+      ]));
+    }
+  }
+
+  /** Move fields for the picked faces, edges or corners. */
+  _moveRows(t) {
+    const ed = this.editor, parts = ed.parts;
+    const u = () => ed.units;
+    this.moveFields = [];
+    const field = (axis) => {
+      const input = h('input', { class: 'input' + (axis === 'n' ? '' : ' ax-' + axis), type: 'text' });
+      input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') { input.dataset.cancel = '1'; input.blur(); } });
+      input.addEventListener('focus', () => { delete input.dataset.cancel; input.select(); });
+      input.addEventListener('change', () => {
+        if (input.dataset.cancel) { delete input.dataset.cancel; return this._updateMoveFields(); }
+        const v = parseLength(input.value, u());
+        if (isFinite(v)) parts.setValue(axis, v); else this._updateMoveFields();
+      });
+      this.moveFields.push({ input, axis });
+      return input;
+    };
+    const rows = t.kind === 'f'
+      ? [h('div', { class: 'param' }, h('label', { title: 'Out from the shape is positive, in is negative' }, 'Distance'), field('n'))]
+      : [h('div', { class: 'xyz' }, h('span', {}, ''), h('span', {}, 'X'), h('span', {}, 'Y'), h('span', {}, 'Z')),
+        h('div', { class: 'xyz' }, h('span', {}, 'Move'), field('x'), field('y'), field('z'))];
+    const moved = parts.values(t).some((v) => (typeof v === 'number' ? v !== 0 : v.lengthSq() > 0));
+    rows.push(h('div', { class: 'insp-row-btns' },
+      parts.active ? button({ label: 'Unselect', cls: 'btn-outline', title: 'Unselect (Esc)', onClick: () => parts.clearPicks() }) : null,
+      moved ? button({ label: 'Reset', cls: 'btn-outline', title: 'Put back where it was', onClick: () => parts.resetTarget() }) : null));
+    this._updateMoveFields(t);
+    return rows;
+  }
+
+  _updateMoveFields(t = this.editor.parts.target()) {
+    if (!this.moveFields || !t) return;
+    const vals = this.editor.parts.values(t);
+    for (const { input, axis } of this.moveFields) {
+      if (document.activeElement === input) continue;
+      const list = vals.map((v) => (typeof v === 'number' ? v : v[axis]));
+      const same = list.every((x) => Math.abs(x - list[0]) < 1e-4);
+      input.value = same ? formatLength(list[0], this.editor.units) : '';
+      input.placeholder = same ? '' : 'mixed';
+    }
   }
 
   _section(key, title, rows) {

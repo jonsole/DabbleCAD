@@ -166,6 +166,10 @@ storage instead and are separate from the desktop library.
   kernel, so the result is a closed, printable mesh.
 - Edit the parts of a group without ungrouping: double-click it, change things, press Done.
 - Round or bevel the outside edges of any shape or group.
+- **Modes** (toolbar, next to Undo/Redo, or keys 1 to 4): **Object** for whole shapes;
+  **Face** to push or pull a flat face; **Edge** to round, chamfer or move edges;
+  **Corner** to move corners. Drag the arrows or type a distance. Moves stay editable
+  and work on groups too.
 - Resize, rotate, lift, mirror, align, and type exact dimensions.
 - Workplanes on faces, a ruler, notes, patterns, duplicate-and-repeat, and Cruise.
 - Freehand Scribble shapes with extrusion.

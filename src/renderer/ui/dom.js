@@ -112,8 +112,27 @@ const P = {
   cloudCheck: 'M7 18.500a4.500 4.500 0 0 1-.6-8.960A6 6 0 0 1 18 9a4.750 4.750 0 0 1-.5 9.500zM9.500 13.500l2 2 3.500-3.500',
 };
 
+// Mode icons: a cube with the part each mode works on picked out.
+const CUBE = 'M12 3l8 4.500v9L12 21l-8-4.500v-9zM4 7.500l8 4.500 8-4.500M12 12v9';
+const MULTI = {
+  modeObject: [{ d: 'M12 3l8 4.500v9L12 21l-8-4.500v-9z', fill: 'currentColor', o: 0.22 }, { d: CUBE }],
+  modeFace: [{ d: CUBE, o: 0.55 }, { d: 'M12 3l8 4.500-8 4.500-8-4.500z', fill: 'currentColor', o: 0.85 }],
+  modeEdge: [{ d: CUBE, o: 0.55 }, { d: 'M12 12v9', w: 3.4 }],
+  modeCorner: [{ d: CUBE, o: 0.55 }, { d: 'M12 9.300a2.700 2.700 0 1 0 0 5.400 2.700 2.700 0 1 0 0-5.400z', fill: 'currentColor' }],
+};
+
 export function icon(name, size = 20) {
   const svg = h('svg', { viewBox: '0 0 24 24', width: size, height: size, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.7, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', class: 'icon' });
+  if (MULTI[name]) {
+    for (const part of MULTI[name]) {
+      const a = { d: part.d };
+      if (part.fill) a.fill = part.fill;
+      if (part.o != null) a.opacity = part.o;
+      if (part.w) a['stroke-width'] = part.w;
+      svg.append(h('path', a));
+    }
+    return svg;
+  }
   svg.append(h('path', { d: P[name] || P.cube }));
   return svg;
 }

@@ -1,6 +1,7 @@
 // Document model: a tree of shape / group nodes, each carrying an affine matrix.
 // Top level node matrices are world matrices; child matrices are relative to the group.
 import * as THREE from 'three';
+import { validEdit } from './shapeedit.js';
 
 let counter = 1;
 export const uid = (prefix = 'n') =>
@@ -63,9 +64,13 @@ const roundKey = (node) => (node.round > 0 ? '~' + (node.roundStyle === 'bevel' 
 // Edge rounds depend on the node's scale too: fillets are made at the shape's real size.
 const edgeKey = (node) => '~e' + scaleKey(node) + ':' + node.edgeRounds.map((e) => e.sig.m.join(',') + '/' + e.sig.d.join(',') + '/' + e.sig.l + '/' + round5(e.r) + (e.t === 'chamfer' ? 'c' : '')).join(';');
 
+// Shape edits (moved faces, edges, corners) are in mm, so they depend on the node's scale too.
+const shapeEditKey = (node) => '~s' + scaleKey(node) + ':' + JSON.stringify(node.shapeEdits);
+
 export function geomKey(node) {
   if (node.round > 0) return geomKey({ ...node, round: 0 }) + roundKey(node);
   if (node.edgeRounds && node.edgeRounds.length) return geomKey({ ...node, edgeRounds: null }) + edgeKey(node);
+  if (node.shapeEdits && node.shapeEdits.length) return geomKey({ ...node, shapeEdits: null }) + shapeEditKey(node);
   if (node.type === 'shape') return node.kind + paramKey(node.params);
   const parts = node.children.map((c) =>
     geomKey(c) + '@' + c.matrix.map(round5).join(',') + (c.hole ? 'h' : 's') +
@@ -134,6 +139,10 @@ export function deserializeDoc(text) {
       const ok = (e) => e && e.sig && [e.sig.m, e.sig.d].every((v) => Array.isArray(v) && v.length === 3 && v.every(isFinite)) && isFinite(e.sig.l) && e.r > 0 && (e.t === undefined || e.t === 'round' || e.t === 'chamfer');
       out.edgeRounds = Array.isArray(out.edgeRounds) ? out.edgeRounds.filter(ok) : [];
       if (!out.edgeRounds.length) delete out.edgeRounds;
+    }
+    if (out.shapeEdits !== undefined) {
+      out.shapeEdits = Array.isArray(out.shapeEdits) ? out.shapeEdits.filter(validEdit) : [];
+      if (!out.shapeEdits.length) delete out.shapeEdits;
     }
     if (out.params && out.params.mesh && out.params.mesh.ref) {
       const id = out.params.mesh.ref;

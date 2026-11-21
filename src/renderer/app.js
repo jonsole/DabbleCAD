@@ -100,6 +100,12 @@ export class App {
       h('span', { class: 'sep' }),
       tb('undo', 'undo', 'Undo (Ctrl+Z)', () => this.editor.undo()),
       tb('redo', 'redo', 'Redo (Ctrl+Y)', () => this.editor.redo()),
+      h('span', { class: 'sep' }),
+      h('div', { class: 'mode-group', role: 'group', 'aria-label': 'Editing mode' },
+        tb('modeObject', 'modeObject', 'Object mode (1): move, resize and rotate whole shapes', () => this.editor.setTool('select')),
+        tb('modeFace', 'modeFace', 'Face mode (2): pick flat faces and move them in or out', () => this.editor.setTool(this.editor.tool === 'face' ? 'select' : 'face')),
+        tb('modeEdge', 'modeEdge', 'Edge mode (3): pick edges to round, chamfer or move them', () => this.editor.setTool(this.editor.tool === 'edges' ? 'select' : 'edges')),
+        tb('modeCorner', 'modeCorner', 'Corner mode (4): pick corners and move them', () => this.editor.setTool(this.editor.tool === 'corner' ? 'select' : 'corner'))),
       h('span', { class: 'spacer' }),
       tb('stats', 'stats', 'Size, volume and weight', () => statsDialog(this)),
       tb('pattern', 'pattern', 'Pattern: repeat the selection in rows or a circle', () => patternDialog(this)),
@@ -646,6 +652,8 @@ export class App {
     set('align', movable > 0); set('mirror', movable > 0); set('drop', movable > 0); set('pattern', n > 0);
     set('showall', ed.doc.nodes.some((x) => x.hidden));
     this.btn.align.classList.toggle('active', ed.tool === 'align');
+    const mode = ed.tool === 'face' ? 'Face' : ed.tool === 'edges' ? 'Edge' : ed.tool === 'corner' ? 'Corner' : 'Object';
+    for (const m of ['Object', 'Face', 'Edge', 'Corner']) { this.btn['mode' + m].classList.toggle('active', m === mode); this.btn['mode' + m].setAttribute('aria-pressed', m === mode ? 'true' : 'false'); }
     this.btn.mirror.classList.toggle('active', ed.tool === 'mirror');
     this.btn.cruise.classList.toggle('active', ed.cruise);
   }
@@ -758,6 +766,7 @@ export class App {
       done();
       if (ed.placing) ed.cancelPlace();
       else if (ed.edgeMode) { if (ed.edgeMode.picked.size) ed.clearEdgePicks(); else ed.exitEdgeMode(); }
+      else if (ed.parts.active) { if (ed.parts.picked.size) ed.parts.clearPicks(); else ed.setTool('select'); }
       else if (ed.tool !== 'select') ed.setTool('select');
       else if (ed.selection.size) ed.clearSelection();
       else if (ed.editing) ed.exitGroup();
@@ -785,6 +794,8 @@ export class App {
     if (e.altKey) return;
     const map = {
       w: () => { if (shift) { ed.workplaneAtSelection(); this._updateBanner(); } else ed.setTool('workplane'); },
+      1: () => ed.setTool('select'), 2: () => ed.setTool(ed.tool === 'face' ? 'select' : 'face'),
+      3: () => ed.setTool(ed.tool === 'edges' ? 'select' : 'edges'), 4: () => ed.setTool(ed.tool === 'corner' ? 'select' : 'corner'),
       e: () => ed.setTool('edges'), r: () => ed.setTool('ruler'), n: () => ed.setTool('note'), l: () => ed.setTool('align'), m: () => ed.setTool('mirror'),
       c: () => ed.toggleCruise(), d: () => ed.dropToWorkplane(), s: () => ed.setHole(false), h: () => ed.setHole(true), t: () => ed.toggleTransparent(),
     };

@@ -8,6 +8,7 @@ import { KINDS } from './shapes.js';
 import { geomKey, mat4 } from './doc.js';
 import { solidBoolean, withSolid } from './solid.js';
 import { findEdges, edgeSignature, matchRounds, filletEdges } from './edges.js';
+import { analyseShape, solveEdits, movedGeometry } from './shapeedit.js';
 
 THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
@@ -309,6 +310,44 @@ function applyEdgeRounds(node) {
   return out;
 }
 
+// ------------------------------------------------------------------ shape edits (faces, edges, corners moved)
+const featCache = new Map();
+
+/**
+ * Faces, edges and corners of a node's shape before any of its own edits, at real size, plus
+ * the vertex moves its edits make. Positions are real-size, in the node's own axes.
+ */
+export function nodeShapeEdits(node) {
+  const plain = { ...node, round: 0, edgeRounds: null, shapeEdits: null };
+  const scale = nodeScale(node);
+  const key = geomKey(plain) + '#' + scale.map((v) => v.toFixed(5)).join(',');
+  let A = featCache.get(key);
+  if (!A) {
+    const base = getGeometry(plain);
+    const scaled = scaledCopy(base, scale);
+    const toLocal = (p) => p.set(p.x / scale[0], p.y / scale[1], p.z / scale[2]);
+    A = triCount(base) <= EDGE_LIMIT && base.attributes.position.count ? analyseShape(scaled, toLocal) : null;
+    if (A) { A.scaled = scaled; A.scale = scale; A.key = key; }
+    featCache.set(key, A);
+    if (featCache.size > 24) featCache.delete(featCache.keys().next().value);
+  }
+  if (!A) return null;
+  const edits = node.shapeEdits || [];
+  const ek = JSON.stringify(edits);
+  if (A.lastEditKey !== ek) { A.lastEditKey = ek; A.solved = solveEdits(A, edits); }
+  return { A, ...A.solved };
+}
+
+function applyShapeEdits(node) {
+  const st = nodeShapeEdits(node);
+  const base = getGeometry({ ...node, shapeEdits: null });
+  stats.shapeEditsFailed = st ? st.failed : node.shapeEdits.length;
+  if (!st) { const g = base.clone(); g.userData = {}; return g; }
+  const out = toCreasedNormals(movedGeometry(st.A.scaled, st.A, st.disp), CREASE);
+  out.scale(1 / st.A.scale[0], 1 / st.A.scale[1], 1 / st.A.scale[2]);
+  return out;
+}
+
 function emptyGeometry() {
   const g = new THREE.BufferGeometry();
   for (const name of ['position', 'normal', 'color']) g.setAttribute(name, new THREE.BufferAttribute(new Float32Array(0), 3));
@@ -327,6 +366,8 @@ export function getGeometry(node) {
     g = finalize(roundInWorldScale(getGeometry({ ...node, round: 0 }), node));
   } else if (node.edgeRounds && node.edgeRounds.length) {
     g = finalize(applyEdgeRounds(node));
+  } else if (node.shapeEdits && node.shapeEdits.length) {
+    g = finalize(applyShapeEdits(node));
   } else if (node.type === 'group') {
     g = finalize(buildGroup(node));
   } else {

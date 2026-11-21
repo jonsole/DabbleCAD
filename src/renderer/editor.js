@@ -4,6 +4,7 @@ import { History, cloneNode, makeGroup, makeShape, mat4, uid, newDoc } from './c
 import { kindName } from './core/shapes.js';
 import { getGeometry, expandBox, getEdges, measure, nodeEdgeData, edgeRoundIndex, stats as geoStats } from './core/geometry.js';
 import { toast } from './ui/dom.js';
+import { PartTool } from './parttool.js';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
@@ -86,6 +87,7 @@ export class Editor extends Emitter {
     this.busy = false;
     this.history.reset(this._snapshot());
 
+    this.parts = new PartTool(this); // Face and Corner modes, and moving picked parts
     viewport.handlers.leftDown = (e) => this._leftDown(e);
     viewport.handlers.hover = (e) => this._hover(e);
     viewport.handlers.contextMenu = (e) => this.emit('contextmenu', e);
@@ -95,6 +97,7 @@ export class Editor extends Emitter {
   // ---------------------------------------------------------------- document lifecycle
   load(doc) {
     this.exitEdgeMode(false);
+    this.parts.end();
     this.editing = null;
     this.doc = doc;
     this.selection.clear();
@@ -142,6 +145,7 @@ export class Editor extends Emitter {
       if (!ids.has(em.id)) em.id = null;
       em.picked.clear(); em.hover = null; em.key = null;
     }
+    if (this.parts) this.parts.reset();
     this.dupState = null;
     this.alignAnchor = null;
     this.sync();
@@ -180,6 +184,7 @@ export class Editor extends Emitter {
       if (em.hoverId && !this.meshes.has(em.hoverId)) { em.hoverId = null; em.hover = null; }
       this._syncEdgeOverlays();
     }
+    if (this.parts && (this.parts.active || this.edgeMode)) this.parts.refresh();
     this.viewport.requestRender();
   }
 
@@ -223,7 +228,7 @@ export class Editor extends Emitter {
   }
 
   _syncOutline(mesh, selected) {
-    const picking = this.edgeMode && this.edgeMode.id === mesh.userData.id;
+    const picking = (this.edgeMode && this.edgeMode.id === mesh.userData.id) || (this.parts && this.parts.active && this.parts.id === mesh.userData.id);
     // while picking edges, the shape keeps its ordinary edge lines (if shown) instead of the
     // selection outline; selected edges are drawn on top
     const want = selected && !picking ? selLineMat : this.settings.edges ? edgeLineMat : null;
@@ -348,8 +353,15 @@ export class Editor extends Emitter {
   setTool(tool) {
     if (this.placing && tool !== 'place') this.cancelPlace();
     this.tool = this.tool === tool && tool !== 'select' && tool !== 'place' ? 'select' : tool;
-    if (this.tool === 'edges' && !this.edgeMode) this._startEdgeTool();
+    const part = (t) => t === 'face' || t === 'corner';
+    // leaving a part mode: the shape that was being worked on becomes the selection
+    const was = this.edgeMode ? this.edgeMode.id : this.parts.active ? this.parts.id : null;
     if (this.tool !== 'edges' && this.edgeMode) this._endEdgeTool();
+    if (this.parts.active && this.parts.mode !== this.tool) this.parts.end();
+    if (was && !part(this.tool) && this.tool !== 'edges' && this.node(was)) { this.selection = new Set([was]); this.refreshOutlines(); }
+    if (was && (part(this.tool) || this.tool === 'edges') && this.node(was)) this.selection = new Set([was]);
+    if (this.tool === 'edges' && !this.edgeMode) this._startEdgeTool();
+    if (part(this.tool) && !this.parts.active) this.parts.start(this.tool);
     if (this.tool !== 'align') this.alignAnchor = null;
     this.viewport.canvas.style.cursor = ['workplane', 'ruler', 'note'].includes(this.tool) ? 'crosshair' : '';
     this.emit('tool');
@@ -404,6 +416,7 @@ export class Editor extends Emitter {
   _endEdgeTool() {
     if (!this.edgeMode) return;
     this.edgeMode = null;
+    this.parts.refresh(); // its move arrows go
     for (const mesh of this.meshes.values()) this._dropEdgeOverlay(mesh);
     this.viewport.canvas.style.cursor = '';
     this.refreshOutlines();
@@ -413,6 +426,7 @@ export class Editor extends Emitter {
   enterEdgeMode() { if (this.tool !== 'edges') this.setTool('edges'); }
 
   exitEdgeMode(emit = true) {
+    if (this.parts.active) { this.parts.end(); this.tool = 'select'; this.emit('tool'); if (emit) this.emit('selection'); return; }
     if (!this.edgeMode) return;
     this._endEdgeTool();
     this.tool = 'select';
@@ -534,6 +548,7 @@ export class Editor extends Emitter {
     const show = new Set([em.id, em.hoverId].filter((id) => id && this.meshes.has(id)));
     for (const [id, mesh] of this.meshes) if (!show.has(id)) this._dropEdgeOverlay(mesh);
     for (const id of show) this._buildEdgeOverlay(id);
+    if (this.parts) this.parts.refresh(); // move arrows for the picked edges
     this.viewport.requestRender();
   }
 
@@ -675,20 +690,26 @@ export class Editor extends Emitter {
   // ---------------------------------------------------------------- pointer handling
   _hover(e) {
     if (this.disabled) return;
-    if (this.edgeMode) return this._edgeHover(e);
+    if (this.parts.active) return this.parts.hoverAt(e);
+    if (this.edgeMode) {
+      if (this.parts.arrows && this.parts._arrowAt(e)) { this.viewport.canvas.style.cursor = 'grab'; return; }
+      return this._edgeHover(e);
+    }
     if (this.tool === 'workplane' || this.tool === 'ruler' || this.tool === 'note' || this.placing) return;
     const hit = this.pickNode(e);
     this.viewport.canvas.style.cursor = hit && !hit.node.locked ? 'move' : '';
   }
 
   _dblclick(e) {
-    if (this.disabled || this.edgeMode) return;
+    if (this.disabled || this.edgeMode || this.parts.active) return;
     const hit = this.pickNode(e);
     if (hit) this.emit('dblclick', hit.node);
   }
 
   _leftDown(e) {
     if (this.disabled || this.placing) return; // handled by the placement listeners
+    if ((this.edgeMode || this.parts.active) && this.parts.pointerDown(e)) return;
+    if (this.parts.active) return this.parts.click(e);
     if (this.edgeMode) return this._edgeClick(e);
     if (this.tool === 'workplane') return this._pickWorkplane(e);
     if (this.tool === 'ruler') {

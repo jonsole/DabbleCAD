@@ -1,0 +1,565 @@
+// Face, Edge and Corner modes: pick parts of one shape and move them.
+//
+// Face mode picks flat faces, Corner mode picks corners, and Edge mode (the Edges tool, see
+// editor.js) picks edges. Whatever is picked can be moved with arrows: a face along its own
+// direction, edges and corners along X, Y and Z. Moves are stored on the node as shape edits
+// (core/shapeedit.js), so they stay editable and the shape keeps its own settings.
+import * as THREE from 'three';
+import { nodeShapeEdits, nodeEdgeData, edgeRoundIndex } from './core/geometry.js';
+import { movedVertex } from './core/shapeedit.js';
+import { toast } from './ui/dom.js';
+
+const ACCENT = 0x3d8bfd;
+const AXES = [
+  { name: 'x', dir: new THREE.Vector3(1, 0, 0), color: 0xe5484d },
+  { name: 'y', dir: new THREE.Vector3(0, 1, 0), color: 0x46a758 },
+  { name: 'z', dir: new THREE.Vector3(0, 0, 1), color: 0x3e7bfa },
+];
+const ARROW_PX = 70; // arrow length on screen
+const pkey = (p) => Math.round(p.x * 1e3) + ',' + Math.round(p.y * 1e3) + ',' + Math.round(p.z * 1e3);
+const r4 = (v) => Math.round(v * 1e4) / 1e4;
+
+function faceMaterial(opacity) {
+  return new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4, side: THREE.DoubleSide });
+}
+
+export class PartTool {
+  constructor(editor) {
+    this.ed = editor;
+    this.vp = editor.viewport;
+    this.mode = null; // 'face' | 'corner' while active (edges use the editor's edge mode)
+    this.id = null; // the node whose parts are picked
+    this.picked = new Set();
+    this.hover = null; // { id, i }
+    this.hoverId = null;
+    this.arrows = null; // { group, origin, axes: [{ dir, color }] }
+    this.drag = null;
+    this.vp.onRender(() => this._scaleArrows());
+  }
+
+  get active() { return !!this.mode; }
+
+  // ---------------------------------------------------------------- lifecycle
+  start(mode) {
+    const ed = this.ed;
+    const sel = ed.movableNodes();
+    this.mode = mode;
+    this.id = sel.length === 1 && !sel[0].hidden ? sel[0].id : null;
+    this.picked = new Set();
+    this.hover = null; this.hoverId = null;
+    ed.refreshOutlines();
+    this.refresh();
+  }
+
+  end() {
+    if (!this.mode) return;
+    this.mode = null;
+    for (const mesh of this.ed.meshes.values()) this._dropOverlay(mesh);
+    this._setArrows(null);
+    this.vp.canvas.style.cursor = '';
+    this.ed.refreshOutlines();
+  }
+
+  /** The shape's geometry changed (or undo): drop picks that no longer exist, redraw. */
+  reset() { this.picked.clear(); this.hover = null; }
+
+  // ---------------------------------------------------------------- geometry helpers
+  node(id = this.id) { return id ? this.ed.node(id) : null; }
+
+  /** Shape-edit state of a node plus the maps between its real-size frame and the world. */
+  info(node) {
+    const st = nodeShapeEdits(node);
+    const mesh = this.ed.meshes.get(node.id);
+    if (!st || !mesh) return null;
+    const s = st.A.scale;
+    mesh.updateMatrixWorld(true);
+    const W = mesh.matrixWorld;
+    const L = new THREE.Matrix3().setFromMatrix4(W).multiply(new THREE.Matrix3().set(1 / s[0], 0, 0, 0, 1 / s[1], 0, 0, 0, 1 / s[2]));
+    const Linv = L.clone().invert();
+    return {
+      ...st, mesh, W, L, Linv,
+      toWorld: (p) => p.clone().set(p.x / s[0], p.y / s[1], p.z / s[2]).applyMatrix4(W),
+      toLocal: (p) => p.clone().set(p.x / s[0], p.y / s[1], p.z / s[2]),
+      dirToWorld: (v) => v.clone().applyMatrix3(L),
+      dirFromWorld: (v) => v.clone().applyMatrix3(Linv),
+      normalToWorld: (n) => n.clone().applyMatrix3(Linv.clone().transpose()).normalize(),
+      vert: (v) => movedVertex(st.A, st.disp, v),
+    };
+  }
+
+  /** Moved triangles of a face (real size), its centre and normal. */
+  faceShape(I, j) {
+    const A = I.A, reg = A.regions[A.faces[j].region];
+    const pts = [];
+    const n = new THREE.Vector3(), c = new THREE.Vector3();
+    let area = 0;
+    for (const t of reg.tris) {
+      const [a, b, d] = A.tris[t].v.map((v) => I.vert(v));
+      pts.push(a, b, d);
+      const cr = b.clone().sub(a).cross(d.clone().sub(a));
+      const ar = cr.length() / 2;
+      n.add(cr); area += ar;
+      c.addScaledVector(a.clone().add(b).add(d), ar / 3);
+    }
+    if (area > 0) c.divideScalar(area);
+    if (n.lengthSq() < 1e-12) n.copy(A.faces[j].n); else n.normalize();
+    return { pts, n, c };
+  }
+
+  // ---------------------------------------------------------------- overlays
+  _dropOverlay(mesh) {
+    const o = mesh.userData.partOverlay;
+    if (!o) return;
+    mesh.remove(o);
+    o.traverse((x) => { if (x.geometry) x.geometry.dispose(); if (x.material) x.material.dispose(); });
+    mesh.userData.partOverlay = null;
+  }
+
+  /** Redraw picked / hovered parts and the move arrows. */
+  refresh() {
+    const ed = this.ed;
+    if (this.id && !ed.meshes.has(this.id)) { this.id = null; this.picked.clear(); }
+    if (this.hoverId && !ed.meshes.has(this.hoverId)) { this.hoverId = null; this.hover = null; }
+    if (this.mode) {
+      const show = new Set([this.id, this.hoverId].filter(Boolean));
+      for (const [id, mesh] of ed.meshes) { this._dropOverlay(mesh); if (show.has(id)) this._buildOverlay(id); }
+    }
+    this._placeArrows();
+    this.vp.requestRender();
+  }
+
+  _buildOverlay(id) {
+    const node = this.node(id);
+    const I = node && this.info(node);
+    if (!I) return;
+    const group = new THREE.Group();
+    const local = (p) => I.toLocal(p);
+    if (this.mode === 'face') {
+      const add = (list, opacity) => {
+        if (!list.length) return;
+        const arr = [];
+        for (const j of list) for (const p of this.faceShape(I, j).pts) { const q = local(p); arr.push(q.x, q.y, q.z); }
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
+        const m = new THREE.Mesh(g, faceMaterial(opacity));
+        m.renderOrder = 5;
+        group.add(m);
+      };
+      const picked = id === this.id ? [...this.picked].filter((j) => j < I.A.faces.length) : [];
+      const hov = this.hover && this.hover.id === id && !picked.includes(this.hover.i) ? [this.hover.i] : [];
+      add(picked, 0.45);
+      add(hov, 0.22);
+    } else if (this.mode === 'corner') {
+      const meshes = [...this.ed.meshes.values()].filter((m) => m.visible);
+      const sets = { plain: [], picked: [], hover: [] };
+      const many = I.A.corners.length > 400; // too many to check: show only picked and hovered
+      I.A.corners.forEach((c, j) => {
+        const p = I.vert(c.v);
+        const w = I.toWorld(p);
+        const picked = id === this.id && this.picked.has(j);
+        const hov = this.hover && this.hover.id === id && this.hover.i === j;
+        if (!picked && !hov && (many || !this.ed._edgeVisible(w, meshes, this.vp.unitsPerPixel(w) * 3))) return;
+        const q = local(p);
+        (hov ? sets.hover : picked ? sets.picked : sets.plain).push(q.x, q.y, q.z);
+      });
+      const pts = (arr, size, color) => {
+        if (!arr.length) return;
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
+        const m = new THREE.Points(g, new THREE.PointsMaterial({ color, size, sizeAttenuation: false, depthTest: false, transparent: true }));
+        m.renderOrder = 7;
+        group.add(m);
+      };
+      pts(sets.plain, 7, 0x8a94a6);
+      pts(sets.picked, 10, ACCENT);
+      pts(sets.hover, 12, ACCENT);
+    }
+    if (!group.children.length) return;
+    group.traverse((x) => { x.raycast = () => {}; });
+    I.mesh.add(group);
+    I.mesh.userData.partOverlay = group;
+    I.mesh.updateMatrixWorld(true);
+  }
+
+  // ---------------------------------------------------------------- picking
+  _pickFace(e, node) {
+    const I = this.info(node);
+    if (!I || !I.A.faces.length) return null;
+    // the faces as one mesh to aim at (kept until the shape changes)
+    const key = I.A.key + '|' + I.A.lastEditKey;
+    let c = this._faceMesh;
+    if (!c || c.key !== key) {
+      if (c) c.mesh.geometry.dispose();
+      const arr = [], owner = [];
+      I.A.faces.forEach((f, j) => {
+        for (const p of this.faceShape(I, j).pts) { const q = I.toLocal(p); arr.push(q.x, q.y, q.z); }
+        for (let k = 0; k < I.A.regions[f.region].tris.length; k++) owner.push(j);
+      });
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
+      c = this._faceMesh = { key, owner, mesh: new THREE.Mesh(g, new THREE.MeshBasicMaterial({ side: THREE.DoubleSide })) };
+    }
+    const m = c.mesh, owner = c.owner;
+    m.matrixWorld.copy(I.W);
+    const rc = new THREE.Raycaster();
+    const rect = this.vp.canvas.getBoundingClientRect();
+    rc.setFromCamera(new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1), this.vp.camera);
+    const hits = rc.intersectObject(m, false);
+    if (!hits.length) return null;
+    return owner[hits[0].faceIndex];
+  }
+
+  _pickCorner(e, ids) {
+    const rect = this.vp.canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const meshes = [...this.ed.meshes.values()].filter((m) => m.visible);
+    let best = null;
+    for (const id of ids) {
+      const node = id && this.node(id);
+      const I = node && this.info(node);
+      if (!I || !I.mesh.visible) continue;
+      I.A.corners.forEach((c, j) => {
+        const w = I.toWorld(I.vert(c.v));
+        const s = this.vp.project(w);
+        if (s.behind) return;
+        const d = Math.hypot(s.x - mx, s.y - my);
+        if (d < 12 && (!best || d < best.d) && this.ed._edgeVisible(w, meshes, this.vp.unitsPerPixel(w) * 3)) best = { id, i: j, d };
+      });
+    }
+    return best && { id: best.id, i: best.i };
+  }
+
+  _pick(e) {
+    const under = this.ed.pickNode(e);
+    const underId = under ? under.node.id : null;
+    if (this.mode === 'face') {
+      const node = under && under.node;
+      const i = node ? this._pickFace(e, node) : null;
+      return { underId, hit: i == null ? null : { id: node.id, i } };
+    }
+    return { underId, hit: this._pickCorner(e, new Set([underId, this.id])) };
+  }
+
+  hoverAt(e) {
+    if (this.drag) return;
+    if (this._arrowAt(e)) { this.vp.canvas.style.cursor = 'grab'; this._setHover(this.hoverId, null); return; }
+    const { underId, hit } = this._pick(e);
+    this.vp.canvas.style.cursor = hit ? 'pointer' : '';
+    this._setHover(underId || (hit && hit.id) || null, hit);
+  }
+
+  _setHover(hoverId, hit) {
+    const same = (p, q) => (p && q ? p.id === q.id && p.i === q.i : p === q);
+    if (hoverId === this.hoverId && same(hit, this.hover)) return;
+    this.hoverId = hoverId; this.hover = hit;
+    this.refresh();
+  }
+
+  clearPicks() {
+    if (!this.picked.size) return;
+    this.picked.clear();
+    this.refresh();
+    this.ed.emit('selection');
+  }
+
+  click(e) {
+    const { hit } = this._pick(e);
+    const multi = e.shiftKey || e.metaKey;
+    if (!hit) {
+      if (!multi && this.picked.size) { this.picked.clear(); this.refresh(); this.ed.emit('selection'); }
+      return;
+    }
+    if (hit.id !== this.id) { this.id = hit.id; this.picked = new Set([hit.i]); }
+    else if (multi) { if (this.picked.has(hit.i)) this.picked.delete(hit.i); else this.picked.add(hit.i); }
+    else this.picked = this.picked.size === 1 && this.picked.has(hit.i) ? new Set() : new Set([hit.i]);
+    this.last = hit.i;
+    this.ed.refreshOutlines();
+    this.refresh();
+    this.ed.emit('selection');
+  }
+
+  // ---------------------------------------------------------------- what is picked, for any mode
+  /**
+   * The parts to move: { node, I, kind: 'f' | 'e' | 'c', items: [{ j }], anchor (world), axes }.
+   * For edges, j is the index of the edge in the shape before its own edits.
+   */
+  target() {
+    const ed = this.ed;
+    if (this.mode) {
+      const node = this.node();
+      const I = node && this.info(node);
+      if (!I || !this.picked.size) return null;
+      if (this.mode === 'face') {
+        const items = [...this.picked].filter((j) => j < I.A.faces.length).map((j) => ({ j }));
+        if (!items.length) return null;
+        const lastJ = this.picked.has(this.last) ? this.last : items[items.length - 1].j;
+        const fs = this.faceShape(I, lastJ);
+        return { node, I, kind: 'f', items, anchor: I.toWorld(fs.c), axes: [{ dir: I.normalToWorld(fs.n), color: ACCENT, name: 'n' }] };
+      }
+      const items = [...this.picked].filter((j) => j < I.A.corners.length).map((j) => ({ j }));
+      if (!items.length) return null;
+      const lastJ = this.picked.has(this.last) ? this.last : items[items.length - 1].j;
+      return { node, I, kind: 'c', items, anchor: I.toWorld(I.vert(I.A.corners[lastJ].v)), axes: this._worldAxes() };
+    }
+    const em = ed.edgeMode;
+    if (!em || !em.id || !em.picked.size) return null;
+    const node = ed.node(em.id);
+    const I = node && this.info(node);
+    if (!I) return null;
+    const d = nodeEdgeData(node);
+    if (em.picked.size >= d.chains.length) return null; // all edges: that's the whole shape
+    const base = this.baseChains(node, I, d);
+    const items = [...em.picked].filter((i) => i < d.chains.length && base[i] !== undefined).map((i) => ({ j: base[i], shown: i }));
+    if (!items.length) return null;
+    const ch = d.chains[items[items.length - 1].shown];
+    const mid = ch.points[Math.floor((ch.points.length - 1) / 2)].clone().lerp(ch.points[Math.ceil((ch.points.length - 1) / 2)], 0.5);
+    if (ch.points.length === 2) mid.copy(ch.points[0]).lerp(ch.points[1], 0.5);
+    return { node, I, kind: 'e', items, anchor: I.toWorld(mid), axes: this._worldAxes() };
+  }
+
+  _worldAxes() {
+    const f = this.ed.frame;
+    return AXES.map((a) => ({ ...a, dir: a.dir.clone().transformDirection(f) }));
+  }
+
+  /** Keys naming each shown edge by the shape's own vertices (stable while parts move). */
+  chainKeys(node, I = this.info(node), d = nodeEdgeData(node)) {
+    if (!I) return [];
+    const byPos = new Map();
+    I.A.verts.forEach((_, v) => byPos.set(pkey(I.vert(v)), v));
+    return d.chains.map((ch) => {
+      const ids = ch.points.map((p) => byPos.get(pkey(p)));
+      return ids.some((v) => v === undefined) ? null : [...ids].sort((a, b) => a - b).join(',');
+    });
+  }
+
+  /** For each shown edge, the matching edge of the shape before its own edits (or undefined). */
+  baseChains(node, I, d) {
+    const A = I.A;
+    if (!A.chainKeys) A.chainKeys = A.chains.map((c) => [...c.ids].sort((a, b) => a - b).join(','));
+    const keys = this.chainKeys(node, I, d);
+    return keys.map((k) => { if (!k) return undefined; const j = A.chainKeys.indexOf(k); return j < 0 ? undefined : j; });
+  }
+
+  /** Current move of each target item: a number (faces, mm) or a world vector (edges, corners). */
+  values(t) {
+    const edits = t.node.shapeEdits || [];
+    const m = t.I.match;
+    const list = t.kind === 'f' ? m.faces : t.kind === 'e' ? m.chains : m.corners;
+    return t.items.map(({ j }) => {
+      const k = list[j];
+      const e = k === undefined ? null : edits[k];
+      if (t.kind === 'f') return e ? e.d : 0;
+      return e ? t.I.dirToWorld(new THREE.Vector3().fromArray(e.v)).applyMatrix3(new THREE.Matrix3().setFromMatrix4(this.ed.frameInv)) : new THREE.Vector3();
+    });
+  }
+
+  /**
+   * Build the node's new shape edits with these moves for the target items (numbers for faces,
+   * vectors in the workplane's axes for edges and corners). A zero move removes the edit.
+   */
+  editsWith(t, vals) {
+    const edits = [...(t.node.shapeEdits || [])];
+    const m = t.I.match;
+    const list = t.kind === 'f' ? m.faces : t.kind === 'e' ? m.chains : m.corners;
+    const drop = new Set();
+    const frame3 = new THREE.Matrix3().setFromMatrix4(this.ed.frame);
+    t.items.forEach(({ j }, n) => {
+      const k = list[j];
+      let next;
+      if (t.kind === 'f') {
+        const d = r4(vals[n]);
+        next = Math.abs(d) < 1e-6 ? null : { k: 'f', sig: t.I.A.faces[j].sig, d };
+      } else {
+        const w = vals[n].clone().applyMatrix3(frame3);
+        const v = t.I.dirFromWorld(w).toArray().map(r4);
+        const sig = t.kind === 'e' ? t.I.A.edgeSigs[j] : t.I.A.corners[j].sig;
+        next = v.every((x) => Math.abs(x) < 1e-6) ? null : { k: t.kind, sig, v };
+      }
+      if (k !== undefined) { if (next) edits[k] = next; else drop.add(k); }
+      else if (next) edits.push(next);
+    });
+    return edits.filter((_, k) => !drop.has(k));
+  }
+
+  /**
+   * Give the node new shape edits, keeping its rounded edges and the picked edges on the same
+   * edges as they move. live: while dragging (no undo step, rounded edges left off for speed).
+   */
+  applyEdits(node, edits, { live = false } = {}) {
+    const ed = this.ed;
+    const em = ed.edgeMode && ed.edgeMode.id === node.id ? ed.edgeMode : null;
+    const before = { ...node, round: 0 };
+    const oldKeys = (node.edgeRounds && node.edgeRounds.length) || em ? this.chainKeys(before) : [];
+    const oldIdx = node.edgeRounds && node.edgeRounds.length ? edgeRoundIndex(node) : [];
+    const rounds = node.edgeRounds;
+    if (edits.length) node.shapeEdits = edits; else delete node.shapeEdits;
+    if (live) { delete node.edgeRounds; ed.sync(); return; }
+    // follow the edges to where they are now
+    const after = { ...node, round: 0, edgeRounds: null };
+    const d1 = nodeEdgeData(after);
+    const newKeys = oldKeys.length ? this.chainKeys(after, this.info(after), d1) : [];
+    const at = (j) => { const k = oldKeys[j]; const i = k ? newKeys.indexOf(k) : -1; return i < 0 ? undefined : i; };
+    if (rounds && rounds.length) {
+      const next = rounds.map((r) => ({ ...r }));
+      oldIdx.forEach((k, j) => { if (k !== undefined && at(j) !== undefined) next[k].sig = d1.sigs[at(j)]; });
+      node.edgeRounds = next;
+    }
+    if (em) {
+      em.picked = new Set([...em.picked].map(at).filter((i) => i !== undefined));
+      em.key = d1.key;
+    }
+    ed.sync();
+  }
+
+  // ---------------------------------------------------------------- arrows
+  _setArrows(spec) {
+    if (this.arrows) { this.vp.helpers.remove(this.arrows.group); this.arrows.group.traverse((x) => { if (x.geometry) x.geometry.dispose(); if (x.material) x.material.dispose(); }); }
+    this.arrows = null;
+    if (!spec) { this.vp.requestRender(); return; }
+    const group = new THREE.Group();
+    for (const a of spec.axes) {
+      const line = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.8, 8).rotateX(Math.PI / 2).translate(0, 0, 0.4), new THREE.MeshBasicMaterial({ color: a.color, depthTest: false }));
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.07, 0.22, 16).rotateX(Math.PI / 2).translate(0, 0, 0.89), new THREE.MeshBasicMaterial({ color: a.color, depthTest: false }));
+      const arm = new THREE.Group();
+      arm.add(line, cone);
+      arm.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), a.dir.clone().normalize());
+      arm.traverse((x) => { x.renderOrder = 9; x.raycast = () => {}; });
+      group.add(arm);
+    }
+    group.position.copy(spec.anchor);
+    this.vp.helpers.add(group);
+    this.arrows = { group, ...spec };
+    this._scaleArrows();
+  }
+
+  _scaleArrows() {
+    if (!this.arrows) return;
+    const s = this.vp.unitsPerPixel(this.arrows.anchor) * ARROW_PX;
+    if (Math.abs(this.arrows.group.scale.x - s) > s * 1e-3) { this.arrows.group.scale.setScalar(s); this.vp.requestRender(); }
+  }
+
+  _placeArrows() {
+    if (this.drag) { if (this.arrows) { this.arrows.anchor.copy(this.drag.anchor0).addScaledVector(this.drag.axis.dir, this.drag.delta); this.arrows.group.position.copy(this.arrows.anchor); } return; }
+    const t = this.target();
+    if (!t || t.node.locked) { this._setArrows(null); return; }
+    this._setArrows({ anchor: t.anchor, axes: t.axes });
+  }
+
+  /** The arrow under the pointer, or null. */
+  _arrowAt(e) {
+    if (!this.arrows) return null;
+    const rect = this.vp.canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const len = this.vp.unitsPerPixel(this.arrows.anchor) * ARROW_PX;
+    const o = this.vp.project(this.arrows.anchor);
+    let best = null;
+    for (const a of this.arrows.axes) {
+      const tip = this.vp.project(this.arrows.anchor.clone().addScaledVector(a.dir, len));
+      const dx = tip.x - o.x, dy = tip.y - o.y, L = dx * dx + dy * dy;
+      if (L < 64) continue; // pointing at the camera
+      const t = Math.min(1, Math.max(0.15, ((mx - o.x) * dx + (my - o.y) * dy) / L));
+      const d = Math.hypot(o.x + t * dx - mx, o.y + t * dy - my);
+      if (d < 9 && (!best || d < best.d)) best = { a, d };
+    }
+    return best && best.a;
+  }
+
+  /** Start dragging an arrow if the pointer is on one. Returns true when it took the press. */
+  pointerDown(e) {
+    const axis = this._arrowAt(e);
+    if (!axis) return false;
+    const t = this.target();
+    if (!t || t.node.locked) return false;
+    const ed = this.ed;
+    const startVals = this.values(t);
+    const startEdits = t.node.shapeEdits ? [...t.node.shapeEdits] : null;
+    const rounds = t.node.edgeRounds;
+    const em = ed.edgeMode && ed.edgeMode.id === t.node.id ? ed.edgeMode : null;
+    const emSave = em && { picked: new Set(em.picked), key: em.key };
+    const restore = () => {
+      if (rounds) t.node.edgeRounds = rounds;
+      if (startEdits) t.node.shapeEdits = startEdits; else delete t.node.shapeEdits;
+      if (em) { em.picked = emSave.picked; em.key = emSave.key; }
+    };
+    const along = (ev) => {
+      const ray = this.vp.rayFromClient(ev.clientX, ev.clientY);
+      const o = t.anchor, d = axis.dir;
+      const w0 = ray.origin.clone().sub(o);
+      const b = ray.direction.dot(d), den = 1 - b * b;
+      if (den < 1e-6) return null;
+      return (w0.dot(d) - w0.dot(ray.direction) * b) / den;
+    };
+    const t0 = along(e);
+    if (t0 == null) return false;
+    const snap = ed.snap > 0 ? ed.snap : 0;
+    const local = axis.dir.clone().transformDirection(ed.frameInv); // the axis in workplane terms
+    this.drag = { axis, anchor0: t.anchor.clone(), delta: 0 };
+    this.vp.canvas.style.cursor = 'grabbing';
+    let last = 0, raf = 0;
+    const apply = () => {
+      const vals = startVals.map((v) => (t.kind === 'f' ? v + last : v.clone().addScaledVector(local, last)));
+      if (em) em.key = null; // keep the picked edges while their shape changes
+      this.applyEdits(t.node, this.editsWith(t, vals), { live: true });
+    };
+    ed._track(e, (ev) => {
+      const tt = along(ev);
+      if (tt == null) return;
+      let delta = tt - t0;
+      if (snap && !ev.altKey) delta = Math.round(delta / snap) * snap;
+      if (delta === last) return;
+      last = delta;
+      this.drag.delta = delta;
+      if (!raf) raf = requestAnimationFrame(() => { raf = 0; apply(); ed.emit('partmove', { delta: last }); });
+    }, () => {
+      cancelAnimationFrame(raf);
+      this.drag = null;
+      this.vp.canvas.style.cursor = '';
+      restore();
+      if (!last) { ed.sync(); this.refresh(); return; }
+      // re-apply from the starting state so rounded edges and picked edges follow their edges
+      const vals = startVals.map((v) => (t.kind === 'f' ? v + last : v.clone().addScaledVector(local, last)));
+      this.commitEdits(t.node, this.editsWith(t, vals));
+    });
+    return true;
+  }
+
+  /** Set the moves of the target and make an undo step (from the panel or after a drag). */
+  commitEdits(node, edits) {
+    const ed = this.ed;
+    const before = JSON.stringify(node.shapeEdits || []);
+    this.applyEdits(node, edits);
+    const st = nodeShapeEdits(node);
+    const failed = st ? st.failed : 0;
+    if (JSON.stringify(node.shapeEdits || []) !== before) ed.commit();
+    if (failed) toast(failed === 1 ? 'One move could not be made: it would turn the shape inside out' : `${failed} moves could not be made`, 'warn', 4000);
+    this.refresh();
+    ed.emit('selection');
+  }
+
+  /** From the panel: set the target's moves (a number for faces, { x, y, z } for edges and corners). */
+  setValue(axisName, value) {
+    const t = this.target();
+    if (!t || t.node.locked) return;
+    const vals = this.values(t).map((v) => {
+      if (t.kind === 'f') return value;
+      const w = v.clone();
+      w[axisName] = value;
+      return w;
+    });
+    this.commitEdits(t.node, this.editsWith(t, vals));
+  }
+
+  /** Put the target parts back where they were. */
+  resetTarget() {
+    const t = this.target();
+    if (!t || t.node.locked) return;
+    this.commitEdits(t.node, this.editsWith(t, t.items.map(() => (t.kind === 'f' ? 0 : new THREE.Vector3()))));
+  }
+
+  /** Remove every face, edge and corner move from a node. */
+  resetAll(node) {
+    if (!node || !node.shapeEdits || node.locked) return;
+    this.commitEdits(node, []);
+  }
+}
