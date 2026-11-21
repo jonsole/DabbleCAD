@@ -153,6 +153,7 @@ export class SlicerScene {
       }
       e.mesh.matrix.copy(m.matrix);
       e.mesh.matrixWorldNeedsUpdate = true;
+      e.mesh.visible = !m.hidden;
       this._paint(e.mesh, m);
     }
     this.requestRender();
@@ -201,13 +202,13 @@ export class SlicerScene {
   _down(e) {
     if (e.button !== 0 || this.mode !== 'model') { this.controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE; return; }
     this.ray.setFromCamera(this._ndc(e), this.camera);
-    const hits = this.ray.intersectObjects([...this.models.values()].map((m) => m.mesh), false);
+    const hits = this.ray.intersectObjects([...this.models.values()].filter((m) => !m.model.hidden).map((m) => m.mesh), false);
     if (!hits.length) { this.controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE; this.onPick(null, e); return; }
     this.controls.mouseButtons.LEFT = null; // the model takes this drag, not the camera
     const model = this.models.get(hits[0].object.userData.modelId).model;
     this.onPick(model.id, e);
     const g = this._groundPoint(e);
-    this.drag = g ? { model, dx: g.x - model.x, dy: g.y - model.y, moved: false } : null;
+    this.drag = g && !model.locked ? { model, dx: g.x - model.x, dy: g.y - model.y, moved: false } : null;
   }
   _move(e) {
     if (!this.drag) return;

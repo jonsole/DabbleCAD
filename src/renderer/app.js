@@ -6,6 +6,7 @@ import { h, clear, button, icon, toast, popupMenu, promptDialog, confirmDialog }
 import { platform } from './platform.js';
 import { Viewport, HOME_VIEW } from './view/viewport.js';
 import { ViewCube } from './view/viewcube.js';
+import { addResizer } from './ui/resizer.js';
 import { Gizmo, formatLength } from './view/gizmo.js';
 import { buildVoxels, disposeVoxels } from './view/voxels.js';
 import { Editor } from './editor.js';
@@ -130,6 +131,8 @@ export class App {
     this.laserRoot = h('div', { class: 'laser-root' });
     this.slicerRoot = h('div', { class: 'slicer-root' });
     root.append(topbar, workspaceBar, toolbar, h('div', { class: 'main' }, this.outliner, this.viewEl, this.side), this.laserRoot, this.slicerRoot);
+    addResizer(this.outliner, { side: 'left', key: '3d-outliner', min: 170, max: 460 });
+    addResizer(this.side, { side: 'right', key: '3d-side', min: 240, max: 640 });
 
     this.viewport = new Viewport(this.viewEl, this.settings);
     this.editor = new Editor(this.viewport, this.settings);
@@ -427,10 +430,20 @@ export class App {
     for (const msg of res.messages) toast(msg, 'warn', 6000);
   }
 
-  /** Open the Slicer workspace, optionally loading the design (or just the selection) onto the plate. */
+  /** Open the Slicer workspace and add the design (or just the selection) to its build plate. */
   async openSlicer({ selectedOnly = false } = {}) {
+    let name;
+    if (selectedOnly) {
+      const nodes = this.editor.selectedNodes();
+      name = nodes.length === 1 ? (nodes[0].name || kindName(nodes[0])) : `${nodes.length} objects`;
+    }
+    this.slicer.pendingAdd = { selectedOnly, name };   // so the first open does not also add the whole design
     this.setViewMode('slicer');
-    if (await this.slicer.ready) await this.slicer.addFromDesign({ selectedOnly });
+    if (await this.slicer.ready) {
+      const add = this.slicer.pendingAdd;
+      this.slicer.pendingAdd = null;
+      if (add) await this.slicer.addFromDesign(add);
+    }
   }
 
   async exportAs(format, selectedOnly, { fuse = true } = {}) {
@@ -588,7 +601,7 @@ export class App {
     this.laser.setActive(mode === 'laser');
     this.slicer.setActive(slicer);
     if (!laser) this.viewport.resize();
-    if (voxel || laser) { this.editor.setTool('select'); this.editor.clearSelection(); }
+    if (voxel || laser) { this.editor.setTool('select'); if (!slicer) this.editor.clearSelection(); }  // the Slicer's "Selected" button needs the selection
     this.viewEl.classList.toggle('voxel-mode', voxel);
     this.voxelBar.classList.toggle('open', voxel);
     this.viewport.objects.visible = !voxel;
@@ -714,6 +727,8 @@ export class App {
         { label: 'Select all', icon: 'select', shortcut: 'Ctrl+A', onClick: () => ed.selectAll() },
         { label: 'Show all', icon: 'bulb', shortcut: 'Ctrl+Shift+H', disabled: !ed.doc.nodes.some((x) => x.hidden), onClick: () => ed.showAll() },
         'sep',
+        { label: 'Slice design…', icon: 'export', disabled: !ed.doc.nodes.length, onClick: () => this.openSlicer() },
+        'sep',
         { label: 'Fit all in view', icon: 'fit', shortcut: 'F', onClick: () => this.fit() },
         { label: 'Home view', icon: 'home', onClick: () => this.viewport.home() },
         { label: 'Reset workplane', icon: 'workplane', disabled: !ed.hasFrame, onClick: () => { ed.setFrame(null); this._updateBanner(); } },
@@ -741,6 +756,8 @@ export class App {
       { label: 'Mirror', icon: 'mirror', shortcut: 'M', disabled: !movable.length, onClick: () => ed.setTool('mirror') },
       { label: 'Drop to workplane', icon: 'drop', shortcut: 'D', disabled: !movable.length, onClick: () => ed.dropToWorkplane() },
       { label: 'Workplane on selection', icon: 'workplane', shortcut: 'Shift+W', onClick: () => { ed.workplaneAtSelection(); this._updateBanner(); } },
+      'sep',
+      { label: 'Slice…', icon: 'export', title: 'Add the selection to the build plate in the Slicer', onClick: () => this.openSlicer({ selectedOnly: true }) },
       'sep',
       { label: locked ? 'Unlock' : 'Lock', icon: locked ? 'unlock' : 'lock', shortcut: 'Ctrl+L', onClick: () => ed.toggleLock() },
       { label: 'Hide', icon: 'eyeOff', shortcut: 'Ctrl+H', onClick: () => ed.hideSelection() },

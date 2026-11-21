@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { h, clear, button, icon, toast } from '../ui/dom.js';
 import { ViewCube } from '../view/viewcube.js';
+import { addResizer } from '../ui/resizer.js';
 import { platform } from '../platform.js';
 import { CURAENGINE_URL } from '../config.js';
 import { exportModel, importFiles } from '../core/io.js';
@@ -64,7 +65,8 @@ export class SlicerWorkspace {
     this._build();
     this.store.onChange(() => this._settingsChanged());
     this._syncVolume(true);
-    if (!this.models.length) await this.addFromDesign({ quiet: true });
+    if (this.pendingAdd) { const add = this.pendingAdd; this.pendingAdd = null; await this.addFromDesign(add); }
+    else if (!this.models.length) await this.addFromDesign({ quiet: true });
     return true;
   }
 
@@ -99,9 +101,7 @@ export class SlicerWorkspace {
   _build() {
     clear(this.root);
     this.modelList = h('div', { class: 'outliner-list' });
-    this.plateCount = h('span', { class: 'sl-count' });
-    this.outliner = h('div', { class: 'outliner open' }, h('div', { class: 'outliner-head' }, h('span', { style: { flex: 1 } }, 'Plate'), this.plateCount), this.modelList);
-
+    this.outliner = h('div', { class: 'outliner open' });
     // top toolbar, built like the 3D Design one
     this.modeSeg = h('div', { class: 'mode-group', role: 'group', 'aria-label': 'View' },
       button({ label: 'Model', title: 'Show the models on the bed', cls: 'active', onClick: () => this.setMode('model') }),
@@ -114,9 +114,9 @@ export class SlicerWorkspace {
     this.saveBtn = button({ label: 'Save G-code', icon: 'export', cls: 'btn-outline', title: 'Save the G-code file', onClick: () => this.saveGcode() });
     this.saveBtn.hidden = true;
     this.toolbar = h('div', { class: 'toolbar sl-toolbar', role: 'toolbar', 'aria-label': 'Slicer tools' },
-      button({ icon: 'list', title: 'Plate list', onClick: () => this.outliner.classList.toggle('open') }), h('span', { class: 'sep' }),
-      button({ icon: 'cube', label: 'Add design', title: 'Put the whole 3D design on the plate (replaces the models that came from the design)', onClick: () => this.addFromDesign() }),
-      button({ icon: 'select', label: 'Selected', title: 'Put only the shapes selected in 3D Design on the plate', onClick: () => this.addFromDesign({ selectedOnly: true }) }),
+      this.listBtn = button({ icon: 'list', title: 'Plate list', cls: 'active', onClick: () => this.toggleOutliner() }), h('span', { class: 'sep' }),
+      button({ icon: 'cube', label: 'Add design', title: 'Add the whole 3D design to the plate', onClick: () => this.addFromDesign() }),
+      button({ icon: 'select', label: 'Selected', title: 'Add the shapes selected in 3D Design to the plate', onClick: () => this.addFromDesign({ selectedOnly: true }) }),
       button({ icon: 'plus', label: 'Import', title: 'Add an STL, OBJ, 3MF or PLY file', onClick: () => this.importFiles() }), h('span', { class: 'sep' }),
       button({ icon: 'duplicate', title: 'Copy the selected model', onClick: () => this.selected && this.duplicate(this.selected) }),
       button({ icon: 'trash', title: 'Remove the selected model (Del)', onClick: () => this.selected && this.removeModel(this.selected) }), h('span', { class: 'sep' }),
@@ -132,6 +132,8 @@ export class SlicerWorkspace {
     this.previewPanel = h('div', { class: 'sl-preview', hidden: true });
     this.logEl = h('pre', { class: 'sl-log', hidden: true });
     this.root.append(this.toolbar, h('div', { class: 'sl-main' }, this.outliner, this.viewEl, h('div', { class: 'side sl-side' }, this.panel.el)));
+    addResizer(this.outliner, { side: 'left', key: 'slicer-outliner', min: 170, max: 460 });
+    addResizer(this.root.querySelector('.sl-side'), { side: 'right', key: 'slicer-side', min: 300, max: 760 });
     this.scene = new SlicerScene(this.viewEl);
     this.viewcube = new ViewCube(this.scene);
     this.projBtn = button({ icon: 'persp', title: 'Switch between perspective and orthographic view', onClick: () => { this.scene.setProjection(this.scene.isOrtho ? 'perspective' : 'orthographic'); this.app.patchSettings({ projection: this.scene.isOrtho ? 'orthographic' : 'perspective' }); } });
@@ -155,7 +157,7 @@ export class SlicerWorkspace {
 
   resetSelected() {
     const m = this.selectedModel;
-    if (!m) return;
+    if (!m || m.locked) return;
     Object.assign(m, { rx: 0, ry: 0, rz: 0, sx: 100, sy: 100, sz: 100 });
     this.scene.refreshModel(m); this._markDirty(); this._checkFit(); this._renderTransformValues();
   }
@@ -194,8 +196,18 @@ export class SlicerWorkspace {
     this._updateBar();
   }
 
+  _active() { return this.models.filter((m) => !m.hidden); }
+  _movable() { return this.models.filter((m) => !m.hidden && !m.locked); }
+
+  toggleOutliner() {
+    this.outliner.classList.toggle('open');
+    this.listBtn.classList.toggle('active', this.outliner.classList.contains('open'));
+    this._renderModels();
+    this.scene.resize();
+  }
+
   _checkFit() {
-    const bad = this.models.filter((m) => fitProblem(m, this.volume));
+    const bad = this._active().filter((m) => fitProblem(m, this.volume));
     this.scene.setProblems(bad.map((m) => m.id));
     clear(this.banner);
     if (bad.length) {
@@ -208,16 +220,13 @@ export class SlicerWorkspace {
     this._renderModels();
   }
 
-  async addFromDesign({ selectedOnly = false, quiet = false } = {}) {
+  async addFromDesign({ selectedOnly = false, quiet = false, name } = {}) {
     if (!this.scene) return;
     try {
       const ed = this.app.editor;
       const out = await ed._busy(() => exportModel(ed, 'stl', { selectedOnly, fuse: true }));
       const geo = new STLLoader().parse(out.data.buffer.slice(out.data.byteOffset, out.data.byteOffset + out.data.byteLength));
-      // the models that came from the design are replaced; ones you imported stay
-      for (const m of this.models.filter((x) => x.fromDesign)) this._remove(m);
-      const m = new PlateModel(this.app._fileBase(), geo);
-      m.fromDesign = true;
+      const m = new PlateModel(name || this.app._fileBase(), geo);
       this.models.push(m);
       this._place(m);
       this._afterModelsChanged();
@@ -249,13 +258,13 @@ export class SlicerWorkspace {
 
   /** Put a new model somewhere free: arrange everything if there are several. */
   _place(m) {
-    if (this.models.length > 1) arrange(this.models, this.volume);
+    if (this.models.length > 1) arrange(this._movable(), this.volume);
     else { m.x = 0; m.y = 0; }
   }
 
   arrange() {
     if (!this.models.length) return;
-    const ok = arrange(this.models, this.volume);
+    const ok = arrange(this._movable(), this.volume);
     if (!ok) toast("They don't all fit on the bed", 'warn');
     this.scene.setModels(this.models);
     this._markDirty(); this._checkFit(); this._renderTransformValues();
@@ -268,6 +277,7 @@ export class SlicerWorkspace {
   removeModel(id) {
     const m = this.models.find((x) => x.id === id);
     if (!m) return;
+    if (m.locked) { toast('Unlock it first', 'warn'); return; }
     this._remove(m);
     this._afterModelsChanged();
   }
@@ -277,7 +287,7 @@ export class SlicerWorkspace {
     const m = new PlateModel(src.name, src.geometry);
     Object.assign(m, { rx: src.rx, ry: src.ry, rz: src.rz, sx: src.sx, sy: src.sy, sz: src.sz });
     this.models.push(m);
-    arrange(this.models, this.volume);
+    arrange(this._movable(), this.volume);
     this._afterModelsChanged();
     this.select(m.id);
   }
@@ -291,6 +301,8 @@ export class SlicerWorkspace {
   }
 
   select(id) {
+    const m = this.models.find((x) => x.id === id);
+    if (m && m.hidden) id = null;
     this.selected = id;
     this.scene.setSelection(id ? [id] : []);
     this._renderModels();
@@ -299,17 +311,33 @@ export class SlicerWorkspace {
   get selectedModel() { return this.models.find((m) => m.id === this.selected); }
 
   _renderModels() {
-    if (!this.modelList) return;
-    clear(this.modelList);
-    this.plateCount.textContent = this.models.length ? String(this.models.length) : '';
-    if (!this.models.length) this.modelList.append(h('div', { class: 'insp-note', style: { padding: '10px' } }, 'Nothing on the plate yet. Use Add design or Import.'));
-    const bad = new Set(this.models.filter((m) => fitProblem(m, this.volume)).map((m) => m.id));
+    if (!this.outliner || !this.outliner.classList.contains('open')) return;
+    clear(this.outliner);
+    const list = h('div', { class: 'outliner-list' });
+    const bad = new Set(this._active().filter((m) => fitProblem(m, this.volume)).map((m) => m.id));
     for (const m of this.models) {
       const s = m.size;
-      this.modelList.append(h('div', { class: 'outliner-row' + (m.id === this.selected ? ' selected' : ''), title: `${s.x.toFixed(1)} × ${s.y.toFixed(1)} × ${s.z.toFixed(1)} mm · ${Math.round(m.triangles).toLocaleString()} triangles` + (bad.has(m.id) ? '\n' + fitProblem(m, this.volume) : ''), onClick: () => this.select(m.id), tabindex: 0, onKeydown: (e) => { if (e.key === 'Enter') this.select(m.id); } },
+      const eye = h('button', { class: 'mini' + (m.hidden ? ' on' : ''), type: 'button', title: m.hidden ? 'Show' : 'Hide (left out of the slice)' }, icon(m.hidden ? 'eyeOff' : 'eye', 15));
+      eye.addEventListener('click', (e) => { e.stopPropagation(); m.hidden = !m.hidden; if (m.hidden && this.selected === m.id) this.selected = null; this._modelsChanged(); });
+      const lock = h('button', { class: 'mini' + (m.locked ? ' on' : ''), type: 'button', title: m.locked ? 'Unlock' : 'Lock (stops it being moved, changed or removed)' }, icon(m.locked ? 'lock' : 'unlock', 15));
+      lock.addEventListener('click', (e) => { e.stopPropagation(); m.locked = !m.locked; this._renderModels(); this._renderTransform(); this.scene.requestRender(); });
+      const row = h('div', { class: 'outliner-row' + (m.id === this.selected ? ' selected' : '') + (m.hidden ? ' hidden-node' : ''), tabindex: 0,
+        title: `${s.x.toFixed(1)} × ${s.y.toFixed(1)} × ${s.z.toFixed(1)} mm · ${Math.round(m.triangles).toLocaleString()} triangles` + (bad.has(m.id) ? '\n' + fitProblem(m, this.volume) : '') },
         h('span', { class: 'dot', style: { background: bad.has(m.id) ? '#ffb74d' : 'var(--accent)' } }),
-        h('span', { class: 'name' }, m.name)));
+        h('span', { class: 'name' }, m.name), lock, eye);
+      row.addEventListener('click', () => { if (!m.hidden) this.select(m.id); });
+      row.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !m.hidden) this.select(m.id); });
+      list.append(row);
     }
+    if (!this.models.length) list.append(h('div', { class: 'side-empty' }, 'Nothing on the plate yet. Use Add design or Import.'));
+    this.outliner.append(h('div', { class: 'outliner-head' }, h('span', { style: { flex: 1 } }, `Plate (${this.models.length})`), button({ icon: 'close', cls: 'btn-ghost', title: 'Close', onClick: () => this.toggleOutliner() })), list);
+  }
+
+  /** Something about which models count (hidden) changed: refresh the view, the checks and the lists. */
+  _modelsChanged() {
+    this.scene.setModels(this.models);
+    this.scene.setSelection(this.selected ? [this.selected] : []);
+    this._markDirty(); this._checkFit(); this._renderTransform(); this._updateBar();
   }
 
   _renderTransform() {
@@ -327,6 +355,7 @@ export class SlicerWorkspace {
         this.scene.refreshModel(m); this._markDirty(); this._checkFit(); this._renderTransformValues();
       });
       el.addEventListener('keydown', (e) => e.stopPropagation());
+      el.disabled = !!m.locked;
       this.fields[key] = el;
       return el;
     };
@@ -339,14 +368,14 @@ export class SlicerWorkspace {
         h('summary', {}, 'Position & size'),
         h('div', { class: 'xyz' }, h('span', {}, 'Move'), input('x', 0.5, 'x'), input('y', 0.5, 'y'), h('span', {}, 'mm')),
         h('div', { class: 'xyz' }, h('span', {}, 'Scale'), input('scale', 5), h('span', {}, '%'), h('span', {})),
-        this.sizeNote = h('div', { class: 'insp-note' })),
+        this.sizeNote = h('div', { class: 'insp-note' }), m.locked ? h('div', { class: 'insp-note' }, 'Locked: unlock it in the plate list to change it.') : null),
       h('details', { class: 'insp-section', open: true },
         h('summary', {}, 'Rotation'),
         h('div', { class: 'xyz' }, h('span', {}, 'Rotate'), input('rx', 15, 'x'), input('ry', 15, 'y'), input('rz', 15, 'z')),
         h('div', { class: 'sl-insp-btns' },
-          button({ label: 'X 90°', cls: 'btn-outline', title: 'Tip the model over 90° around X', onClick: turn('rx') }),
-          button({ label: 'Y 90°', cls: 'btn-outline', title: 'Tip the model over 90° around Y', onClick: turn('ry') }),
-          button({ label: 'Reset', cls: 'btn-outline', title: 'Undo rotation and scaling', onClick: () => this.resetSelected() }))));
+          button({ label: 'X 90°', cls: 'btn-outline' + (m.locked ? ' disabled' : ''), title: 'Tip the model over 90° around X', onClick: turn('rx') }),
+          button({ label: 'Y 90°', cls: 'btn-outline' + (m.locked ? ' disabled' : ''), title: 'Tip the model over 90° around Y', onClick: turn('ry') }),
+          button({ label: 'Reset', cls: 'btn-outline' + (m.locked ? ' disabled' : ''), title: 'Undo rotation and scaling', onClick: () => this.resetSelected() }))));
     this._renderTransformValues();
   }
 
@@ -406,7 +435,7 @@ export class SlicerWorkspace {
     this.progressWrap.hidden = !busy;
     this.saveBtn.hidden = !this.result || busy;
     const lbl = this.sliceBtn.querySelector('.btn-label'); if (lbl) lbl.textContent = this.result && this.dirty ? 'Slice again' : 'Slice';
-    this.sliceBtn.classList.toggle('disabled', !this.models.length);
+    this.sliceBtn.classList.toggle('disabled', !this._active().length);
     this.modeSeg.children[1].classList.toggle('disabled', !this.result);
     if (busy) return;
     if (this.result) {
@@ -418,8 +447,8 @@ export class SlicerWorkspace {
   }
 
   async slice() {
-    if (this.controller || !this.models.length) return;
-    const bad = this.models.find((m) => fitProblem(m, this.volume));
+    if (this.controller || !this._active().length) return;
+    const bad = this._active().find((m) => fitProblem(m, this.volume));
     if (bad) { toast(`${bad.name} is ${fitProblem(bad, this.volume)}`, 'warn', 5000); this._checkFit(); return; }
     const critical = this._blockingProblems();
     if (critical) { toast(critical, 'warn', 6000); return; }
@@ -430,7 +459,7 @@ export class SlicerWorkspace {
     this.status.textContent = 'Slicing…';
     this.progress.style.width = '0';
     try {
-      const files = this.models.map((m, i) => ({ name: `model${i}.stl`, data: writeBinaryStl([m.worldPositions()]) }));
+      const files = this._active().map((m, i) => ({ name: `model${i}.stl`, data: writeBinaryStl([m.worldPositions()]) }));
       const settings = this.store.engineSettings();
       const args = buildArgs(settings, files.map((f) => f.name), { oneAtATime: this.store.get('print_sequence') === 'one_at_a_time' });
       const gcode = await runEngine(files, args, {

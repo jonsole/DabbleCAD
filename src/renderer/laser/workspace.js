@@ -1,4 +1,5 @@
 // Laser workspace: 2D canvas editor, layers, machine control. Owns its own tools and shortcuts.
+import { addResizer } from '../ui/resizer.js';
 import { h, clear, button, icon, toast, popupMenu, promptDialog } from '../ui/dom.js';
 import { platform } from '../platform.js';
 import { listFontNames, ensureFont } from '../core/fonts.js';
@@ -226,6 +227,7 @@ export class LaserWorkspace {
     this.root.append(this.toolbar, this.propBar,
       h('div', { class: 'laser-main' }, this.toolCol, this.wrap, this.side),
       h('div', { class: 'laser-bottom' }, this.palette, this.statusBar));
+    addResizer(this.side, { side: 'right', key: 'laser-side', min: 260, max: 640 });
 
     const cv = this.canvas;
     cv.addEventListener('pointerdown', (e) => this._down(e));
