@@ -38,7 +38,7 @@ export class Dashboard {
     this.app = app;
     this.grid = h('div', { class: 'dash-grid' });
     this.closeBtn = button({ label: 'Back to design', icon: 'chevronRight', cls: 'btn-outline', onClick: () => this.hide() });
-    this.driveBtn = isDesktop ? null : button({ label: 'Google Drive', icon: 'cloud', cls: 'btn-outline drive-btn', onClick: () => this.driveMenu() });
+    this.driveBtn = button({ label: 'Google Drive', icon: 'cloud', cls: 'btn-outline drive-btn', onClick: () => this.driveMenu() });
 
     this.el = h('div', { class: 'dashboard' },
       h('div', { class: 'dash-head' },

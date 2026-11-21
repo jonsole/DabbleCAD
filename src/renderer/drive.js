@@ -7,9 +7,15 @@
 // sign-in expired) waits, marked "not synced yet", until it can.
 //
 // The app asks only for access to files it creates itself (the drive.file scope), so it can't
-// see anything else in your Drive. Sign-in uses Google Identity Services in the browser, which
-// gives a short-lived token; there's no server.
-import { GOOGLE_CLIENT_ID } from './config.js';
+// see anything else in your Drive. In the browser, sign-in uses Google Identity Services, which
+// gives a short-lived token; there's no server. In the desktop app, the main process signs in
+// through the system browser and keeps a refresh token (electron/googleauth.js), so it stays
+// signed in; Drive requests go through it too.
+import { GOOGLE_CLIENT_ID, GOOGLE_DESKTOP_CLIENT_ID, GOOGLE_DESKTOP_CLIENT_SECRET } from './config.js';
+
+const native = typeof window !== 'undefined' && window.dabbleNative && window.dabbleNative.driveSignIn ? window.dabbleNative : null;
+/** Desktop app: sign-in and Drive requests go through the main process. */
+export const desktopDrive = !!native;
 
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const API = 'https://www.googleapis.com/drive/v3';
@@ -24,6 +30,7 @@ const KEY = {
   tombs: 'dabble.drive.tombstones', // Drive files to move to the bin (deleted here while offline)
   folder: 'dabble.drive.folder',
   clientId: 'dabble.drive.clientId',
+  desktopClient: 'dabble.drive.desktopClient', // { id, secret } pasted in Settings (desktop)
   who: 'dabble.drive.who', // { email, name } of the signed-in account
   token: 'dabble.drive.token', // in sessionStorage only: survives a reload, not a closed tab
 };
@@ -34,8 +41,23 @@ const ls = {
   del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
 };
 
-export const clientId = () => GOOGLE_CLIENT_ID || ls.get(KEY.clientId, '') || '';
-export const setClientId = (id) => { if (id && id.trim()) ls.set(KEY.clientId, id.trim()); else ls.del(KEY.clientId); tokenClient = null; };
+const desktopClient = () => {
+  const own = ls.get(KEY.desktopClient, null) || {};
+  return { clientId: GOOGLE_DESKTOP_CLIENT_ID || own.id || '', clientSecret: GOOGLE_DESKTOP_CLIENT_SECRET || own.secret || '' };
+};
+/** The OAuth client ID in use ('' = Drive not set up). The desktop app also needs its secret. */
+export const clientId = () => {
+  if (native) { const c = desktopClient(); return c.clientId && c.clientSecret ? c.clientId : ''; }
+  return GOOGLE_CLIENT_ID || ls.get(KEY.clientId, '') || '';
+};
+/** Is the client built in (config / build), so Settings needn't ask for it? */
+export const builtInClient = () => (native ? !!(GOOGLE_DESKTOP_CLIENT_ID && GOOGLE_DESKTOP_CLIENT_SECRET) : !!GOOGLE_CLIENT_ID);
+export const pastedClient = () => (native ? { ...{ id: '', secret: '' }, ...(ls.get(KEY.desktopClient, null) || {}) } : { id: ls.get(KEY.clientId, ''), secret: '' });
+export const setClientId = (id, secret = '') => {
+  if (native) { if (id && id.trim()) ls.set(KEY.desktopClient, { id: id.trim(), secret: (secret || '').trim() }); else ls.del(KEY.desktopClient); return; }
+  if (id && id.trim()) ls.set(KEY.clientId, id.trim()); else ls.del(KEY.clientId);
+  tokenClient = null;
+};
 export const isLinked = () => !!clientId() && !!ls.get(KEY.linked, false);
 export const account = () => ls.get(KEY.who, null);
 
@@ -74,7 +96,27 @@ function loadGis() {
 }
 
 /** Ask Google for an access token. Must be called from a click (it may open a popup). */
+const keepToken = (r) => {
+  token = r.access_token;
+  tokenExp = Date.now() + (Number(r.expires_in) || 3600) * 1000 - 60000;
+  try { sessionStorage.setItem(KEY.token, JSON.stringify({ token, exp: tokenExp })); } catch { /* ignore */ }
+};
+
+/** Desktop: a new access token from the stored sign-in, with no window. Returns why not, or ''. */
+async function silentToken() {
+  if (!native) return 'browser';
+  const r = await native.driveToken(desktopClient());
+  if (r && r.access_token) { keepToken(r); return ''; }
+  return (r && r.error) || 'failed';
+}
+
 async function requestToken(prompt) {
+  if (native) {
+    // the system browser opens Google's sign-in page; the app waits for it to come back
+    const who = account();
+    keepToken(await native.driveSignIn({ ...desktopClient(), loginHint: who && who.email }));
+    return;
+  }
   await loadGis();
   if (!tokenClient) {
     tokenClient = window.google.accounts.oauth2.initTokenClient({
@@ -106,11 +148,19 @@ class DriveError extends Error {
 
 async function call(url, { method = 'GET', json, body, headers = {}, text = false } = {}) {
   if (!hasToken()) throw new DriveError('Not signed in', 401);
-  const res = await fetch(url, {
+  const init = {
     method,
     headers: { Authorization: `Bearer ${token}`, ...(json ? { 'Content-Type': 'application/json' } : {}), ...headers },
     body: json ? JSON.stringify(json) : body,
-  });
+  };
+  let res;
+  if (native) {
+    // desktop: the page is a local file, which Google's servers won't answer; the main process asks instead
+    const r = await native.driveFetch(url, init);
+    res = { status: r.status, ok: r.ok, json: async () => JSON.parse(r.text), text: async () => r.text };
+  } else {
+    res = await fetch(url, init);
+  }
   if (res.status === 401) { token = null; try { sessionStorage.removeItem(KEY.token); } catch { /* ignore */ } }
   if (!res.ok) {
     let msg = `Google Drive error ${res.status}`;
@@ -196,6 +246,11 @@ async function syncOnce() {
   if (!clientId()) { setStatus('off'); return; }
   if (!isLinked()) { setStatus('signedOut'); return; }
   if (!navigator.onLine) { setStatus('offline'); return; }
+  if (!hasToken() && native) {
+    const why = await silentToken(); // desktop stays signed in: just get a new token
+    if (why === 'offline') { setStatus('offline'); return; }
+    if (why) { setStatus('reconnect'); return; }
+  }
   if (!hasToken()) { setStatus('reconnect'); return; }
   setStatus('syncing');
   const changed = [];
@@ -304,12 +359,17 @@ export async function signIn() {
 }
 
 export async function reconnect() {
+  if (native && !(await silentToken())) { await syncNow(); return; }
   await requestToken('');
   await syncNow();
 }
 
-/** Stop syncing on this browser. Designs stay here and on Drive. */
+/** Tests: act as if the access token ran out. */
+export function _forgetToken() { token = null; tokenExp = 0; try { sessionStorage.removeItem(KEY.token); } catch { /* ignore */ } }
+
+/** Stop syncing here. Designs stay here and on Drive. */
 export function signOut() {
+  if (native) native.driveSignOut().catch(() => {}); // forgets and revokes the stored sign-in
   try { if (token && window.google && window.google.accounts) window.google.accounts.oauth2.revoke(token, () => {}); } catch { /* ignore */ }
   token = null; tokenExp = 0;
   try { sessionStorage.removeItem(KEY.token); } catch { /* ignore */ }

@@ -2,6 +2,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, Menu, nativeTheme, net } = require('electron');
 const { spawn } = require('node:child_process');
 const { registerUpdater } = require('./updater');
+const { registerGoogleAuth } = require('./googleauth');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -260,6 +261,12 @@ ipcMain.handle('gpu:info', async () => {
   try { info = await app.getGPUInfo('basic'); } catch { /* not available */ }
   return { hardwareAcceleration, featureStatus: app.getGPUFeatureStatus(), devices: info && info.gpuDevice ? info.gpuDevice : [] };
 });
+
+// Google Drive sign-in (system browser + loopback). Test runs can point it at a fake Google.
+const fakeGoogle = SMOKE && typeof argValue('fake-google') === 'string' ? argValue('fake-google').replace(/\/$/, '') : null;
+registerGoogleAuth(ipcMain, () => win, fakeGoogle ? {
+  auth: fakeGoogle + '/o/oauth2/v2/auth', token: fakeGoogle + '/token', revoke: fakeGoogle + '/revoke', api: fakeGoogle + '/', headless: true,
+} : null);
 
 ipcMain.handle('designs:list', () => listDesigns());
 ipcMain.handle('designs:load', (_e, id) => fs.readFileSync(designPath(id), 'utf8'));

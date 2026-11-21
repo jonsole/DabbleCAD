@@ -224,10 +224,10 @@ map can go onto the bed as one grayscale engraving, or as **slice passes**: one 
 per pass, each on its own layer, so the laser cuts the relief step by step.
 Suggested material settings are starting points, not calibrated guarantees.
 
-### Google Drive (web version)
+### Google Drive
 
-In the web version you can keep your design library in your own Google Drive, so the
-same designs are there on any computer. Sign in from **Your designs → Sign in to Google
+You can keep your design library in your own Google Drive, in the web version and the
+desktop app alike, so the same designs are there on any computer. Sign in from **Your designs → Sign in to Google
 Drive**. Designs then live in a **DabbleCAD** folder in your Drive as normal `.dabble`
 files (with a preview picture), and every save, rename and delete is synced.
 
@@ -239,10 +239,15 @@ files (with a preview picture), and every save, rename and delete is synced.
 - Deleting a design moves its Drive file to the Drive bin, where it can be restored.
 - If the same design is changed on two computers, the most recent save wins.
 - DabbleCAD asks only for access to files it creates (the `drive.file` permission), so
-  it can't see anything else in your Drive. There's no DabbleCAD server: the browser
-  talks to Google directly. Sign-in lasts about an hour; after that the button says
+  it can't see anything else in your Drive. There's no DabbleCAD server: the app
+  talks to Google directly.
+- **Web version:** sign-in lasts about an hour; after that the button says
   **Reconnect Drive** and one click carries on.
-- Signed out, nothing changes: designs stay in the browser only.
+- **Desktop app:** sign-in opens your normal web browser at Google's page, then
+  returns to DabbleCAD. It stays signed in (the sign-in is kept encrypted in your
+  system's keychain) until you choose **Sign out**.
+- Both use the same **DabbleCAD** folder, so designs move between them.
+- Signed out, nothing changes: designs stay on this computer only.
 
 **Setting it up for your copy of DabbleCAD** (once, about 10 minutes). The links open
 the right page of the [Google Cloud console](https://console.cloud.google.com/) for the
@@ -263,8 +268,16 @@ project selected at the top left:
    secret isn't used.
 6. Put the client ID in `src/renderer/config.js` (`GOOGLE_CLIENT_ID`) and push; or, just
    to try it, paste it into **Settings → Google Drive** in one browser.
+7. For the desktop app: [Clients](https://console.cloud.google.com/auth/clients) →
+   **Create client** again, type **Desktop app**. No redirect URIs are needed. Add its
+   client ID and client secret as repository secrets `GOOGLE_DESKTOP_CLIENT_ID` and
+   `GOOGLE_DESKTOP_CLIENT_SECRET` (**Settings → Secrets and variables → Actions**); the
+   build puts them into the app. To try it without a build, paste both into
+   **Settings → Google Drive** in the desktop app.
 
-The client ID is not a secret; it only identifies the app to Google. If you fork this
+The web client ID is not a secret; it only identifies the app to Google. Google doesn't
+treat a desktop client's secret as confidential either, but it's kept out of the
+repository anyway. If you fork this
 repository, replace the one in `config.js` with your own (it only works from the
 origins its owner allowed).
 

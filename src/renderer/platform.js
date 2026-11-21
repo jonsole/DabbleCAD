@@ -95,7 +95,7 @@ const browser = {
   chooseSerialPort: () => {},
 };
 
-// in the browser, the library can also be kept in the user's Google Drive (see drive.js)
-if (!native) installDrive(browser);
-
-export const platform = native || browser;
+// The design library can also be kept in the user's Google Drive (see drive.js). The desktop
+// bridge object is read-only, so it is copied before Drive wraps its library functions.
+export const platform = native ? { ...native } : browser;
+installDrive(platform);

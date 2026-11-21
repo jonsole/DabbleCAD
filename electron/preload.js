@@ -28,6 +28,12 @@ contextBridge.exposeInMainWorld('dabbleNative', {
   installUpdate: call('update:install'),
   onUpdateProgress: (fn) => ipcRenderer.on('update:progress', (_e, p) => fn(p)),
   openExternal: call('shell:open-external'),
+  // Google Drive: sign-in in the system browser, tokens and Drive requests via the main process
+  driveSignIn: call('gdrive:signin'),
+  driveToken: call('gdrive:token'),
+  driveSignOut: call('gdrive:signout'),
+  driveFetch: call('gdrive:fetch'),
+  driveHasSignIn: call('gdrive:has-signin'),
   listFonts: call('fonts:list'),
   loadFont: call('fonts:load'),
   pendingFile: call('app:pending-file'),

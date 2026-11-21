@@ -1,5 +1,5 @@
 // Run the existing suites offline against development Electron or a packaged app.
-const { spawnSync } = require('node:child_process');
+const { spawnSync, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -27,7 +27,13 @@ if (!fs.existsSync(executable)) throw new Error('Build the app first; executable
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 const shots = fs.mkdtempSync(path.join(os.tmpdir(), 'dabblecad-test-shots-'));
-const suites = ['smoke3.js', 'smoke-laser.js', 'smoke-depth.js', 'smoke6.js', 'smoke-save.js'];
+const suites = ['smoke3.js', 'smoke-laser.js', 'smoke-depth.js', 'smoke6.js', 'smoke-save.js', 'smoke-drive.js'];
+// The Drive suite talks to a fake Google on 127.0.0.1 instead of running offline.
+const fakeFile = path.join(shots, 'fake-google.txt');
+const fake = spawn(process.execPath, [path.join(__dirname, 'fakegoogle.js'), fakeFile], { stdio: 'ignore' });
+const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+for (let i = 0; i < 100 && !fs.existsSync(fakeFile); i++) sleep(50);
+const fakeUrl = fs.existsSync(fakeFile) ? fs.readFileSync(fakeFile, 'utf8') : '';
 // Windows and Linux test on software rendering (Linux needs a display, such as
 // xvfb-run on a headless machine). Macs have no software WebGL, so they
 // test on the GPU (hosted Apple Silicon runners have one; hosted Intel runners do not).
@@ -35,11 +41,12 @@ let modes = process.platform === 'darwin' ? [[]] : [['--software']];
 let failed = false;
 try {
   for (const suite of suites) {
-    console.log('\n=== ' + suite + (packaged ? ' (packaged, offline)' : ' (offline)') + ' ===');
+    const network = suite === 'smoke-drive.js' ? ['--fake-google=' + fakeUrl] : ['--offline'];
+    console.log('\n=== ' + suite + (packaged ? ' (packaged, ' : ' (') + (suite === 'smoke-drive.js' ? 'fake Google)' : 'offline)') + ' ===');
     let result, line;
     for (const mode of modes) {
       if (modes.length > 1) console.log('[render mode] ' + (mode.join(' ') || 'gpu'));
-      const args = [...(packaged ? [] : [root]), '--smoke=' + path.join(__dirname, suite), '--shots=' + shots, ...mode, '--offline'];
+      const args = [...(packaged ? [] : [root]), '--smoke=' + path.join(__dirname, suite), '--shots=' + shots, ...mode, ...network];
       result = spawnSync(executable, args, { cwd: root, env, encoding: 'utf8', timeout: 180000, maxBuffer: 8 * 1024 * 1024 });
       line = (result.stdout || '').split(/\r?\n/).find((text) => text.startsWith('[smoke result] '));
       const ok = !result.error && result.status === 0 && line;
@@ -61,6 +68,7 @@ try {
     }
   }
 } finally {
+  fake.kill();
   fs.rmSync(shots, { recursive: true, force: true });
 }
 process.exitCode = failed ? 1 : 0;
