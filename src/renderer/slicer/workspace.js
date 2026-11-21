@@ -126,7 +126,7 @@ export class SlicerWorkspace {
       this.dupBtn = button({ icon: 'duplicate', title: 'Copy the selected model', onClick: () => this.selected && this.duplicate(this.selected) }),
       this.delBtn = button({ icon: 'trash', title: 'Remove the selected model (Del)', onClick: () => this.selected && this.removeModel(this.selected) }), h('span', { class: 'sep' }),
       this.arrangeBtn = button({ icon: 'align', title: 'Arrange: space the models out on the bed', onClick: () => this.arrange() }),
-      this.orientBtn = button({ icon: 'rotate', label: 'Orient', title: 'Auto-orient for printing: turn the selected model (or every model if none is selected) to need the least support', onClick: () => this.autoOrient() }),
+      this.orientBtn = button({ icon: 'orient', title: 'Auto-orient for printing: turn the selected model (or every model if none is selected) to need the least support', onClick: () => this.autoOrient() }),
       this.resetBtn = button({ icon: 'drop', title: 'Reset the selected model: undo rotation and scaling', onClick: () => this.resetSelected() }),
       h('span', { class: 'spacer' }), this.modeSeg);
 
