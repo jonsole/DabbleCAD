@@ -17,6 +17,13 @@ const PAGE_ICONS = {
   cooling: 'M12 10.500a1.500 1.500 0 1 0 0 3 1.500 1.500 0 0 0 0-3zM12 10.500C12 6 14 3 17 4c2 1 1 4-2 6M13.500 12c4.500 0 7.500 2 6.500 5-1 2-4 1-6-2M12 13.500c0 4.500-2 7.500-5 6.500-2-1-1-4 2-6M10.500 12C6 12 3 10 4 7c1-2 4-1 6 2',
   advanced: 'M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M14 4v4M8 10v4M16 16v4',
 };
+/** Arrow-key / spinner step: 0.2 goes to 0.3, 0.15 to 0.16, 205 to 206, 20 % to 21 %. */
+const stepFor = (d, v) => {
+  if (d.type === 'int') return 1;
+  const dec = (String(Number(Math.abs(v).toFixed(5))).split('.')[1] || '').length;
+  if (dec >= 2) return Number((10 ** -dec).toFixed(dec));
+  return Math.abs(v) >= 10 || d.unit === '%' ? 1 : 0.1;
+};
 const isLong = (d) => d.type === 'polygon' || d.type === 'polygons' || /gcode|_code$/.test(d.key) || (typeof d.default === 'string' && d.default.includes('\n'));
 
 export class SettingsPanel {
@@ -303,7 +310,8 @@ export class SettingsPanel {
         return { el: sel, set: (v) => { sel.value = String(v); } };
       }
       case 'float': case 'int': {
-        const input = h('input', { class: 'input', type: 'number', step: d.type === 'int' ? 1 : 'any', 'aria-label': d.label });
+        const input = h('input', { class: 'input', type: 'number', step: d.type === 'int' ? 1 : 0.1, 'aria-label': d.label });
+        if (d.unit) input.style.paddingRight = (12 + d.unit.length * 6.5) + 'px';
         input.addEventListener('change', () => {
           let v = parseFloat(input.value);
           if (!Number.isFinite(v)) { input.value = fmt(store.get(d.key)); return; }
@@ -312,8 +320,11 @@ export class SettingsPanel {
           if (l.max !== undefined) v = Math.min(l.max, v);
           commit(v);
           input.value = fmt(store.get(d.key));
+          input.step = stepFor(d, store.get(d.key));
         });
-        return { el: input, set: (v) => { if (document.activeElement !== input) input.value = fmt(v); }, limits: (l) => { if (l.min !== undefined) input.min = l.min; else input.removeAttribute('min'); if (l.max !== undefined) input.max = l.max; else input.removeAttribute('max'); } };
+        // no min/max attributes: the browser would measure the arrow steps from the minimum (0.04 + 0.1 steps
+        // never land on 0.2). Out-of-range values are clamped by the change handler above.
+        return { el: input, set: (v) => { input.step = stepFor(d, v); if (document.activeElement !== input) input.value = fmt(v); } };
       }
       case 'str': case 'polygon': case 'polygons': case '[int]': case 'vec2': {
         const json = d.type !== 'str';

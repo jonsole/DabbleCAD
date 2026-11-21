@@ -86,9 +86,10 @@
 .sl-reset { width: 22px; height: 22px; }
 .sl-chev { border: 0; background: none; color: var(--muted); cursor: pointer; width: 16px; padding: 0; }
 .sl-ctl { display: flex; align-items: center; gap: 2px; flex: none; }
-.sl-inwrap { position: relative; width: 128px; }
+.sl-inwrap { position: relative; width: 150px; }
+.sl-inwrap:has(input[type='number']) { width: 104px; }
 .sl-inwrap .input, .sl-inwrap .select { width: 100%; box-sizing: border-box; height: 24px; font-size: 12.5px; }
-.sl-inwrap .input[type='number'] { padding-right: 36px; }
+.sl-inwrap .input[type='number'] { padding-right: 36px; padding-left: 8px; text-align: right; }
 .sl-inwrap .sl-unit { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); pointer-events: none; min-width: 0; }
 .sl-inwrap:has(.switch) { display: flex; justify-content: flex-end; }
 .sl-long .sl-inwrap { width: 100%; }
