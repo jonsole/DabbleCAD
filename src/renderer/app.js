@@ -430,8 +430,7 @@ export class App {
   /** Open the Slicer workspace, optionally loading the design (or just the selection) onto the plate. */
   async openSlicer({ selectedOnly = false } = {}) {
     this.setViewMode('slicer');
-    await this.slicer.ready;
-    await this.slicer.addFromDesign({ selectedOnly });
+    if (await this.slicer.ready) await this.slicer.addFromDesign({ selectedOnly });
   }
 
   async exportAs(format, selectedOnly, { fuse = true } = {}) {

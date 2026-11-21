@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { h, clear, button, icon, toast } from '../ui/dom.js';
 import { platform } from '../platform.js';
+import { CURAENGINE_URL } from '../config.js';
 import { exportModel, importFiles } from '../core/io.js';
 import { bakedWorldGeometry } from '../core/geometry.js';
 import { loadDefinitions } from './defs.js';
@@ -38,13 +39,19 @@ export class SlicerWorkspace {
   setActive(on) {
     this.active = on;
     if (!on) return;
-    if (!this.ready) this.ready = this._init().catch((err) => { console.error(err); clear(this.root); this.root.append(h('div', { class: 'sl-loading' }, 'The slicer could not start: ' + (err.message || err))); this.ready = null; });
+    if (!this.ready) this.ready = this._init().catch((err) => { console.error(err); this._showGate(err); return false; });
     this.ready.then(() => { if (this.scene) { this.scene.resize(); this.scene.requestRender(); } });
   }
 
+  /** Folder URL of the CuraEngine package (a separate AGPL-3.0 download, see config.js). */
+  get engineBase() {
+    let u = (this.app.settings.slicerEngine || CURAENGINE_URL || 'curaengine/').trim();
+    if (!u.endsWith('/')) u += '/';
+    return new URL(u, document.baseURI).href;
+  }
+
   async _init() {
-    const base = new URL('curaengine/', document.baseURI);
-    const defs = await loadDefinitions(base);
+    const defs = await loadDefinitions(this.engineBase);
     this.defs = defs;
     this.store = new SettingsStore(defs);
     const { index, info } = buildIndex(defs);
@@ -56,6 +63,29 @@ export class SlicerWorkspace {
     this.store.onChange(() => this._settingsChanged());
     this._syncVolume(true);
     if (!this.models.length) await this.addFromDesign({ quiet: true });
+    return true;
+  }
+
+  /** The engine package could not be loaded: say what it is and let the person point at it. */
+  _showGate(err) {
+    clear(this.root);
+    const input = h('input', { class: 'input', type: 'url', value: this.engineBase, spellcheck: false, 'aria-label': 'Engine address' });
+    const retry = () => {
+      this.app.patchSettings({ slicerEngine: input.value.trim() });
+      this.ready = null;
+      clear(this.root);
+      this.root.append(h('div', { class: 'sl-loading' }, 'Loading the slicer…'));
+      this.setActive(true);
+    };
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') retry(); });
+    this.root.append(h('div', { class: 'sl-gate' },
+      h('h2', {}, 'The slicing engine is not available'),
+      h('p', {}, 'The Slicer uses CuraEngine, which is licensed under the AGPL-3.0, so it is a separate download and is not part of DabbleCAD itself. DabbleCAD loads it from the address below when you open this tab.'),
+      h('label', { class: 'sl-gate-field' }, h('span', {}, 'Engine address'), input),
+      h('div', { class: 'sl-buttons' }, button({ label: 'Try again', cls: 'btn-primary', onClick: retry }),
+        button({ label: 'Use the default', cls: 'btn-outline', onClick: () => { input.value = new URL(CURAENGINE_URL, document.baseURI).href; retry(); } })),
+      h('p', { class: 'sl-gate-err' }, `Could not load it: ${(err && err.message) || err}`),
+      h('p', {}, 'To host it yourself, publish the files from ', h('code', {}, 'github.com/jonsole/DabbleCAD-curaengine'), ' on any static web server that allows cross-origin requests. If that server is not localhost, its address also has to be allowed in the Content-Security-Policy in index.html.')));
   }
 
   _persist(state) {
@@ -160,6 +190,7 @@ export class SlicerWorkspace {
   }
 
   async addFromDesign({ selectedOnly = false, quiet = false } = {}) {
+    if (!this.scene) return;
     try {
       const ed = this.app.editor;
       const out = await ed._busy(() => exportModel(ed, 'stl', { selectedOnly, fuse: true }));
@@ -184,7 +215,7 @@ export class SlicerWorkspace {
   }
 
   async importData(files) {
-    await this.ready;
+    if (!(await this.ready)) return;
     const res = await importFiles(files, { fitTo: 1e6 });
     let last = null;
     for (const node of res.nodes) {
@@ -374,6 +405,7 @@ export class SlicerWorkspace {
       const settings = this.store.engineSettings();
       const args = buildArgs(settings, files.map((f) => f.name), { oneAtATime: this.store.get('print_sequence') === 'one_at_a_time' });
       const gcode = await runEngine(files, args, {
+        base: this.engineBase,
         signal: this.controller.signal,
         onProgress: (p) => { this.progress.style.width = Math.round(p * 100) + '%'; this.status.textContent = `Slicing… ${Math.round(p * 100)}%`; },
         onLog: (line) => { this.log.push(line); if (this.log.length > 400) this.log.shift(); },

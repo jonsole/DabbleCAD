@@ -26,10 +26,11 @@ distributed under the MIT license reproduced below.
 
 ## Slicing engine (browser slicer)
 
-- **CuraEngine** (WebAssembly build by SynDaver Labs, from Symple Slicer) and the Cura setting definitions in
-  `src/renderer/public/curaengine/`. CuraEngine is licensed under the **GNU AGPL-3.0**; the definitions under the
-  LGPL-3.0. Source and provenance: see `src/renderer/public/curaengine/README-curaengine.md`.
-  <https://github.com/SynDaverCO/CuraEngine>
+- **CuraEngine** (WebAssembly build by SynDaver Labs, from Symple Slicer) and the Cura setting definitions are
+  **not part of this repository**. They live in the separate AGPL-3.0 repository
+  <https://github.com/jonsole/DabbleCAD-curaengine> and are loaded at run time by the Slicer workspace, which runs
+  the engine as a separate program in a Web Worker. CuraEngine is licensed under the **GNU AGPL-3.0**; the
+  definitions under the LGPL-3.0. Source: <https://github.com/SynDaverCO/CuraEngine>
 
 ### MIT License
 

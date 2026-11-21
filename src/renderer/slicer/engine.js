@@ -52,8 +52,8 @@ export function buildArgs(settings, files, { oneAtATime = false } = {}) {
  * Slice. `files` is [{ name, data: ArrayBuffer }]. Resolves with the G-code bytes.
  * `signal` (AbortSignal) cancels by terminating the worker.
  */
-export function runEngine(files, args, { onProgress, onLog, signal, workerUrl } = {}) {
-  const url = workerUrl || new URL('curaengine/slicer-worker.js', document.baseURI).href;
+export function runEngine(files, args, { base, onProgress, onLog, signal, workerUrl } = {}) {
+  const url = workerUrl || new URL('slicer-worker.js', document.baseURI).href;
   return new Promise((resolve, reject) => {
     const worker = new Worker(url);
     const onAbort = () => finish(reject, new DOMException('Slicing cancelled', 'AbortError'));
@@ -67,7 +67,7 @@ export function runEngine(files, args, { onProgress, onLog, signal, workerUrl } 
       else if (d.cmd === 'error') finish(reject, new Error(d.error));
     };
     worker.onerror = (e) => finish(reject, new Error(e.message || 'The slicing engine failed to start'));
-    worker.postMessage({ cmd: 'slice', jobId: 1, files, args }, files.map((f) => f.data));
+    worker.postMessage({ cmd: 'slice', jobId: 1, base, files, args }, files.map((f) => f.data));
   });
 }
 

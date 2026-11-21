@@ -1,16 +1,19 @@
 // Runs CuraEngine (compiled to WebAssembly) off the main thread.
 //
 // Protocol (all messages are plain objects):
-//   in : { cmd: 'slice', jobId, files: [{ name, data: ArrayBuffer }], args: string[] }
+//   in : { cmd: 'slice', jobId, base, files: [{ name, data: ArrayBuffer }], args: string[] }
+//        base is the folder (ending in /) that holds the CuraEngine package, which is a separate
+//        AGPL-3.0 download and not part of this repository.
 //   out: { cmd: 'progress', jobId, value }      value 0..1
 //        { cmd: 'log', jobId, str }             engine stdout/stderr, for diagnostics
 //        { cmd: 'done', jobId, gcode }          gcode is a Uint8Array (transferred)
 //        { cmd: 'error', jobId, error }
 //
 // The engine can only run once per instance (it calls exit when finished), so the main thread
-// starts a fresh worker for every slice. See ../../core/slicer.js.
+// starts a fresh worker for every slice.
 //
-// CuraEngine is licensed under the AGPL-3.0; see README-curaengine.md in this folder.
+// CuraEngine is licensed under the AGPL-3.0 and is loaded at run time from the engine package
+// (https://github.com/jonsole/DabbleCAD-curaengine), not bundled with DabbleCAD.
 
 /* global importScripts */
 var Module = {
@@ -37,8 +40,16 @@ let currentJob = -1;
 let header = null;
 function post(msg, transfer) { self.postMessage({ ...msg, jobId: currentJob }, transfer || []); }
 
-const ready = new Promise((resolve) => { Module.onRuntimeInitialized = resolve; });
-importScripts('CuraEngine.js');
+let base = '';
+let ready = null;
+function loadEngine(folder) {
+  if (ready) return ready;
+  base = folder;
+  Module.locateFile = (name) => base + name;
+  ready = new Promise((resolve) => { Module.onRuntimeInitialized = resolve; });
+  importScripts(base + 'CuraEngine.js');
+  return ready;
+}
 
 async function fetchBytes(name) {
   const res = await fetch(name);
@@ -59,12 +70,12 @@ function withRealHeader(gcode) {
   return out;
 }
 
-async function slice({ files, args }) {
-  await ready;
+async function slice({ base: folder, files, args }) {
+  await loadEngine(folder);
   // the glue defines FS and callMain as globals; Module.FS is only an abort() stub in this build
   const FS = self.FS;
-  FS.writeFile('fdmprinter.def.json', await fetchBytes('fdmprinter.def.json'));
-  FS.writeFile('fdmextruder.def.json', await fetchBytes('fdmextruder.def.json'));
+  FS.writeFile('fdmprinter.def.json', await fetchBytes(base + 'fdmprinter.def.json'));
+  FS.writeFile('fdmextruder.def.json', await fetchBytes(base + 'fdmextruder.def.json'));
   for (const f of files) FS.writeFile(f.name, new Uint8Array(f.data));
   try {
     self.callMain(args);
