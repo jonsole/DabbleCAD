@@ -24,6 +24,7 @@ export class PlateModel {
     this.x = 0; this.y = 0;           // footprint centre on the bed
     this.rx = 0; this.ry = 0; this.rz = 0; // rotation, degrees
     this.sx = 100; this.sy = 100; this.sz = 100; // scale, percent
+    this.zFloat = null;               // while rotating by hand: the height of the bbox centre (null = rest on the plate)
     this._key = null;
     this._fit = null;
   }
@@ -57,7 +58,8 @@ export class PlateModel {
   /** Model -> bed matrix: scale, rotate, drop to the plate, centre the footprint on (x, y). */
   get matrix() {
     const f = this._fitInfo();
-    return new THREE.Matrix4().makeTranslation(this.x - f.cx, this.y - f.cy, -f.min.z).multiply(this._linear());
+    const dz = this.zFloat == null ? -f.min.z : this.zFloat - (f.min.z + f.max.z) / 2;
+    return new THREE.Matrix4().makeTranslation(this.x - f.cx, this.y - f.cy, dz).multiply(this._linear());
   }
 
   /** Axis-aligned bounds on the bed. */

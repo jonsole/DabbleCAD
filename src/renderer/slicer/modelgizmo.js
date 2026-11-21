@@ -256,6 +256,7 @@ export class ModelGizmo {
     this.protractor.visible = true;
     const R0 = new THREE.Matrix4().makeRotationFromEuler(new THREE.Euler(
       THREE.MathUtils.degToRad(snap.rx), THREE.MathUtils.degToRad(snap.ry), THREE.MathUtils.degToRad(snap.rz), 'XYZ'));
+    const zc = c.z;          // while turning, the model keeps its height instead of dropping onto the plate
     let prev = angleAt(e), total = 0;
     this._drag(e, 'rotate', (ev) => {
       const a = angleAt(ev);
@@ -269,11 +270,12 @@ export class ModelGizmo {
       const eul = new THREE.Euler().setFromRotationMatrix(Rd.multiply(R0), 'XYZ');
       const rnd = (v) => Math.round(THREE.MathUtils.radToDeg(v) * 100) / 100 || 0;
       m.rx = rnd(eul.x); m.ry = rnd(eul.y); m.rz = rnd(eul.z);
+      m.zFloat = zc;
       this.angleLabel.style.display = '';
       this.angleLabel.textContent = (Math.round(deg * 10) / 10) + '°';
       this.angleLabel.style.transform = `translate(${ev.clientX - rect.left + 18}px, ${ev.clientY - rect.top - 18}px)`;
       this._commit(m, false);
-    }, () => this._commit(m, true));
+    }, () => { m.zFloat = null; this._commit(m, true); });   // let go: settle onto the plate
   }
 
   // ---------------------------------------------------------------- typed dimensions
