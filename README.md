@@ -240,24 +240,29 @@ files (with a preview picture), and every save, rename and delete is synced.
   **Reconnect Drive** and one click carries on.
 - Signed out, nothing changes: designs stay in the browser only.
 
-**Setting it up for your copy of DabbleCAD** (once, about 10 minutes):
+**Setting it up for your copy of DabbleCAD** (once, about 10 minutes). The links open
+the right page of the [Google Cloud console](https://console.cloud.google.com/) for the
+project selected at the top left:
 
-1. In the [Google Cloud console](https://console.cloud.google.com/), create a project.
-2. **APIs & Services → Library**: enable the **Google Drive API**.
-3. **Google Auth Platform → Branding** (the OAuth consent screen): user type **External**,
-   app name *DabbleCAD*, your email as support and developer contact. Don't add a logo:
-   that would require Google's review.
-4. **Data Access**: add the scope `.../auth/drive.file`.
-5. **Audience**: either add your Google account as a test user (while the app is in
-   *Testing*, sign-ins expire after 7 days), or press **Publish app**. With only the
-   `drive.file` scope and no logo, publishing normally doesn't need Google's verification.
-6. **Clients → Create client**: type **Web application**, authorised JavaScript origin
-   `https://<your-user>.github.io` (and `http://localhost:5183` for development).
-   No redirect URI is needed.
-7. Put the client ID in `src/renderer/config.js` (`GOOGLE_CLIENT_ID`) and push; or, just
+1. Create a project (project picker at the top left → **New project**) and select it.
+2. [Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com): press **Enable**.
+3. [Google Auth Platform](https://console.cloud.google.com/auth/overview): press **Get started**.
+   App name *DabbleCAD*, your email as support and contact email, audience **External**.
+   Don't add a logo: that would require Google's review.
+4. [Audience](https://console.cloud.google.com/auth/audience): add your Google account under
+   **Test users** (while the app is in *Testing*, sign-ins expire after 7 days), or press
+   **Publish app**. With only the `drive.file` permission and no logo, publishing normally
+   doesn't need Google's verification.
+5. [Clients](https://console.cloud.google.com/auth/clients) → **Create client**: type
+   **Web application**, authorised JavaScript origin `https://<your-user>.github.io`
+   (and `http://localhost:5183` for development). No redirect URI is needed, and the client
+   secret isn't used.
+6. Put the client ID in `src/renderer/config.js` (`GOOGLE_CLIENT_ID`) and push; or, just
    to try it, paste it into **Settings → Google Drive** in one browser.
 
-The client ID is not a secret; it only identifies the app to Google.
+The client ID is not a secret; it only identifies the app to Google. If you fork this
+repository, replace the one in `config.js` with your own (it only works from the
+origins its owner allowed).
 
 ## Saving
 
