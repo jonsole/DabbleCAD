@@ -1388,9 +1388,25 @@ export class Editor extends Emitter {
 
   fitView() {
     // Face, Edge and Corner modes: centre on the picked parts (or the shape being worked on)
+    // Pressed again without the view having moved: turn to look at the picked parts face on.
     if (this.parts.active || this.edgeMode) {
-      const box = this.parts.pickedBox();
-      if (box) { this.viewport.fit(box); return; }
+      const vp = this.viewport, last = this._lastFit;
+      const key = this.parts.pickKey();
+      const near = (a, b, tol) => Math.abs(a - b) <= tol;
+      const still = last && last.key === key && !vp._anim && vp.target.distanceTo(last.target) <= last.radius * 1e-3
+        && near(vp.radius, last.radius, last.radius * 1e-3) && near(vp.theta, last.theta, 1e-4) && near(vp.phi, last.phi, 1e-4);
+      const dir = still ? this.parts.faceOnDir() : null;
+      if (dir) {
+        const phi = Math.min(Math.PI - 0.0006, Math.max(0.0006, Math.acos(Math.max(-1, Math.min(1, dir.z)))));
+        const theta = Math.hypot(dir.x, dir.y) < 1e-6 ? vp.theta : Math.atan2(dir.y, dir.x);
+        vp.animateTo({ theta, phi });
+      } else {
+        const box = this.parts.pickedBox();
+        if (!box) { this._lastFit = null; } else vp.fit(box);
+      }
+      const goal = vp._anim ? vp._anim.to : null;
+      if (goal) { this._lastFit = { key, target: goal.target.clone(), radius: goal.radius, theta: goal.theta, phi: goal.phi }; return; }
+      if (this._lastFit) return;
     }
     const sel = this.selectedNodes();
     const box = this.worldBounds(sel.length ? sel : undefined);

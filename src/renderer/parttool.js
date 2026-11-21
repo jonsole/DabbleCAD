@@ -367,6 +367,47 @@ export class PartTool {
     return box;
   }
 
+  /** Names what is picked, to tell whether Fit in view is pressed again for the same parts. */
+  pickKey() {
+    const em = this.ed.edgeMode;
+    if (this.mode) return `${this.mode}:${this.id}:${[...this.picked].sort((a, b) => a - b).join(',')}`;
+    return em ? `edge:${em.id}:${[...em.picked].sort((a, b) => a - b).join(',')}` : '';
+  }
+
+  /**
+   * The direction to look from to see the picked parts face on (world, pointing out towards
+   * the viewer): a face's normal; for an edge, halfway between the faces either side of it;
+   * for a corner, the average of the faces that meet there. Null when nothing is picked.
+   */
+  faceOnDir() {
+    const ed = this.ed;
+    const sum = new THREE.Vector3();
+    if (this.mode) {
+      const node = this.node();
+      const I = node && this.info(node);
+      if (!I) return null;
+      for (const j of this.picked) {
+        if (this.mode === 'face' && j < I.A.faces.length) sum.add(I.normalToWorld(this.faceShape(I, j).n));
+        if (this.mode === 'corner' && j < I.A.corners.length) {
+          for (const r of I.A.vRegions[I.A.corners[j].v]) sum.add(I.normalToWorld(I.A.regions[r].n));
+        }
+      }
+    } else if (ed.edgeMode && ed.edgeMode.id) {
+      const node = ed.node(ed.edgeMode.id);
+      const I = node && this.info(node);
+      if (!I) return null;
+      const d = nodeEdgeData(node);
+      for (const i of ed.edgeMode.picked) {
+        const ch = d.chains[i];
+        if (!ch) continue;
+        const m = new THREE.Vector3();
+        for (let k = 0; k < ch.nA.length; k++) m.add(ch.nA[k]).add(ch.nB[k]);
+        if (m.lengthSq() > 1e-12) sum.add(I.normalToWorld(m));
+      }
+    }
+    return sum.lengthSq() > 1e-10 ? sum.normalize() : null;
+  }
+
   /** Keys naming each shown edge by the shape's own vertices (stable while parts move). */
   chainKeys(node, I = this.info(node), d = nodeEdgeData(node)) {
     if (!I) return [];
