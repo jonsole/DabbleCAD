@@ -125,11 +125,12 @@ export class SlicerWorkspace {
     this.saveBtn.hidden = true;
     this.sendBtn = button({ label: 'Send to printer', icon: 'export', cls: 'btn-outline', title: 'Send the G-code to the printer set up under Printer settings → Printer connection', onClick: () => this.sendToPrinter() });
     this.sendBtn.hidden = true;
+    this.addBtns = [];
     this.toolbar = h('div', { class: 'toolbar sl-toolbar', role: 'toolbar', 'aria-label': 'Slicer tools' },
       this.listBtn = button({ icon: 'list', title: 'Plate list', cls: 'active', onClick: () => this.toggleOutliner() }), h('span', { class: 'sep' }),
-      button({ icon: 'cube', label: 'Add design', title: 'Add the whole 3D design to the plate', onClick: () => this.addFromDesign() }),
-      button({ icon: 'select', label: 'Selected', title: 'Add the shapes selected in 3D Design to the plate', onClick: () => this.addFromDesign({ selectedOnly: true }) }),
-      button({ icon: 'plus', label: 'Import', title: 'Add an STL, OBJ, 3MF or PLY file', onClick: () => this.importFiles() }), h('span', { class: 'sep' }),
+      this.addBtns[0] = button({ icon: 'cube', label: 'Add design', title: 'Add the whole 3D design to the plate', onClick: () => this.addFromDesign() }),
+      this.addBtns[1] = button({ icon: 'select', label: 'Selected', title: 'Add the shapes selected in 3D Design to the plate', onClick: () => this.addFromDesign({ selectedOnly: true }) }),
+      this.addBtns[2] = button({ icon: 'plus', label: 'Import', title: 'Add an STL, OBJ, 3MF or PLY file', onClick: () => this.importFiles() }), h('span', { class: 'sep' }),
       this.undoBtn = button({ icon: 'undo', title: 'Undo (Ctrl+Z)', onClick: () => this.undo() }),
       this.redoBtn = button({ icon: 'redo', title: 'Redo (Ctrl+Y)', onClick: () => this.redo() }), h('span', { class: 'sep' }),
       this.dupBtn = button({ icon: 'duplicate', title: 'Copy the selected model', onClick: () => this.selected && this.duplicate(this.selected) }),
@@ -167,7 +168,7 @@ export class SlicerWorkspace {
       this.inspectorEl, this.previewPanel, this.banner);
     this.gizmo = new ModelGizmo(this.scene, {
       getModel: () => this.selectedModel,
-      active: () => this.mode !== 'preview',
+      active: () => this._editing,
       onChange: (m, final) => { this.scene.refreshModel(m); this._markDirty(); this._renderTransformValues(m); if (final) this._checkFit(); },
     });
     this.scene.onPick = (id) => this.select(id);
@@ -184,7 +185,7 @@ export class SlicerWorkspace {
 
   /** Right-click menu: the same shape as 3D Design's, with the slicer's own extras. */
   _contextMenu(id, e) {
-    if (this.mode === 'preview') return;
+    if (!this._editing) return;
     if (id) this.select(id); else this.select(null);
     const at = { x: e.clientX, y: e.clientY };
     const m = this.selectedModel;
@@ -282,6 +283,7 @@ export class SlicerWorkspace {
     if (!this.active || !this.scene) return;
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+    if (!this._editing) return;
     const ctrl = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
     if (ctrl && k === 'z') { e.preventDefault(); if (e.shiftKey) this.redo(); else this.undo(); return; }
     if (ctrl && k === 'y') { e.preventDefault(); this.redo(); return; }
@@ -524,6 +526,8 @@ export class SlicerWorkspace {
     this._renderTransform();
     this.viewEl.classList.toggle('sl-previewing', mode === 'preview');
     this._syncModeButtons();
+    this._syncTools();
+    this.scene.requestRender();
   }
 
   /**
@@ -560,6 +564,8 @@ export class SlicerWorkspace {
     }
     this._renderTransform();
     this._syncModeButtons();
+    this._syncTools();
+    this.scene.requestRender();
   }
 
   _syncModeButtons() {
@@ -745,17 +751,21 @@ export class SlicerWorkspace {
 
   // ------------------------------------------------------------------ slicing
   /** Grey out toolbar tools that do nothing right now (no selection, locked model, nothing to arrange). */
+  /** The plate can only be edited in the Model view (not in Preview or Monitor). */
+  get _editing() { return this.mode === 'model' && !this.monitoring; }
+
   _syncTools() {
     if (!this.dupBtn) return;
-    const m = this.selectedModel;
+    const m = this._editing ? this.selectedModel : null;
     const off = (b, v) => { b.classList.toggle('disabled', !!v); b.setAttribute('aria-disabled', v ? 'true' : 'false'); };
-    const hs = this._hist;
-    off(this.undoBtn, !hs || hs.i <= 0);
-    off(this.redoBtn, !hs || hs.i >= hs.stack.length - 1);
+    const hs = this._hist, ed = this._editing, none = this._movable().length === 0;
+    for (const b of this.addBtns) off(b, !ed);
+    off(this.undoBtn, !ed || !hs || hs.i <= 0);
+    off(this.redoBtn, !ed || !hs || hs.i >= hs.stack.length - 1);
     off(this.dupBtn, !m);
     off(this.delBtn, !m);
-    off(this.arrangeBtn, this._movable().length === 0);
-    off(this.orientBtn, this._movable().length === 0);
+    off(this.arrangeBtn, !ed || none);
+    off(this.orientBtn, !ed || none);
     off(this.resetBtn, !m || m.locked || (m.rx === 0 && m.ry === 0 && m.rz === 0 && m.sx === 100 && m.sy === 100 && m.sz === 100));
   }
 
