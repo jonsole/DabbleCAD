@@ -146,3 +146,14 @@
 .sl-desc { margin: 2px 0; }
 .sl-kids .sl-row { padding: 0; }
 .sl-ico:empty { display: none; }
+
+/* printer connection (Printer settings) */
+.sl-conn { margin: 0 0 8px; padding: 8px 10px 10px; border: 1px solid var(--border); border-radius: 8px; background: color-mix(in srgb, var(--panel) 80%, transparent); display: flex; flex-direction: column; gap: 5px; }
+.sl-conn-head { font-weight: 600; font-size: 13px; display: flex; align-items: baseline; gap: 8px; }
+.sl-conn-row { display: grid; grid-template-columns: 112px 1fr; align-items: center; gap: 8px; font-size: 12.5px; }
+.sl-conn-row .input, .sl-conn-row .select { height: 26px; font-size: 12.5px; min-width: 0; }
+.sl-conn-check { grid-template-columns: auto 1fr; justify-content: start; }
+.sl-conn-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sl-conn-result { font-size: 12px; color: var(--muted); }
+.sl-conn-result.ok { color: #46c07a; }
+.sl-conn-result.bad { color: #e5645b; }

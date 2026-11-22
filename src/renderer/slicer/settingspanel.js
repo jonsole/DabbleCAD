@@ -1,6 +1,7 @@
 // The settings side panel: Printer / Filament / Process tabs, a preset picker per tab, pages inside
 // each tab, search across everything, and a modified marker + reset on every changed setting.
 import { readCuraProject } from './cura3mf.js';
+import { KINDS, testConnection } from './printerlink.js';
 import { h, button, clear, popupMenu, promptDialog, confirmDialog, toast } from '../ui/dom.js';
 import { platform } from '../platform.js';
 import { SCOPES, SCOPE_ORDER, LEVELS, levelOf, levelRank } from './taxonomy.js';
@@ -100,6 +101,7 @@ export class SettingsPanel {
       if (mods && !(await confirmDialog('Discard changes?', `You changed ${mods} ${SCOPES[scope].label.toLowerCase()} setting${mods > 1 ? 's' : ''}. Switching preset discards them. Use Save to keep them as your own preset.`, 'Switch preset'))) { sel.value = cur.id; return; }
       p.select(scope, sel.value);
       this._renderChrome();
+      if (scope === 'printer' && this.connSync) this.connSync();
     });
     const menu = (e) => {
       const items = [
@@ -120,6 +122,42 @@ export class SettingsPanel {
       button({ icon: 'bundle', title: 'Save as a new preset', cls: 'btn-ghost', onClick: async () => { const name = await promptDialog('Save preset', 'Name', cur.builtin ? `${cur.name} copy` : cur.name); if (name && name.trim()) { p.saveAs(scope, name.trim()); this._renderChrome(); toast('Saved preset'); } } }),
       button({ icon: 'list', title: 'Preset options', cls: 'btn-ghost', onClick: menu }));
     if (cur.note) this.presetBar.append(h('div', { class: 'sl-note' }, cur.note));
+  }
+
+  /** How to reach the selected printer to send it G-code (kept per printer preset, on this computer only). */
+  _connectionCard() {
+    const p = this.profiles;
+    const kind = h('select', { class: 'select', 'aria-label': 'Firmware' }, Object.entries(KINDS).map(([id, k]) => h('option', { value: id }, k.label)));
+    const url = h('input', { class: 'input', type: 'text', placeholder: 'http://ratrig.local', 'aria-label': 'Printer address', spellcheck: false });
+    const user = h('input', { class: 'input', type: 'text', placeholder: 'optional', autocomplete: 'off', 'aria-label': 'Username' });
+    const pass = h('input', { class: 'input', type: 'password', autocomplete: 'new-password', 'aria-label': 'Password or API key' });
+    const start = h('input', { type: 'checkbox' });
+    const result = h('div', { class: 'sl-conn-result', role: 'status' });
+    const passLabel = h('span', {}, 'Password');
+    const hint = h('div', { class: 'sl-note' });
+    const read = () => ({ kind: kind.value, url: url.value.trim(), user: user.value.trim(), password: pass.value, start: start.checked });
+    const sync = () => {
+      const c = p.connection();
+      kind.value = c.kind; url.value = c.url; user.value = c.user; pass.value = c.password; start.checked = !!c.start;
+      passLabel.textContent = KINDS[c.kind].secret; url.placeholder = KINDS[c.kind].hint.replace(/^.*e\.g\. /, '');
+      hint.textContent = KINDS[c.kind].hint + '. A username is only for a printer behind a login (HTTP basic); otherwise leave it empty.';
+      result.textContent = ''; result.className = 'sl-conn-result';
+    };
+    const save = () => { p.setConnection(read()); passLabel.textContent = KINDS[kind.value].secret; };
+    for (const el of [kind, url, user, pass, start]) el.addEventListener('change', save);
+    kind.addEventListener('change', sync);
+    const test = button({ label: 'Test connection', cls: 'btn-outline', onClick: async () => {
+      save(); result.className = 'sl-conn-result'; result.textContent = 'Connecting…';
+      try { result.textContent = '✓ ' + (await testConnection(p.connection())); result.className = 'sl-conn-result ok'; } catch (err) { result.textContent = err.message || String(err); result.className = 'sl-conn-result bad'; }
+    } });
+    const row = (label, el) => h('label', { class: 'sl-conn-row' }, h('span', {}, label), el);
+    this.connSync = sync;
+    sync();
+    return h('div', { class: 'sl-conn' },
+      h('div', { class: 'sl-conn-head' }, 'Printer connection', h('span', { class: 'sl-note' }, 'to send G-code straight to this printer')),
+      row('Firmware', kind), row('Address', url), row('Username', user), row(passLabel, pass),
+      h('label', { class: 'sl-conn-row sl-conn-check' }, start, h('span', {}, 'Start the print after sending')),
+      hint, h('div', { class: 'sl-conn-actions' }, test, result));
   }
 
   /** Read printer, material and quality settings from a Cura project and add them as presets. */
@@ -157,6 +195,7 @@ export class SettingsPanel {
       wrap.append(sec.el);
     }
     this.active = null;
+    if (this.scope === 'printer') this.body.append(this._connectionCard());
     this.body.append(wrap);
     this.refresh();
     this._buildRail();

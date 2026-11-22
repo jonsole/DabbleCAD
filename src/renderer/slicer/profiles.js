@@ -72,6 +72,7 @@ export class Profiles {
     this.store = store; this.info = info; this.persist = persist || (() => {});
     const s = saved || {};
     this.user = { printer: [], filament: [], process: [], ...(s.user || {}) };
+    this.connections = { ...(s.connections || {}) };  // printer preset id -> how to reach that printer (kept on this computer only: it holds passwords)
     this.colors = { ...(s.colors || {}) };         // preview colour per feature type (#rrggbb), only the ones changed
     this.deleted = { ...(s.deleted || {}) };         // 'scope/id' -> time it was deleted (so other computers delete it too)
     this.onPresetsChanged = null;                    // set by the workspace: called after the user presets change
@@ -84,8 +85,11 @@ export class Profiles {
   }
 
   save() {
-    this.persist({ user: this.user, deleted: this.deleted, colors: this.colors, selected: this.selected, overrides: this.store.overrides, level: this.level });
+    this.persist({ user: this.user, deleted: this.deleted, colors: this.colors, connections: this.connections, selected: this.selected, overrides: this.store.overrides, level: this.level });
   }
+
+  connection(scope = 'printer') { return { kind: 'moonraker', url: '', user: '', password: '', start: false, ...(this.connections[this.selected[scope]] || {}) }; }
+  setConnection(cfg) { this.connections[this.selected.printer] = { ...cfg }; this.save(); }
 
   _changed() { this.save(); if (this.onPresetsChanged) this.onPresetsChanged(); }
 

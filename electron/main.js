@@ -270,6 +270,15 @@ ipcMain.handle('settings:set', (_e, patch) => {
   saveSettings();
   return { ...settings, hardwareAcceleration };
 });
+// G-code to a printer on the local network (the page itself can't: CORS, mixed content). Any http(s) address.
+ipcMain.handle('printer:fetch', async (_e, url, opts = {}) => {
+  try {
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return { error: 'Not a web address' };
+    const body = opts.body ? Buffer.from(opts.body) : undefined;
+    const res = await net.fetch(url, { method: opts.method || 'GET', headers: opts.headers || {}, body, signal: AbortSignal.timeout(10 * 60 * 1000) });
+    return { status: res.status, ok: res.ok, text: await res.text() };
+  } catch (err) { return { error: `Couldn't reach the printer: ${err && err.message ? err.message : err}` }; }
+});
 ipcMain.handle('app:relaunch', () => { app.relaunch(); app.exit(0); });
 ipcMain.handle('gpu:info', async () => {
   let info = null;

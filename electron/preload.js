@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('dabbleNative', {
   driveToken: call('gdrive:token'),
   driveSignOut: call('gdrive:signout'),
   driveFetch: call('gdrive:fetch'),
+  printerFetch: call('printer:fetch'),
   driveHasSignIn: call('gdrive:has-signin'),
   listFonts: call('fonts:list'),
   loadFont: call('fonts:load'),

@@ -18,6 +18,7 @@ import { Profiles, FILAMENT_DENSITY } from './profiles.js';
 import { SettingsPanel } from './settingspanel.js';
 import { PlateModel, fitProblem, arrange } from './model.js';
 import { SlicerScene } from './scene.js';
+import { sendGcode } from './printerlink.js';
 import { registerSyncFile, syncFileChanged } from '../drive.js';
 import { ModelGizmo } from './modelgizmo.js';
 import { bestOrientation } from './orient.js';
@@ -121,6 +122,8 @@ export class SlicerWorkspace {
     this.cancelBtn.hidden = true;
     this.saveBtn = button({ label: 'Save G-code', icon: 'export', cls: 'btn-outline', title: 'Save the G-code file', onClick: () => this.saveGcode() });
     this.saveBtn.hidden = true;
+    this.sendBtn = button({ label: 'Send to printer', icon: 'export', cls: 'btn-outline', title: 'Send the G-code to the printer set up under Printer settings → Printer connection', onClick: () => this.sendToPrinter() });
+    this.sendBtn.hidden = true;
     this.toolbar = h('div', { class: 'toolbar sl-toolbar', role: 'toolbar', 'aria-label': 'Slicer tools' },
       this.listBtn = button({ icon: 'list', title: 'Plate list', cls: 'active', onClick: () => this.toggleOutliner() }), h('span', { class: 'sep' }),
       button({ icon: 'cube', label: 'Add design', title: 'Add the whole 3D design to the plate', onClick: () => this.addFromDesign() }),
@@ -141,7 +144,7 @@ export class SlicerWorkspace {
     this.statusSub = h('div', { class: 'sl-sum-sub' });
     this.footer = h('div', { class: 'sl-footer' },
       h('div', { class: 'sl-sum-title' }, h('svg', { viewBox: '0 0 24 24', width: 17, height: 17, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8, 'stroke-linecap': 'round', class: 'icon' }, h('path', { d: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2' })), this.status), this.statusSub, this.progressWrap,
-      h('div', { class: 'sl-footer-btns' }, this.cancelBtn, this.saveBtn, this.sliceBtn));
+      h('div', { class: 'sl-footer-btns' }, this.cancelBtn, this.saveBtn, this.sendBtn, this.sliceBtn));
     this.banner = h('div', { class: 'mode-banner', hidden: true });
     this.inspectorEl = h('div', { class: 'inspector sl-inspector' });
     makeDraggable(this.inspectorEl, { key: 'slicer-inspector' });
@@ -578,6 +581,7 @@ export class SlicerWorkspace {
     this.cancelBtn.hidden = !busy;
     this.progressWrap.hidden = !busy;
     this.saveBtn.hidden = !this.result || busy;
+    this.sendBtn.hidden = !this.result || busy;
     const lbl = this.sliceBtn.querySelector('.btn-label'); if (lbl) lbl.textContent = this.result && this.dirty ? 'Slice again' : 'Slice';
     this.sliceBtn.classList.toggle('disabled', !this._active().length);
     this.modeSeg.children[1].classList.toggle('disabled', !this.result);
@@ -646,6 +650,26 @@ export class SlicerWorkspace {
     if (s.get('layer_height') > s.get('machine_nozzle_size')) return 'The layer height is larger than the nozzle. Lower it in Process › Quality.';
     if (!(s.get('machine_width') > 0 && s.get('machine_depth') > 0 && s.get('machine_height') > 0)) return 'The printer size is not set. See Printer › Basic information.';
     return '';
+  }
+
+  /** Upload the sliced G-code to the printer configured for the selected printer preset. */
+  async sendToPrinter() {
+    if (!this.result || this.sending) return;
+    const cfg = this.profiles.connection();
+    if (!cfg.url) {
+      toast('Set up the printer connection first (Printer settings → Printer connection).', 'warn', 5000);
+      this.panel.setScope('printer');
+      return;
+    }
+    const name = `${this.app._fileBase()}`.replace(/[^\w .()-]+/g, '_') + '.gcode';
+    this.sending = true; this.sendBtn.classList.add('disabled');
+    this.status.textContent = `Sending ${name} to the printer…`;
+    try {
+      const msg = await sendGcode(cfg, { name, data: new Uint8Array(this.result.gcode) }, { start: !!cfg.start });
+      toast(`${msg}: ${name}`, 'ok', 4000);
+    } catch (err) { toast(err.message || String(err), 'warn', 9000); }
+    this.sending = false; this.sendBtn.classList.remove('disabled');
+    this._updateBar();
   }
 
   async saveGcode() {
