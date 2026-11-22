@@ -180,8 +180,16 @@ async function duetRrStatusOld(cfg) {            // RepRapFirmware 2.x: rr_statu
   const st = { I: 'idle', P: 'printing', D: 'paused', S: 'paused', R: 'printing', M: 'printing', B: 'busy', F: 'busy', C: 'busy', H: 'error', O: 'error' }[d.status] || 'idle';
   const temps = [];
   if (d.temps && d.temps.bed) temps.push({ name: 'Bed', current: num(d.temps.bed.current), target: num(d.temps.bed.active) });
-  if (d.temps && d.temps.heads) (d.temps.heads.current || []).forEach((cur, i) => temps.push({ name: 'Nozzle', current: num(cur), target: num((d.temps.heads.active || [])[i]) }));
-  return { state: st, file: null, progress: num(d.fractionPrinted) != null ? d.fractionPrinted / 100 : null, layer: num(d.currentLayer), layers: null, timeLeft: num(d.timesLeft && d.timesLeft.file), elapsed: num(d.printDuration), temps };
+  if (d.temps && d.temps.heads) (d.temps.heads.current || []).forEach((cur, i, all) => temps.push({ name: all.length > 1 ? `Tool ${i}` : 'Nozzle', current: num(cur), target: num((d.temps.heads.active || [])[i]) }));
+  let file = null, layers = null;
+  if (st === 'printing' || st === 'paused') {          // which file is it? (best effort)
+    try {
+      const f = json(await request(cfg, '/rr_fileinfo')) || {};
+      file = String(f.fileName || '').replace(/^.*[\\/]/, '') || null;
+      layers = num(f.numLayers) || (num(f.height) && num(f.layerHeight) ? Math.round(f.height / f.layerHeight) : null);
+    } catch { /* keep going without it */ }
+  }
+  return { state: st, file, progress: num(d.fractionPrinted) != null ? d.fractionPrinted / 100 : null, layer: num(d.currentLayer), layers, timeLeft: num(d.timesLeft && d.timesLeft.file), elapsed: num(d.printDuration), temps };
 }
 
 /** Open a session with the printer for repeated status reads. Returns { read(), close() }. */
@@ -222,7 +230,8 @@ export async function openStatus(cfg) {
     async read() {
       if (old) return duetRrStatusOld(cfg);
       try { return duetStatus(await duetModel(cfg, c)); } catch (e) {
-        if (c.mode === 'rr' && /\((404|405)/.test(e.message)) { old = true; return duetRrStatusOld(cfg); }
+        // firmware without rr_model (RepRapFirmware 2.x answers 'Unknown request'): use the older rr_status
+        if (c.mode === 'rr') { old = true; return duetRrStatusOld(cfg); }
         throw e;
       }
     },
