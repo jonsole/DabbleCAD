@@ -112,7 +112,7 @@ export class SettingsPanel {
         'sep',
         { label: 'Export preset…', onClick: async () => { const path = await platform.saveDialog({ title: 'Export preset', defaultName: `${cur.name.replace(/[^\w .-]+/g, '')}.dabbleslicer.json`, filters: [{ name: 'Slicer preset', extensions: ['json'] }], data: new TextEncoder().encode(p.exportScope(scope)) }); if (path) toast('Exported to ' + path); } },
         { label: 'Import preset…', onClick: async () => { const files = await platform.openDialog({ filters: [{ name: 'Slicer preset', extensions: ['json'] }] }); if (!files || !files.length) return; try { const sc = p.importScope(new TextDecoder().decode(files[0].data)); this.setScope(sc); toast('Imported preset'); } catch (err) { toast(err.message || String(err), 'warn', 5000); } } },
-        { label: 'Import from Cura project (.3mf)…', onClick: () => this._importCura() },
+        { label: 'Import from Cura (.3mf / .curaprofile)…', onClick: () => this._importCura() },
       ];
       popupMenu(items, e.currentTarget);
     };
@@ -124,15 +124,18 @@ export class SettingsPanel {
 
   /** Read printer, material and quality settings from a Cura project and add them as presets. */
   async _importCura() {
-    const files = await platform.openDialog({ filters: [{ name: 'Cura project', extensions: ['3mf'] }] });
+    const files = await platform.openDialog({ filters: [{ name: 'Cura project or profile', extensions: ['3mf', 'curaprofile'] }] });
     if (!files || !files.length) return;
     try {
       const { presets, skipped, machine } = readCuraProject(new Uint8Array(files[0].data), this.defs, (k) => (this.info.get(k) || {}).scope || null);
       if (!presets.length) throw new Error('No settings found in this project');
-      for (const pr of presets) this.profiles.addPreset(pr.scope, pr.name, pr.overrides);
+      for (const pr of presets) {
+        if (pr.partial) this.store.patch(pr.overrides);          // a profile has no machine: adjust the current printer, keep its size and G-code
+        else this.profiles.addPreset(pr.scope, pr.name, pr.overrides);
+      }
       this._renderChrome(); this._renderBody();
       const count = presets.reduce((n, pr) => n + Object.keys(pr.overrides).length, 0);
-      toast(`Imported "${machine}" from Cura: ${count} settings in ${presets.length} presets${skipped.length ? ` (${skipped.length} not supported)` : ''}`, 'ok', 7000);
+      toast(`Imported "${machine}" from Cura: ${count} settings in ${presets.filter((pr) => !pr.partial).length} presets${skipped.length ? ` (${skipped.length} not supported)` : ''}`, 'ok', 7000);
       if (skipped.length) console.info('Cura settings not imported:', skipped);
     } catch (err) { toast(err.message || String(err), 'warn', 6000); }
   }

@@ -62,30 +62,32 @@ function readMaterial(xml) {
 export function readCuraProject(bytes, defs, scopeOf) {
   const files = unzipSync(bytes);
   const all = Object.keys(files);
-  const names = all.filter((n) => /(^|\/)cura\//i.test(n));
-  if (!names.some((n) => /\.cfg$/i.test(n))) throw new Error('This 3MF holds only the model, no settings (it looks like a File → Export… file). In Cura use File → Save Project… and choose to save with the settings, then import that.');
+  // a project keeps its settings in Cura/, an exported profile (.curaprofile) is just the settings files
+  const names = all.filter((n) => !/(^|\/)$|\.(model|png|rels|json)$|content_types|^3D\/|^Metadata\//i.test(n))
+    .sort((a, b) => /extruder/i.test(a) - /extruder/i.test(b));          // extruder values override the global ones
   const seen = [];
   const kinds = {};            // kind -> merged raw values
   let machine = '', quality = '', materialInfo = null;
   for (const n of names) {
-    if (/\.(inst|extruder|global)?\.?cfg$/i.test(n) && !/preferences\.cfg$/i.test(n)) {
-      const ini = parseIni(strFromU8(files[n]));
-      if (!ini.values) {                                        // a machine / extruder stack, not a settings container
-        if (ini.general && ini.general.name && /global/i.test(n) && !machine) machine = ini.general.name;
-        continue;
-      }
-      const kind = (ini.metadata && ini.metadata.type) || (/_user\b|user_/.test(n) ? 'user' : /changes/i.test(n) ? 'quality_changes' : '');
-      seen.push(`${n} (${kind || 'unknown type'}, ${Object.keys(ini.values).length} values)`);
-      if (!ORDER.includes(kind)) continue;
-      Object.assign((kinds[kind] = kinds[kind] || {}), ini.values || {});
-      if (kind === 'quality_changes' && ini.general && ini.general.name && !quality) quality = ini.general.name;
-    } else if (/\.global\.cfg$/i.test(n)) {
-      const ini = parseIni(strFromU8(files[n]));
-      if (ini.general && ini.general.name) machine = ini.general.name;
-    } else if (/\.fdm_material$/i.test(n) && !materialInfo) {
-      try { materialInfo = readMaterial(strFromU8(files[n])); } catch { /* optional */ }
+    if (/\.fdm_material$/i.test(n)) {
+      if (!materialInfo) { try { materialInfo = readMaterial(strFromU8(files[n])); } catch { /* optional */ } }
+      continue;
     }
+    if (/preferences\.cfg$/i.test(n)) continue;
+    const text = strFromU8(files[n]);
+    if (!/^\s*\[/.test(text)) continue;
+    const ini = parseIni(text);
+    if (!ini.values) {                                          // a machine / extruder stack, not a settings container
+      if (ini.general && ini.general.name && /global/i.test(n) && !machine) machine = ini.general.name;
+      continue;
+    }
+    const kind = (ini.metadata && ini.metadata.type) || (/_user\b|user_/.test(n) ? 'user' : /changes/i.test(n) ? 'quality_changes' : '');
+    seen.push(`${n} (${kind || 'unknown type'}, ${Object.keys(ini.values).length} values)`);
+    if (!ORDER.includes(kind)) continue;
+    Object.assign((kinds[kind] = kinds[kind] || {}), ini.values);
+    if (kind === 'quality_changes' && ini.general && ini.general.name && !quality) quality = ini.general.name;
   }
+  if (!seen.length && all.some((n) => /^3D\//.test(n))) throw new Error('This 3MF holds only the model, no settings (it looks like a File → Export… file). In Cura use File → Save Project… and choose to save with the settings, then import that.');
   if (materialInfo) kinds.material = { ...materialInfo.values, ...(kinds.material || {}) };
   const merged = {};
   for (const k of ORDER) Object.assign(merged, kinds[k] || {});
@@ -103,10 +105,10 @@ export function readCuraProject(bytes, defs, scopeOf) {
     console.warn('Cura import found:', { files: all, containers: seen, skipped });
     throw new Error(`No settings found. ${seen.length ? `Read ${seen.length} Cura containers but none matched this slicer's settings` : `The project has ${names.length} Cura files but no settings containers`} (details in the browser console).`);
   }
-  const label = machine || 'Cura';
+  const label = machine || quality || 'Cura';
   const presets = [];
-  if (Object.keys(by.printer).length) presets.push({ scope: 'printer', name: label, overrides: by.printer });
-  if (Object.keys(by.filament).length) presets.push({ scope: 'filament', name: (materialInfo && materialInfo.name) || `${label} material`, overrides: by.filament });
+  if (Object.keys(by.printer).length) presets.push({ scope: 'printer', name: label, overrides: by.printer, partial: !machine });   // partial: no machine in the file, so these only adjust the current printer
+  if (Object.keys(by.filament).length) presets.push({ scope: 'filament', name: (materialInfo && materialInfo.name) || (!machine && quality) || `${label} material`, overrides: by.filament });
   if (Object.keys(by.process).length) presets.push({ scope: 'process', name: quality || `${label} settings`, overrides: by.process });
   return { presets, skipped, machine: label };
 }
