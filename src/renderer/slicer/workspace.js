@@ -80,7 +80,6 @@ export class SlicerWorkspace {
     this.store.onChange(() => this._settingsChanged());
     this._syncVolume(true);
     if (this.pendingAdd) { const add = this.pendingAdd; this.pendingAdd = null; await this.addFromDesign(add); }
-    else if (!this.models.length) await this.addFromDesign({ quiet: true });
     return true;
   }
 
@@ -465,7 +464,7 @@ export class SlicerWorkspace {
     clear(this.inspectorEl);
     const m = this.selectedModel;
     this.fields = {};
-    this.inspectorEl.hidden = !m || this.mode === 'preview';
+    this.inspectorEl.hidden = !m || this.mode === 'preview' || !!this.monitoring;
     if (!m) return;
     const input = (key, step, axis) => {
       const el = h('input', { class: 'input' + (axis ? ' ax-' + axis : ''), type: 'number', step, 'aria-label': key });
@@ -577,13 +576,15 @@ export class SlicerWorkspace {
     this.monTemps = h('div', { class: 'sl-mon-temps' });
     this.monNote = h('div', { class: 'sl-mon-note' });
     this.monLink = h('a', { target: '_blank', rel: 'noopener' }, "Open the printer's own page");
-    this.monitorEl = h('div', { class: 'sl-monitor' },
-      h('div', { class: 'sl-mon-head' }, h('b', {}, 'Printer'), this.monState),
+    this.monitorEl = h('div', { class: 'inspector sl-inspector sl-monitor' },
+      h('div', { class: 'insp-head sl-mon-head' }, h('div', { class: 'insp-title' }, 'Printer'), this.monState),
+      h('div', { class: 'sl-mon-body' },
       this.monFile,
       h('div', { class: 'sl-mon-prog' }, h('div', { class: 'sl-mon-track' }, this.monBar), this.monPct),
       row('Layer', this.monLayer), row('Time left', this.monLeft), row('Elapsed', this.monElapsed),
-      this.monTemps, this.monNote, this.monLink);
+      this.monTemps, this.monNote, this.monLink));
     this.viewEl.append(this.monitorEl);
+    makeDraggable(this.monitorEl, { key: 'slicer-monitor' });
   }
 
   async _startPolling() {
@@ -597,6 +598,7 @@ export class SlicerWorkspace {
     while (this._pollToken === token) {
       try {
         if (!session) session = await openStatus(cfg);
+        this._session = session;
         if (this._pollToken !== token) { session.close(); return; }
         this._showStatus(await session.read());
       } catch (err) {
@@ -608,6 +610,31 @@ export class SlicerWorkspace {
     if (session) session.close();
   }
   _stopPolling() { this._pollToken = null; }
+
+  /** The printer is running a file that isn't the one sent from here: read it from the printer and draw that. */
+  async _maybeFetchRunning(st, live) {
+    const base = (s) => String(s || '').replace(/^.*[\\/]/, '');
+    if (!live || !st.path || !this._session || !this._session.download) return;
+    if (this.printJob && base(this.printJob.name) === base(st.path)) return;
+    if (this._fetching === st.path || this._fetchFailed === st.path) return;
+    this._fetching = st.path;
+    this.monNote.textContent = 'Reading the G-code from the printer…';
+    try {
+      const bytes = await this._session.download(st.path);
+      const parsed = await parseGcode(bytes, { filamentDiameter: this.store.get('material_diameter') || 1.75 });
+      if (!this.monitoring) { this._fetching = null; return; }
+      if (!parsed.layers) throw new Error('No layers found in that file (the preview needs G-code from Cura or CuraEngine).');
+      this.printJob = { name: base(st.path), gcode: bytes, parsed, centerIsZero: this.store.get('machine_center_is_zero'), fromPrinter: true };
+      this.scene.showPreview(parsed, this.printJob.centerIsZero);
+      this.scene.setLayerRange(0, parsed.layers - 1);
+      this.monNote.textContent = '';
+    } catch (err) {
+      this._fetchFailed = st.path;
+      this._fetchErr = `Couldn't read the file from the printer: ${err.message || err}`;
+      this.monNote.textContent = this._fetchErr;
+    }
+    this._fetching = null;
+  }
 
   _showStatusError(err) {
     this.monState.textContent = 'No connection'; this.monState.dataset.s = 'error';
@@ -633,9 +660,11 @@ export class SlicerWorkspace {
     // the layers already printed in colour, the rest grey (nothing to grey out when the printer is not printing)
     const live = st.state === 'printing' || st.state === 'paused';
     this.scene.setPrintedLayers(live && layer != null ? layer : null);
+    this._maybeFetchRunning(st, live);
     const base = (s) => String(s || '').replace(/^.*[\\/]/, '');
-    this.monNote.textContent = !shown ? 'Send a slice to the printer, or slice a model, to see its layers drawn here.'
-      : (live && st.file && this.printJob && base(st.file) !== base(this.printJob.name) ? 'The printer is running a different file from the one sent from here.' : '');
+    const fetchNote = this._fetching ? 'Reading the G-code from the printer…' : (live && this._fetchFailed && this._fetchFailed === st.path ? this._fetchErr : '');
+    this.monNote.textContent = fetchNote || (!shown ? 'Send a slice to the printer, or slice a model, to see its layers drawn here.'
+      : (live && st.file && this.printJob && base(st.file) !== base(this.printJob.name) ? 'The printer is running a different file from the one sent from here.' : ''));
   }
 
   _buildPreviewPanel() {

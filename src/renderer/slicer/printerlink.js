@@ -159,7 +159,7 @@ function duetStatus(m) {
   const tools = m.tools || [];
   if (tools.length) tools.forEach((t, i) => { const hi = (t.heaters || [])[0]; if (hi != null && heaters[hi]) temps.push({ name: tools.length > 1 ? `Tool ${t.number != null ? t.number : i}` : 'Nozzle', current: num(heaters[hi].current), target: num((t.active || [])[0]) }); });
   else heaters.forEach((hh, i) => { if (i !== bed) temps.push({ name: i === 1 || heaters.length === 2 ? 'Nozzle' : `Heater ${i}`, current: num(hh.current), target: num(hh.active) }); });
-  return { state, file: String((job.file && job.file.fileName) || job.lastFileName || '').replace(/^.*[\\/]/, '') || null, progress, layer: num(job.layer), layers: num(job.file && job.file.numLayers),
+  return { state, path: (job.file && job.file.fileName) || job.lastFileName || null, file: String((job.file && job.file.fileName) || job.lastFileName || '').replace(/^.*[\\/]/, '') || null, progress, layer: num(job.layer), layers: num(job.file && job.file.numLayers),
     timeLeft: num(job.timesLeft && (job.timesLeft.file != null ? job.timesLeft.file : job.timesLeft.filament)), elapsed: num(job.duration), temps };
 }
 
@@ -181,17 +181,20 @@ async function duetRrStatusOld(cfg) {            // RepRapFirmware 2.x: rr_statu
   const temps = [];
   if (d.temps && d.temps.bed) temps.push({ name: 'Bed', current: num(d.temps.bed.current), target: num(d.temps.bed.active) });
   if (d.temps && d.temps.heads) (d.temps.heads.current || []).forEach((cur, i, all) => temps.push({ name: all.length > 1 ? `Tool ${i}` : 'Nozzle', current: num(cur), target: num((d.temps.heads.active || [])[i]) }));
-  let file = null, layers = null;
+  let file = null, layers = null, path = null;
   if (st === 'printing' || st === 'paused') {          // which file is it? (best effort)
     try {
       const f = json(await request(cfg, '/rr_fileinfo')) || {};
+      path = f.fileName || null;
       file = String(f.fileName || '').replace(/^.*[\\/]/, '') || null;
       layers = num(f.numLayers) || (num(f.height) && num(f.layerHeight) ? Math.round(f.height / f.layerHeight) : null);
     } catch { /* keep going without it */ }
   }
-  return { state: st, file, progress: num(d.fractionPrinted) != null ? d.fractionPrinted / 100 : null, layer: num(d.currentLayer), layers, timeLeft: num(d.timesLeft && d.timesLeft.file), elapsed: num(d.printDuration), temps };
+  return { state: st, file, path, progress: num(d.fractionPrinted) != null ? d.fractionPrinted / 100 : null, layer: num(d.currentLayer), layers, timeLeft: num(d.timesLeft && d.timesLeft.file), elapsed: num(d.printDuration), temps };
 }
 
+const encPath = (p) => String(p).split('/').map(encodeURIComponent).join('/');
+const toBytes = (r, what) => { if (!r.ok) fail(r, what); return new TextEncoder().encode(r.text); };
 /** Open a session with the printer for repeated status reads. Returns { read(), close() }. */
 export async function openStatus(cfg) {
   if (cfg.kind === 'moonraker') {
@@ -205,9 +208,11 @@ export async function openStatus(cfg) {
       const temps = [];
       if (s.heater_bed) temps.push({ name: 'Bed', current: num(s.heater_bed.temperature), target: num(s.heater_bed.target) });
       if (s.extruder) temps.push({ name: 'Nozzle', current: num(s.extruder.temperature), target: num(s.extruder.target) });
-      return { state, file: ps.filename || null, progress: state === 'done' ? 1 : state === 'idle' ? null : p, layer: num(ps.info && ps.info.current_layer), layers: num(ps.info && ps.info.total_layer),
+      return { state, file: ps.filename || null, path: ps.filename || null, progress: state === 'done' ? 1 : state === 'idle' ? null : p, layer: num(ps.info && ps.info.current_layer), layers: num(ps.info && ps.info.total_layer),
         timeLeft: el != null && p > 0.01 && state === 'printing' ? el / p - el : null, elapsed: el, temps };
-    }, close() {} };
+    },
+    async download(path) { return toBytes(await request(cfg, `/server/files/gcodes/${encPath(path)}`, { headers: key(cfg) }), 'Moonraker would not give up the file'); },
+    close() {} };
   }
   if (cfg.kind === 'octoprint') {
     return { async read() {
@@ -221,8 +226,10 @@ export async function openStatus(cfg) {
       const t = await request(cfg, '/api/printer', { headers: key(cfg) });
       if (t.ok) { const tt = (json(t) || {}).temperature || {}; if (tt.bed) temps.push({ name: 'Bed', current: num(tt.bed.actual), target: num(tt.bed.target) }); if (tt.tool0) temps.push({ name: 'Nozzle', current: num(tt.tool0.actual), target: num(tt.tool0.target) }); }
       const comp = num(pr.completion);
-      return { state: state === 'idle' && comp === 100 ? 'done' : state, file: (d.job && d.job.file && d.job.file.name) || null, progress: comp != null && state !== 'idle' ? comp / 100 : comp === 100 ? 1 : null, layer: null, layers: null, timeLeft: num(pr.printTimeLeft), elapsed: num(pr.printTime), temps };
-    }, close() {} };
+      return { state: state === 'idle' && comp === 100 ? 'done' : state, file: (d.job && d.job.file && d.job.file.name) || null, path: (d.job && d.job.file && (d.job.file.path || d.job.file.name)) || null, progress: comp != null && state !== 'idle' ? comp / 100 : comp === 100 ? 1 : null, layer: null, layers: null, timeLeft: num(pr.printTimeLeft), elapsed: num(pr.printTime), temps };
+    },
+    async download(path) { return toBytes(await request(cfg, `/downloads/files/local/${encPath(path)}`, { headers: key(cfg) }), 'OctoPrint would not give up the file'); },
+    close() {} };
   }
   const c = await duetConnect(cfg);
   let old = false;
@@ -234,6 +241,11 @@ export async function openStatus(cfg) {
         if (c.mode === 'rr') { old = true; return duetRrStatusOld(cfg); }
         throw e;
       }
+    },
+    async download(path) {
+      const full = /^\d+:\//.test(path) ? path : path.startsWith('/') ? path : `0:/gcodes/${path}`;
+      if (c.mode === 'rr') return toBytes(await request(cfg, `/rr_download?name=${encodeURIComponent(full)}`), 'The Duet would not give up the file');
+      return toBytes(await request(cfg, `/machine/file/${encodeURIComponent(full)}`, { headers: c.session ? { 'X-Session-Key': c.session } : {} }), 'The Duet would not give up the file');
     },
     close() { duetDisconnect(cfg, c); },
   };
