@@ -114,7 +114,8 @@ export class SlicerWorkspace {
     // top toolbar, built like the 3D Design one
     this.modeSeg = h('div', { class: 'mode-group', role: 'group', 'aria-label': 'View' },
       button({ label: 'Model', title: 'Show the models on the bed', cls: 'active', onClick: () => this.setMode('model') }),
-      button({ label: 'Preview', title: 'Show the sliced G-code layer by layer', cls: 'disabled', onClick: () => this.setMode('preview') }));
+      button({ label: 'Preview', title: 'Show the sliced G-code layer by layer', cls: 'disabled', onClick: () => this.setMode('preview') }),
+      this.monitorBtn = button({ label: 'Monitor', title: "Show the printer's own web page (set the address in Printer settings)", onClick: () => this.showMonitor(!this.monitoring) }));
     this.progress = h('i');
     this.progressWrap = h('div', { class: 'sl-progress', hidden: true }, this.progress);
     this.sliceBtn = button({ label: 'Slice', icon: 'export', cls: 'btn-primary sl-slice', title: 'Slice the plate to G-code', onClick: () => this.slice() });
@@ -131,12 +132,12 @@ export class SlicerWorkspace {
       button({ icon: 'plus', label: 'Import', title: 'Add an STL, OBJ, 3MF or PLY file', onClick: () => this.importFiles() }), h('span', { class: 'sep' }),
       this.undoBtn = button({ icon: 'undo', title: 'Undo (Ctrl+Z)', onClick: () => this.undo() }),
       this.redoBtn = button({ icon: 'redo', title: 'Redo (Ctrl+Y)', onClick: () => this.redo() }), h('span', { class: 'sep' }),
+      this.modeSeg, h('span', { class: 'spacer' }),
       this.dupBtn = button({ icon: 'duplicate', title: 'Copy the selected model', onClick: () => this.selected && this.duplicate(this.selected) }),
       this.delBtn = button({ icon: 'trash', title: 'Remove the selected model (Del)', onClick: () => this.selected && this.removeModel(this.selected) }), h('span', { class: 'sep' }),
       this.arrangeBtn = button({ icon: 'align', title: 'Arrange: space the models out on the bed', onClick: () => this.arrange() }),
       this.orientBtn = button({ icon: 'orient', title: 'Auto-orient for printing: turn the selected model (or every model if none is selected) to need the least support', onClick: () => this.autoOrient() }),
-      this.resetBtn = button({ icon: 'drop', title: 'Reset the selected model: undo rotation and scaling', onClick: () => this.resetSelected() }),
-      h('span', { class: 'spacer' }), this.modeSeg);
+      this.resetBtn = button({ icon: 'drop', title: 'Reset the selected model: undo rotation and scaling', onClick: () => this.resetSelected() }));
 
     // the 3D view, with the same floating pieces as 3D Design
     this.viewEl = h('div', { class: 'viewport sl-view' });
@@ -515,10 +516,39 @@ export class SlicerWorkspace {
     if (mode === 'preview' && !this.result) return;
     this.scene.setMode(mode);
     this.mode = mode;
-    [...this.modeSeg.children].forEach((b, i) => b.classList.toggle('active', (i === 0) === (mode === 'model')));
+    this.showMonitor(false);
     this.previewPanel.hidden = mode !== 'preview';
     this._renderTransform();
     this.viewEl.classList.toggle('sl-previewing', mode === 'preview');
+  }
+
+  /** The printer's web page (Duet Web Control, Mainsail, OctoPrint…) in a panel over the view. */
+  showMonitor(on, { reload = false } = {}) {
+    const cfg = this.profiles.connection();
+    if (on && !cfg.url) { toast('Set the printer address first (Printer settings → Printer connection).', 'warn', 5000); this.panel.setScope('printer'); on = false; }
+    this.monitoring = on;
+    if (on) {
+      let url = cfg.url.trim();
+      if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
+      if (!this.monitorEl) {
+        this.monitorFrame = h('iframe', { class: 'sl-monitor-frame', title: 'Printer', referrerpolicy: 'no-referrer' });
+        this.monitorLink = h('a', { target: '_blank', rel: 'noopener', class: 'btn btn-outline' }, 'Open in a new tab');
+        this.monitorEl = h('div', { class: 'sl-monitor' },
+          h('div', { class: 'sl-monitor-bar' }, h('span', { class: 'sl-monitor-url' }),
+            button({ label: 'Reload', cls: 'btn-outline', onClick: () => { this.monitorFrame.src = this.monitorFrame.src; } }), this.monitorLink),
+          h('div', { class: 'sl-monitor-hint' }, "Blank page? Browsers won't show an http printer inside an https page, and some printers forbid being embedded. The desktop app or \u201COpen in a new tab\u201D always works."),
+          this.monitorFrame);
+        this.viewEl.append(this.monitorEl);
+      }
+      this.monitorEl.querySelector('.sl-monitor-url').textContent = url;
+      this.monitorLink.href = url;
+      if (reload || this.monitorFrame.dataset.url !== url) { this.monitorFrame.src = url; this.monitorFrame.dataset.url = url; }
+    }
+    if (this.monitorEl) this.monitorEl.hidden = !on;
+    [...this.modeSeg.children].forEach((b) => {
+      const isMon = b === this.monitorBtn;
+      b.classList.toggle('active', on ? isMon : (!isMon && (b === this.modeSeg.children[0]) === (this.mode === 'model')));
+    });
   }
 
   _buildPreviewPanel() {
@@ -700,6 +730,7 @@ export class SlicerWorkspace {
     try {
       const msg = await sendGcode(cfg, { name, data: new Uint8Array(this.result.gcode) }, { start: !!cfg.start });
       toast(`${msg}: ${name}`, 'ok', 4000);
+      this.showMonitor(true, { reload: true });
     } catch (err) { toast(err.message || String(err), 'warn', 9000); }
     this.sending = false; this.sendBtn.classList.remove('disabled');
     this._updateBar();

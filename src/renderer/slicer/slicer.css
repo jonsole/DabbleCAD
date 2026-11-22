@@ -157,3 +157,12 @@
 .sl-conn-result { font-size: 12px; color: var(--muted); }
 .sl-conn-result.ok { color: #46c07a; }
 .sl-conn-result.bad { color: #e5645b; }
+
+/* printer monitor: the printer's own web page over the view */
+.sl-monitor { position: absolute; inset: 0; z-index: 40; display: flex; flex-direction: column; background: var(--bg); }
+.sl-monitor[hidden] { display: none; }
+.sl-monitor-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.sl-monitor-url { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim, #8a93a3); font-size: 12px; }
+.sl-monitor-hint { padding: 4px 10px; font-size: 11px; color: var(--text-dim, #8a93a3); border-bottom: 1px solid var(--border); }
+.sl-monitor-frame { flex: 1; width: 100%; border: 0; background: #fff; }
+.sl-monitor-bar a.btn { text-decoration: none; }
