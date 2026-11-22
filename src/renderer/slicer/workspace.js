@@ -765,23 +765,32 @@ export class SlicerWorkspace {
     this.sliceBtn.hidden = busy;
     this.cancelBtn.hidden = !busy;
     this.progressWrap.hidden = !busy;
-    this.saveBtn.hidden = !this.result || busy;
-    this.sendBtn.hidden = !this.result || busy;
+    // Save and Send only make sense for an up-to-date slice; Slice only when there is something new to slice
+    const fresh = !!this.result && !this.dirty;
+    this.saveBtn.hidden = busy;
+    this.sendBtn.hidden = busy;
+    this.saveBtn.classList.toggle('disabled', !fresh);
+    this.sendBtn.classList.toggle('disabled', !fresh || !!this.sending);
+    this.saveBtn.title = fresh ? 'Save the G-code file' : this.result ? 'Slice again first: the plate or settings changed' : 'Slice first';
+    this.sendBtn.title = fresh ? 'Send the G-code to the printer set up under Printer settings → Printer connection' : this.result ? 'Slice again first: the plate or settings changed' : 'Slice first';
     const lbl = this.sliceBtn.querySelector('.btn-label'); if (lbl) lbl.textContent = this.result && this.dirty ? 'Slice again' : 'Slice';
-    this.sliceBtn.classList.toggle('disabled', !this._active().length);
+    this.sliceBtn.classList.toggle('disabled', !this._active().length || fresh);
+    this.sliceBtn.title = fresh ? 'Already sliced: change the plate or a setting to slice again' : 'Slice the plate to G-code';
     this.modeSeg.children[1].classList.toggle('disabled', !this.result);
     if (busy) return;
     const st = this.store;
     if (this.result) {
       const r = this.result.summary;
       const g = r.filamentM ? Math.PI * Math.pow(st.get('material_diameter') / 2, 2) * r.filamentM * (FILAMENT_DENSITY[this.profiles.current('filament').id] ?? 1.24) : null;   // mm² x m = cm³
-      this.status.textContent = this.dirty ? 'Out of date' : (r.seconds ? formatTime(r.seconds) : 'Sliced');
+      this.status.textContent = this.dirty ? 'Out of date: slice again' : (r.seconds ? formatTime(r.seconds) : 'Sliced');
       this.status.classList.toggle('sl-stale', this.dirty);
-      this.statusSub.textContent = this.dirty ? 'You changed something since slicing. Slice again to update.'
+      this.statusSub.hidden = this.dirty;
+      this.statusSub.textContent = this.dirty ? ''
         : [g ? `about ${Math.round(g)} g` : null, r.filamentM ? `${r.filamentM.toFixed(2)} m` : null, r.layers ? `${r.layers} layers` : null].filter(Boolean).join(' · ');
       this.statusSub.classList.toggle('sl-stale', this.dirty);
     } else {
       const n = this._active().length;
+      this.statusSub.hidden = false;
       this.status.textContent = 'Not sliced yet';
       this.status.classList.remove('sl-stale');
       this.statusSub.classList.remove('sl-stale');
@@ -839,7 +848,7 @@ export class SlicerWorkspace {
 
   /** Upload the sliced G-code to the printer configured for the selected printer preset. */
   async sendToPrinter() {
-    if (!this.result || this.sending) return;
+    if (!this.result || this.dirty || this.sending) return;
     const cfg = this.profiles.connection();
     if (!cfg.url) {
       toast('Set up the printer connection first (Printer settings → Printer connection).', 'warn', 5000);
@@ -847,7 +856,7 @@ export class SlicerWorkspace {
       return;
     }
     const name = `${this.app._fileBase()}`.replace(/[^\w .()-]+/g, '_') + '.gcode';
-    this.sending = true; this.sendBtn.classList.add('disabled');
+    this.sending = true; this._updateBar();
     this.status.textContent = `Sending ${name} to the printer…`;
     try {
       const sent = this.result;   // the Monitor keeps drawing exactly this G-code, whatever is sliced afterwards
@@ -856,12 +865,12 @@ export class SlicerWorkspace {
       toast(`${msg}: ${name}`, 'ok', 4000);
       this.showMonitor(true);
     } catch (err) { toast(err.message || String(err), 'warn', 9000); }
-    this.sending = false; this.sendBtn.classList.remove('disabled');
+    this.sending = false;
     this._updateBar();
   }
 
   async saveGcode() {
-    if (!this.result) return;
+    if (!this.result || this.dirty) return;
     const path = await platform.saveDialog({ title: 'Save G-code', defaultName: `${this.app._fileBase()}.gcode`, filters: [{ name: 'G-code', extensions: ['gcode'] }], data: this.result.gcode });
     if (path) toast('Saved to ' + path);
   }
