@@ -133,3 +133,99 @@ export async function sendGcode(cfg, file, { start = false } = {}) {
     return start ? 'Sent and started' : 'Sent to the printer';
   } finally { await duetDisconnect(cfg, c); }
 }
+
+// ------------------------------------------------------------------ live status
+/**
+ * What the printer is doing now, in one shape for every firmware:
+ *   { state: 'idle'|'printing'|'paused'|'done'|'busy'|'error', file, progress (0..1 or null), layer (1-based or null),
+ *     layers (or null), timeLeft (s or null), elapsed (s or null), temps: [{ name, current, target }] }
+ */
+const num = (v) => (typeof v === 'number' && isFinite(v) ? v : null);
+const json = (r) => { try { return JSON.parse(r.text); } catch { return null; } };
+
+// Duet object model (the same shape from rr_model and from the SBC's /machine/status)
+const DUET_STATES = { idle: 'idle', processing: 'printing', simulating: 'printing', pausing: 'paused', paused: 'paused', resuming: 'printing', cancelling: 'busy', halted: 'error', off: 'error', busy: 'busy', changingTool: 'printing', updating: 'busy', starting: 'busy' };
+function duetStatus(m) {
+  const st = m.state || {}, job = m.job || {}, heat = m.heat || {};
+  const size = num(job.file && job.file.size), pos = num(job.filePosition);
+  let progress = size && pos != null ? Math.min(1, pos / size) : null;
+  let state = DUET_STATES[st.status] || 'idle';
+  if (state === 'idle' && job.lastFileName && progress != null && progress >= 0.999) state = 'done';
+  if (state === 'idle') progress = null;
+  const temps = [];
+  const heaters = heat.heaters || [];
+  const bed = (heat.bedHeaters || []).filter((i) => i >= 0)[0];
+  if (bed != null && heaters[bed]) temps.push({ name: 'Bed', current: num(heaters[bed].current), target: num(heaters[bed].active) });
+  const tools = m.tools || [];
+  if (tools.length) tools.forEach((t, i) => { const hi = (t.heaters || [])[0]; if (hi != null && heaters[hi]) temps.push({ name: tools.length > 1 ? `Tool ${t.number != null ? t.number : i}` : 'Nozzle', current: num(heaters[hi].current), target: num((t.active || [])[0]) }); });
+  else heaters.forEach((hh, i) => { if (i !== bed) temps.push({ name: i === 1 || heaters.length === 2 ? 'Nozzle' : `Heater ${i}`, current: num(hh.current), target: num(hh.active) }); });
+  return { state, file: String((job.file && job.file.fileName) || job.lastFileName || '').replace(/^.*[\\/]/, '') || null, progress, layer: num(job.layer), layers: num(job.file && job.file.numLayers),
+    timeLeft: num(job.timesLeft && (job.timesLeft.file != null ? job.timesLeft.file : job.timesLeft.filament)), elapsed: num(job.duration), temps };
+}
+
+async function duetModel(cfg, c) {
+  const sh = c.session ? { 'X-Session-Key': c.session } : {};
+  const get = async (k) => {
+    const r = c.mode === 'rr' ? await request(cfg, `/rr_model?key=${k}&flags=d99`) : await request(cfg, `/machine/model?key=${k}&flags=d99`, { headers: sh });
+    if (!r.ok) fail(r, 'The Duet did not report its status');
+    const d = json(r);
+    return d && d.result !== undefined ? d.result : d;
+  };
+  return { state: await get('state'), job: await get('job'), heat: await get('heat'), tools: await get('tools') };
+}
+async function duetRrStatusOld(cfg) {            // RepRapFirmware 2.x: rr_status
+  const r = await request(cfg, '/rr_status?type=3');
+  if (!r.ok) fail(r, 'The Duet did not report its status');
+  const d = json(r) || {};
+  const st = { I: 'idle', P: 'printing', D: 'paused', S: 'paused', R: 'printing', M: 'printing', B: 'busy', F: 'busy', C: 'busy', H: 'error', O: 'error' }[d.status] || 'idle';
+  const temps = [];
+  if (d.temps && d.temps.bed) temps.push({ name: 'Bed', current: num(d.temps.bed.current), target: num(d.temps.bed.active) });
+  if (d.temps && d.temps.heads) (d.temps.heads.current || []).forEach((cur, i) => temps.push({ name: 'Nozzle', current: num(cur), target: num((d.temps.heads.active || [])[i]) }));
+  return { state: st, file: null, progress: num(d.fractionPrinted) != null ? d.fractionPrinted / 100 : null, layer: num(d.currentLayer), layers: null, timeLeft: num(d.timesLeft && d.timesLeft.file), elapsed: num(d.printDuration), temps };
+}
+
+/** Open a session with the printer for repeated status reads. Returns { read(), close() }. */
+export async function openStatus(cfg) {
+  if (cfg.kind === 'moonraker') {
+    return { async read() {
+      const r = await request(cfg, '/printer/objects/query?print_stats&virtual_sdcard&extruder&heater_bed', { headers: key(cfg) });
+      if (!r.ok) fail(r, 'Moonraker did not report its status');
+      const s = ((json(r) || {}).result || {}).status || {};
+      const ps = s.print_stats || {}, p = s.virtual_sdcard && num(s.virtual_sdcard.progress);
+      const state = { printing: 'printing', paused: 'paused', complete: 'done', cancelled: 'idle', standby: 'idle', error: 'error' }[ps.state] || 'idle';
+      const el = num(ps.print_duration);
+      const temps = [];
+      if (s.heater_bed) temps.push({ name: 'Bed', current: num(s.heater_bed.temperature), target: num(s.heater_bed.target) });
+      if (s.extruder) temps.push({ name: 'Nozzle', current: num(s.extruder.temperature), target: num(s.extruder.target) });
+      return { state, file: ps.filename || null, progress: state === 'done' ? 1 : state === 'idle' ? null : p, layer: num(ps.info && ps.info.current_layer), layers: num(ps.info && ps.info.total_layer),
+        timeLeft: el != null && p > 0.01 && state === 'printing' ? el / p - el : null, elapsed: el, temps };
+    }, close() {} };
+  }
+  if (cfg.kind === 'octoprint') {
+    return { async read() {
+      const r = await request(cfg, '/api/job', { headers: key(cfg) });
+      if (r.status === 401 || r.status === 403) throw new Error('OctoPrint rejected the API key.');
+      if (!r.ok) fail(r, 'OctoPrint did not report the job');
+      const d = json(r) || {};
+      const state = /print/i.test(d.state || '') && !/paus/i.test(d.state) ? 'printing' : /paus/i.test(d.state || '') ? 'paused' : /error|offline/i.test(d.state || '') ? 'error' : 'idle';
+      const pr = d.progress || {};
+      const temps = [];
+      const t = await request(cfg, '/api/printer', { headers: key(cfg) });
+      if (t.ok) { const tt = (json(t) || {}).temperature || {}; if (tt.bed) temps.push({ name: 'Bed', current: num(tt.bed.actual), target: num(tt.bed.target) }); if (tt.tool0) temps.push({ name: 'Nozzle', current: num(tt.tool0.actual), target: num(tt.tool0.target) }); }
+      const comp = num(pr.completion);
+      return { state: state === 'idle' && comp === 100 ? 'done' : state, file: (d.job && d.job.file && d.job.file.name) || null, progress: comp != null && state !== 'idle' ? comp / 100 : comp === 100 ? 1 : null, layer: null, layers: null, timeLeft: num(pr.printTimeLeft), elapsed: num(pr.printTime), temps };
+    }, close() {} };
+  }
+  const c = await duetConnect(cfg);
+  let old = false;
+  return {
+    async read() {
+      if (old) return duetRrStatusOld(cfg);
+      try { return duetStatus(await duetModel(cfg, c)); } catch (e) {
+        if (c.mode === 'rr' && /\((404|405)/.test(e.message)) { old = true; return duetRrStatusOld(cfg); }
+        throw e;
+      }
+    },
+    close() { duetDisconnect(cfg, c); },
+  };
+}

@@ -18,7 +18,7 @@ import { Profiles, FILAMENT_DENSITY } from './profiles.js';
 import { SettingsPanel } from './settingspanel.js';
 import { PlateModel, fitProblem, arrange } from './model.js';
 import { SlicerScene } from './scene.js';
-import { sendGcode } from './printerlink.js';
+import { sendGcode, openStatus } from './printerlink.js';
 import { registerSyncFile, syncFileChanged } from '../drive.js';
 import { ModelGizmo } from './modelgizmo.js';
 import { bestOrientation } from './orient.js';
@@ -45,7 +45,7 @@ export class SlicerWorkspace {
     this.modeSeg = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Slicer view', style: { display: 'none' } },
       button({ label: 'Model', icon: 'cube', size: 16, title: 'Show the models on the bed', cls: 'active', onClick: () => this.setMode('model') }),
       button({ label: 'Preview', icon: 'eye', size: 16, title: 'Show the sliced G-code layer by layer', cls: 'disabled', onClick: () => this.setMode('preview') }),
-      this.monitorBtn = button({ label: 'Monitor', icon: 'stats', size: 16, title: "Show the printer's own web page (set the address in Printer settings)", onClick: () => this.showMonitor(!this.monitoring) }));
+      this.monitorBtn = button({ label: 'Monitor', icon: 'stats', size: 16, title: 'Watch the print: the layers done so far in colour, plus the printer status', onClick: () => this.showMonitor(!this.monitoring) }));
   }
 
   // ------------------------------------------------------------------ lifecycle
@@ -516,39 +516,118 @@ export class SlicerWorkspace {
     if (mode === 'preview' && !this.result) return;
     this.scene.setMode(mode);
     this.mode = mode;
-    this.showMonitor(false);
+    if (this.monitoring) this.showMonitor(false);
     this.previewPanel.hidden = mode !== 'preview';
     this._renderTransform();
     this.viewEl.classList.toggle('sl-previewing', mode === 'preview');
+    this._syncModeButtons();
   }
 
-  /** The printer's web page (Duet Web Control, Mainsail, OctoPrint…) in a panel over the view. */
-  showMonitor(on, { reload = false } = {}) {
+  /**
+   * Monitor: the sliced G-code drawn over the bed, layers the printer has finished in colour and the
+   * rest in grey, with the printer's live status in a card. The status is polled while this is open.
+   */
+  showMonitor(on) {
     const cfg = this.profiles.connection();
     if (on && !cfg.url) { toast('Set the printer address first (Printer settings → Printer connection).', 'warn', 5000); this.panel.setScope('printer'); on = false; }
+    if (on === !!this.monitoring) { this._syncModeButtons(); return; }
     this.monitoring = on;
     if (on) {
-      let url = cfg.url.trim();
-      if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
-      if (!this.monitorEl) {
-        this.monitorFrame = h('iframe', { class: 'sl-monitor-frame', title: 'Printer', referrerpolicy: 'no-referrer' });
-        this.monitorLink = h('a', { target: '_blank', rel: 'noopener', class: 'btn btn-outline' }, 'Open in a new tab');
-        this.monitorEl = h('div', { class: 'sl-monitor' },
-          h('div', { class: 'sl-monitor-bar' }, h('span', { class: 'sl-monitor-url' }),
-            button({ label: 'Reload', cls: 'btn-outline', onClick: () => { this.monitorFrame.src = this.monitorFrame.src; } }), this.monitorLink),
-          h('div', { class: 'sl-monitor-hint' }, "Blank page? Browsers won't show an http printer inside an https page, and some printers forbid being embedded. The desktop app or \u201COpen in a new tab\u201D always works."),
-          this.monitorFrame);
-        this.viewEl.append(this.monitorEl);
-      }
-      this.monitorEl.querySelector('.sl-monitor-url').textContent = url;
-      this.monitorLink.href = url;
-      if (reload || this.monitorFrame.dataset.url !== url) { this.monitorFrame.src = url; this.monitorFrame.dataset.url = url; }
+      this.scene.setMode('preview');
+      this.previewPanel.hidden = true;
+      this.viewEl.classList.add('sl-previewing');
+      if (this.result) this.scene.setLayerRange(0, this.result.parsed.layers - 1);
+      this._buildMonitorCard();
+      this.monitorEl.hidden = false;
+      this._startPolling();
+    } else {
+      this._stopPolling();
+      if (this.monitorEl) this.monitorEl.hidden = true;
+      this.scene.setPrintedLayers(null);
+      this.scene.setMode(this.mode);
+      this.previewPanel.hidden = this.mode !== 'preview';
+      this.viewEl.classList.toggle('sl-previewing', this.mode === 'preview');
+      if (this.mode === 'preview' && this.result) this._buildPreviewPanel();
     }
-    if (this.monitorEl) this.monitorEl.hidden = !on;
-    [...this.modeSeg.children].forEach((b) => {
-      const isMon = b === this.monitorBtn;
-      b.classList.toggle('active', on ? isMon : (!isMon && (b === this.modeSeg.children[0]) === (this.mode === 'model')));
-    });
+    this._renderTransform();
+    this._syncModeButtons();
+  }
+
+  _syncModeButtons() {
+    const [mBtn, pBtn, monBtn] = this.modeSeg.children;
+    monBtn.classList.toggle('active', !!this.monitoring);
+    mBtn.classList.toggle('active', !this.monitoring && this.mode === 'model');
+    pBtn.classList.toggle('active', !this.monitoring && this.mode === 'preview');
+  }
+
+  _buildMonitorCard() {
+    if (this.monitorEl) return;
+    const row = (label, el) => h('div', { class: 'sl-mon-row' }, h('span', {}, label), el);
+    this.monState = h('span', { class: 'sl-mon-state' }, 'Connecting…');
+    this.monFile = h('div', { class: 'sl-mon-file' });
+    this.monBar = h('i');
+    this.monPct = h('b', {}, '');
+    this.monLayer = h('span'); this.monLeft = h('span'); this.monElapsed = h('span');
+    this.monTemps = h('div', { class: 'sl-mon-temps' });
+    this.monNote = h('div', { class: 'sl-mon-note' });
+    this.monLink = h('a', { target: '_blank', rel: 'noopener' }, "Open the printer's own page");
+    this.monitorEl = h('div', { class: 'sl-monitor' },
+      h('div', { class: 'sl-mon-head' }, h('b', {}, 'Printer'), this.monState),
+      this.monFile,
+      h('div', { class: 'sl-mon-prog' }, h('div', { class: 'sl-mon-track' }, this.monBar), this.monPct),
+      row('Layer', this.monLayer), row('Time left', this.monLeft), row('Elapsed', this.monElapsed),
+      this.monTemps, this.monNote, this.monLink);
+    this.viewEl.append(this.monitorEl);
+  }
+
+  async _startPolling() {
+    this._stopPolling();
+    const cfg = this.profiles.connection();
+    let url = cfg.url.trim(); if (!/^https?:\/\//i.test(url)) url = 'http://' + url;
+    this.monLink.href = url;
+    const token = this._pollToken = {};
+    let session = null;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    while (this._pollToken === token) {
+      try {
+        if (!session) session = await openStatus(cfg);
+        if (this._pollToken !== token) { session.close(); return; }
+        this._showStatus(await session.read());
+      } catch (err) {
+        this._showStatusError(err);
+        if (session) { try { session.close(); } catch { /* ignore */ } session = null; }
+      }
+      await sleep(3000);
+    }
+    if (session) session.close();
+  }
+  _stopPolling() { this._pollToken = null; }
+
+  _showStatusError(err) {
+    this.monState.textContent = 'No connection'; this.monState.dataset.s = 'error';
+    this.monNote.textContent = err && err.message ? err.message : String(err);
+  }
+
+  _showStatus(st) {
+    const label = { idle: 'Idle', printing: 'Printing', paused: 'Paused', done: 'Finished', busy: 'Busy', error: 'Error' }[st.state] || st.state;
+    this.monState.textContent = label; this.monState.dataset.s = st.state;
+    this.monFile.textContent = st.file || '';
+    const pct = st.progress == null ? null : Math.round(st.progress * 1000) / 10;
+    this.monBar.style.width = (pct == null ? 0 : pct) + '%';
+    this.monPct.textContent = pct == null ? '' : `${pct.toFixed(pct % 1 ? 1 : 0)}%`;
+    const total = this.result ? this.result.parsed.layers : null;
+    let layer = st.layer;
+    if (layer == null && st.progress != null && st.state !== 'idle') layer = this.scene.layerForFraction(st.progress);
+    this.monLayer.textContent = layer != null ? `${layer}${st.layers || total ? ' of ' + (st.layers || total) : ''}` : '–';
+    this.monLeft.textContent = st.timeLeft != null ? formatTime(st.timeLeft) : '–';
+    this.monElapsed.textContent = st.elapsed != null ? formatTime(st.elapsed) : '–';
+    clear(this.monTemps);
+    for (const t of st.temps) this.monTemps.append(h('div', { class: 'sl-mon-row' }, h('span', {}, t.name), h('span', {}, t.current != null ? `${t.current.toFixed(0)}°` : '–', t.target ? ` / ${t.target.toFixed(0)}°` : '')));
+    // the layers already printed in colour, the rest grey (nothing to grey out when the printer is not printing)
+    const live = st.state === 'printing' || st.state === 'paused';
+    this.scene.setPrintedLayers(live && layer != null ? layer : null);
+    this.monNote.textContent = !this.result ? 'Slice the model to see its layers drawn here.'
+      : (live && st.file && !String(st.file).startsWith(this.app._fileBase().replace(/[^\w .()-]+/g, '_')) ? 'The printer is running a different file from the one sliced here.' : '');
   }
 
   _buildPreviewPanel() {
@@ -730,7 +809,7 @@ export class SlicerWorkspace {
     try {
       const msg = await sendGcode(cfg, { name, data: new Uint8Array(this.result.gcode) }, { start: !!cfg.start });
       toast(`${msg}: ${name}`, 'ok', 4000);
-      this.showMonitor(true, { reload: true });
+      this.showMonitor(true);
     } catch (err) { toast(err.message || String(err), 'warn', 9000); }
     this.sending = false; this.sendBtn.classList.remove('disabled');
     this._updateBar();

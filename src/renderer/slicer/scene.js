@@ -43,9 +43,9 @@ function extrusionMaterial(hex, uniforms) {
     vertexShader: `
       attribute vec3 iA; attribute vec3 iB; attribute vec3 iDim;
       uniform float uLo; uniform float uHi;
-      varying vec3 vN; varying float vY;
+      varying vec3 vN; varying float vY; varying float vL;
       void main() {
-        vY = position.z;
+        vY = position.z; vL = iDim.z;
         if (iDim.z < uLo || iDim.z > uHi) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
         vec3 d = iB - iA; float len = length(d);
         vec3 dir = len > 1e-5 ? d / len : vec3(1.0, 0.0, 0.0);
@@ -56,13 +56,14 @@ function extrusionMaterial(hex, uniforms) {
         gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
       }`,
     fragmentShader: `
-      uniform vec3 uColor; varying vec3 vN; varying float vY;
+      uniform vec3 uColor; uniform float uDone; varying vec3 vN; varying float vY; varying float vL;
       void main() {
         vec3 n = normalize(vN);
         float l = max(dot(n, normalize(vec3(0.35, 0.55, 0.75))), 0.0);
         float edge = 0.55 + 0.45 * smoothstep(0.0, 0.75, n.z * 0.5 + 0.5);   // darker towards the sides of each bead
         float seam = 1.0 - 0.6 * smoothstep(0.28, 0.5, abs(vY));    // dark line where one layer meets the next
-        gl_FragColor = vec4(uColor * (0.35 + 0.8 * l) * edge * seam, 1.0);
+        vec3 col = vL >= uDone ? vec3(0.42, 0.44, 0.48) : uColor;   // layers not printed yet are grey
+        gl_FragColor = vec4(col * (0.35 + 0.8 * l) * edge * seam, 1.0);
       }`,
     side: THREE.DoubleSide,
   });
@@ -325,7 +326,7 @@ export class SlicerScene {
   showPreview(parsed, centerIsZero) {
     this.clearPreview();
     const types = new Map();
-    this.previewUniforms = { uLo: { value: 0 }, uHi: { value: parsed.layers } };
+    this.previewUniforms = { uLo: { value: 0 }, uHi: { value: parsed.layers }, uDone: { value: 1e9 } };
     for (const [t, b] of parsed.types) {
       const mesh = new THREE.Mesh(extrusionGeometry(b.pos), extrusionMaterial(typeHex(t, this.typeColors), this.previewUniforms));
       mesh.frustumCulled = false;
@@ -360,6 +361,22 @@ export class SlicerScene {
     // travel moves are only worth showing for the layers being inspected
     apply(p.travel.line, p.travel.off);
     this.requestRender();
+  }
+  /** Colour the layers below `n` as printed and grey out the rest (null: everything in colour). */
+  setPrintedLayers(n) {
+    if (!this.preview) return;
+    this.previewUniforms.uDone.value = n == null ? 1e9 : n;
+    this.requestRender();
+  }
+  /** Extrusion segments per layer boundary, summed over feature types: lets a print fraction be turned into a layer. */
+  layerForFraction(f) {
+    const p = this.preview;
+    if (!p) return null;
+    const cum = (l) => { let n = 0; for (const t of p.types.values()) n += t.off[Math.min(l, t.off.length - 1)]; return n; };
+    const total = cum(p.layers), want = f * total;
+    let lo = 0, hi = p.layers;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (cum(mid + 1) < want) lo = mid + 1; else hi = mid; }
+    return Math.min(p.layers, lo + 1);   // the layer being printed counts as started
   }
   /** Change the preview colour of one feature type (or back to its default with null). */
   setTypeColor(type, hex) {
