@@ -72,6 +72,8 @@ export class Profiles {
     this.store = store; this.info = info; this.persist = persist || (() => {});
     const s = saved || {};
     this.user = { printer: [], filament: [], process: [], ...(s.user || {}) };
+    this.deleted = { ...(s.deleted || {}) };         // 'scope/id' -> time it was deleted (so other computers delete it too)
+    this.onPresetsChanged = null;                    // set by the workspace: called after the user presets change
     this.selected = { ...DEFAULT_SELECTION, ...(s.selected || {}) };
     for (const sc of SCOPE_ORDER) if (!this.find(sc, this.selected[sc])) this.selected[sc] = DEFAULT_SELECTION[sc];
     if (s.overrides) store.setOverrides(s.overrides);
@@ -81,7 +83,58 @@ export class Profiles {
   }
 
   save() {
-    this.persist({ user: this.user, selected: this.selected, overrides: this.store.overrides, level: this.level });
+    this.persist({ user: this.user, deleted: this.deleted, selected: this.selected, overrides: this.store.overrides, level: this.level });
+  }
+
+  _changed() { this.save(); if (this.onPresetsChanged) this.onPresetsChanged(); }
+
+  // ------------------------------------------------------------------ sync with Google Drive
+  /** All user presets as one JSON text (the file kept in the DabbleCAD Drive folder). */
+  syncText() {
+    const presets = [];
+    for (const scope of SCOPE_ORDER) for (const p of [...this.user[scope]].sort((a, b) => (a.id < b.id ? -1 : 1))) presets.push({ scope, id: p.id, name: p.name, overrides: p.overrides, updated: p.updated || 0 });
+    const deleted = Object.fromEntries(Object.entries(this.deleted).sort());
+    return JSON.stringify({ format: 'dabblecad-slicer-presets', version: 1, presets, deleted });
+  }
+
+  /**
+   * Merge the Drive copy into this computer's presets (the newer edit of each preset wins, a deletion
+   * beats an older copy) and return the text Drive should now hold.
+   */
+  mergeRemote(text) {
+    let changed = false;
+    let remote = null;
+    try { const d = text && JSON.parse(text); if (d && d.format === 'dabblecad-slicer-presets') remote = d; } catch { /* unreadable: treat as empty */ }
+    if (remote) {
+      for (const [k, t] of Object.entries(remote.deleted || {})) {
+        if (!(this.deleted[k] >= t)) { this.deleted[k] = t; changed = true; }
+      }
+      for (const r of remote.presets || []) {
+        if (!SCOPE_ORDER.includes(r.scope) || !r.id) continue;
+        const tomb = this.deleted[`${r.scope}/${r.id}`];
+        if (tomb && tomb >= (r.updated || 0)) continue;
+        const list = this.user[r.scope], i = list.findIndex((x) => x.id === r.id);
+        const keys = new Set(this.keysOf(r.scope));
+        const next = { id: r.id, name: String(r.name || 'Preset'), overrides: Object.fromEntries(Object.entries(r.overrides || {}).filter(([k]) => keys.has(k))), updated: r.updated || 0 };
+        if (i < 0) { list.push(next); changed = true; }
+        else if ((r.updated || 0) > (list[i].updated || 0)) {
+          list[i] = next; changed = true;
+          if (this.selected[r.scope] === r.id && !this.modifiedKeys(r.scope).length) this._apply(r.scope, next);
+        }
+      }
+      // presets deleted on another computer
+      for (const scope of SCOPE_ORDER) {
+        const keep = this.user[scope].filter((p) => { const t = this.deleted[`${scope}/${p.id}`]; return !(t && t >= (p.updated || 0)); });
+        if (keep.length !== this.user[scope].length) {
+          this.user[scope] = keep; changed = true;
+          if (!this.find(scope, this.selected[scope])) { this.selected[scope] = DEFAULT_SELECTION[scope]; this._apply(scope, this.find(scope, this.selected[scope])); }
+        }
+      }
+    }
+    const cutoff = Date.now() - 90 * 864e5;                    // forget old tombstones
+    for (const [k, t] of Object.entries(this.deleted)) if (t < cutoff) { delete this.deleted[k]; changed = true; }
+    if (changed) { this.save(); window.dispatchEvent(new CustomEvent('dabble-slicer-presets-changed')); }
+    return this.syncText();
   }
 
   list(scope) { return [...BUILTIN[scope].map((p) => ({ ...p, builtin: true })), ...this.user[scope]]; }
@@ -140,16 +193,17 @@ export class Profiles {
   addPreset(scope, name, overrides) {
     const keys = new Set(this.keysOf(scope));
     const id = 'user-' + Date.now().toString(36) + '-' + scope;
-    this.user[scope].push({ id, name, overrides: Object.fromEntries(Object.entries(overrides).filter(([k]) => keys.has(k))) });
+    this.user[scope].push({ id, name, overrides: Object.fromEntries(Object.entries(overrides).filter(([k]) => keys.has(k))), updated: Date.now() });
     this.select(scope, id);
+    this._changed();
     return id;
   }
 
   saveAs(scope, name) {
     const id = 'user-' + Date.now().toString(36);
-    this.user[scope].push({ id, name, overrides: this.scopeOverrides(scope) });
+    this.user[scope].push({ id, name, overrides: this.scopeOverrides(scope), updated: Date.now() });
     this.selected[scope] = id;
-    this.save();
+    this._changed();
     return id;
   }
   /** Overwrite the selected user preset with the current values. */
@@ -157,17 +211,19 @@ export class Profiles {
     const p = this.current(scope);
     if (!p || p.builtin) return false;
     p.overrides = this.scopeOverrides(scope);
-    this.save();
+    p.updated = Date.now();
+    this._changed();
     return true;
   }
-  rename(scope, name) { const p = this.current(scope); if (p && !p.builtin) { p.name = name; this.save(); } }
+  rename(scope, name) { const p = this.current(scope); if (p && !p.builtin) { p.name = name; p.updated = Date.now(); this._changed(); } }
   remove(scope) {
     const p = this.current(scope);
     if (!p || p.builtin) return false;
     this.user[scope] = this.user[scope].filter((x) => x.id !== p.id);
+    this.deleted[`${scope}/${p.id}`] = Date.now();
     this.selected[scope] = DEFAULT_SELECTION[scope];
     this._apply(scope, this.find(scope, this.selected[scope]));
-    this.save();
+    this._changed();
     return true;
   }
 
@@ -184,7 +240,8 @@ export class Profiles {
     const keys = new Set(this.keysOf(d.scope));
     const overrides = Object.fromEntries(Object.entries(d.overrides).filter(([k]) => keys.has(k)));
     const id = 'user-' + Date.now().toString(36);
-    this.user[d.scope].push({ id, name: String(d.name || 'Imported'), overrides });
+    this.user[d.scope].push({ id, name: String(d.name || 'Imported'), overrides, updated: Date.now() });
+    this._changed();
     this.select(d.scope, id);
     return d.scope;
   }

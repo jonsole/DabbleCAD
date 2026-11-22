@@ -18,6 +18,7 @@ import { Profiles, FILAMENT_DENSITY } from './profiles.js';
 import { SettingsPanel } from './settingspanel.js';
 import { PlateModel, fitProblem, arrange } from './model.js';
 import { SlicerScene } from './scene.js';
+import { registerSyncFile, syncFileChanged } from '../drive.js';
 import { ModelGizmo } from './modelgizmo.js';
 import { bestOrientation } from './orient.js';
 import { writeBinaryStl, buildArgs, runEngine, gcodeSummary, formatTime } from './engine.js';
@@ -65,6 +66,10 @@ export class SlicerWorkspace {
     this._savePending = 0;
     this.profiles = new Profiles(this.store, info, this.app.settings.slicer, (state) => this._persist(state));
     this.panel = new SettingsPanel({ store: this.store, defs, index, info, profiles: this.profiles });
+    // keep the user's printer / filament / process presets in the DabbleCAD folder of their Google Drive
+    this.profiles.onPresetsChanged = () => syncFileChanged();
+    registerSyncFile('slicer-presets.json', (text) => this.profiles.mergeRemote(text));
+    window.addEventListener('dabble-slicer-presets-changed', () => { if (this.panel) { this.panel._renderChrome(); this.panel._renderBody(); } });
     this._build();
     this.store.onChange(() => this._settingsChanged());
     this._syncVolume(true);

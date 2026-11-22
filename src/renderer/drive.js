@@ -288,6 +288,7 @@ async function syncOnce() {
     }
     // 4. push: designs changed here
     for (const [id, s] of Object.entries(loadState())) if (s.dirty) await push(id, folder.id);
+    await syncExtras(folder.id, remote);
     lastPull = Date.now();
     setStatus('synced');
   } catch (e) {
@@ -297,6 +298,27 @@ async function syncOnce() {
     else setStatus('error', e.message);
   }
   if (changed.length) window.dispatchEvent(new CustomEvent('dabble-designs-changed', { detail: { ids: changed } }));
+}
+
+// ------------------------------------------------------------------ extra synced files
+// Other parts of the app (the slicer's presets) keep one JSON file each in the DabbleCAD folder.
+// read/merge are theirs: merge(remoteText | null) applies what's on Drive and returns what Drive should hold.
+const extras = new Map();
+export function registerSyncFile(name, merge) { extras.set(name, merge); if (isLinked()) soon(500); }
+/** Something in a registered file changed here: sync it soon. */
+export function syncFileChanged() { if (isLinked()) soon(); }
+
+async function syncExtras(folderId, remote) {
+  for (const [name, merge] of extras) {
+    const f = remote.find((r) => r.name === name && !(r.appProperties && r.appProperties.dabbleId));
+    const text = f ? await call(`${API}/files/${f.id}?alt=media`, { text: true }) : null;
+    const next = merge(text);
+    if (next == null || next === text) continue;
+    try { await upload({ id: f && f.id, name, content: next, appProperties: { dabbleFile: name }, parent: folderId }); } catch (e) {
+      if (e.status !== 404 || !f) throw e;
+      await upload({ name, content: next, appProperties: { dabbleFile: name }, parent: folderId });
+    }
+  }
 }
 
 async function pull(f, id) {
