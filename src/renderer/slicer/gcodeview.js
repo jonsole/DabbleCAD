@@ -26,6 +26,13 @@ class Growable {
     x[i] = a; x[i + 1] = b; x[i + 2] = c; x[i + 3] = d; x[i + 4] = e; x[i + 5] = f;
     this.n += 6;
   }
+  /** One extruded segment: from, to, line width, layer height, layer number. */
+  push9(a, b, c, d, e, f, w, h, l) {
+    if (this.n + 9 > this.a.length) { const g = new Float32Array(this.a.length * 2); g.set(this.a); this.a = g; }
+    const x = this.a, i = this.n;
+    x[i] = a; x[i + 1] = b; x[i + 2] = c; x[i + 3] = d; x[i + 4] = e; x[i + 5] = f; x[i + 6] = w; x[i + 7] = h; x[i + 8] = l;
+    this.n += 9;
+  }
   done() { return this.a.slice(0, this.n); }
 }
 
@@ -36,7 +43,8 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
  * Extruded segments are grouped by feature type. In each group `off[i]` is the first segment of
  * layer i and `off[layers]` the total, so the layers a..b are segments off[a] .. off[b + 1].
  */
-export async function parseGcode(bytes, { onProgress, signal } = {}) {
+export async function parseGcode(bytes, { onProgress, signal, filamentDiameter = 1.75 } = {}) {
+  const filArea = Math.PI * (filamentDiameter / 2) ** 2;
   const text = new TextDecoder().decode(bytes);
   const buckets = new Map(); // type -> { g: Growable, off: number[] }
   const tr = new Growable(1 << 18), trOff = [], layerZ = [];
@@ -60,7 +68,7 @@ export async function parseGcode(bytes, { onProgress, signal } = {}) {
     if (c0 === 59 /* ; */) {
       if (text.startsWith(';LAYER:', pos)) {
         layerIdx++;
-        for (const b of buckets.values()) b.off.push(b.g.n / 6);
+        for (const b of buckets.values()) b.off.push(b.g.n / 9);
         trOff.push(tr.n / 6); layerZ.push(z);
       } else if (text.startsWith(';TYPE:', pos)) {
         type = text.slice(pos + 6, end).trim();
@@ -83,11 +91,15 @@ export async function parseGcode(bytes, { onProgress, signal } = {}) {
         }
         const moved = nx !== x || ny !== y;
         const extruding = moved && ne !== null && (absE ? ne > e + 1e-6 : ne > 1e-6);
+        const de = ne === null ? 0 : absE ? ne - e : ne;
         if (ne !== null) e = absE ? ne : e + ne;
         if (layerIdx >= 0 && moved) {
           if (extruding) {
             if (!bucket) bucket = bucketFor(type in TYPE_COLORS ? type : 'DEFAULT');
-            bucket.g.push6(x, y, z, nx, ny, nz);
+            // line size from the layer thickness and the filament that was pushed through
+            const length = Math.hypot(nx - x, ny - y), h = Math.max(0.05, Math.min(1.2, nz - (layerIdx > 0 && layerZ[layerIdx - 1] !== undefined ? layerZ[layerIdx - 1] : 0) || 0.2));
+            const w = Math.max(0.2, Math.min(2.2, (de * filArea) / (length * h) + (1 - Math.PI / 4) * h));
+            bucket.g.push9(x, y, z, nx, ny, nz, w, h, layerIdx);
             if (nx < min[0]) min[0] = nx; if (ny < min[1]) min[1] = ny; if (nz < min[2]) min[2] = nz;
             if (nx > max[0]) max[0] = nx; if (ny > max[1]) max[1] = ny; if (nz > max[2]) max[2] = nz;
             layerZ[layerIdx] = nz;
@@ -109,7 +121,7 @@ export async function parseGcode(bytes, { onProgress, signal } = {}) {
   }
   const layers = layerZ.length;
   const types = new Map();
-  for (const [t, b] of buckets) { b.off.push(b.g.n / 6); types.set(t, { pos: b.g.done(), off: Uint32Array.from(b.off) }); }
+  for (const [t, b] of buckets) { b.off.push(b.g.n / 9); types.set(t, { pos: b.g.done(), off: Uint32Array.from(b.off) }); }
   trOff.push(tr.n / 6);
   return { layers, layerZ, types, travel: { pos: tr.done(), off: Uint32Array.from(trOff) }, bounds: { min, max } };
 }

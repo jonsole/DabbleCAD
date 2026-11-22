@@ -618,7 +618,7 @@ export class SlicerWorkspace {
         onLog: (line) => { this.log.push(line); if (this.log.length > 400) this.log.shift(); },
       });
       this.status.textContent = 'Preparing the preview…';
-      const parsed = await parseGcode(gcode, { signal: this.controller.signal, onProgress: (p) => { this.status.textContent = `Preparing the preview… ${Math.round(p * 100)}%`; } });
+      const parsed = await parseGcode(gcode, { signal: this.controller.signal, filamentDiameter: this.store.get('material_diameter') || 1.75, onProgress: (p) => { this.status.textContent = `Preparing the preview… ${Math.round(p * 100)}%`; } });
       this.result = { gcode, parsed, summary: gcodeSummary(gcode) };
       this.dirty = false;
       this.scene.showPreview(parsed, this.store.get('machine_center_is_zero'));

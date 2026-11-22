@@ -5,6 +5,64 @@ import { TYPE_COLORS } from './gcodeview.js';
 
 const css = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 
+/**
+ * Each extruded segment is drawn as a short hexagonal bar, so layers show up as separate lit beads like
+ * in Cura. One instance per segment: from, to, [width, height, layer].
+ */
+const PROFILE = [[-0.5, 0], [-0.3, 0.5], [0.3, 0.5], [0.5, 0], [0.3, -0.5], [-0.3, -0.5]];   // (side, up) in units of width / height
+function extrusionGeometry(data) {
+  const base = new THREE.InstancedBufferGeometry();
+  const pos = [], nor = [], idx = [];
+  for (let k = 0; k < 6; k++) {
+    const p0 = PROFILE[k], p1 = PROFILE[(k + 1) % 6];
+    // normal of the face for a typical 0.45 x 0.2 mm bead
+    const ex = (p1[0] - p0[0]) * 0.45, ey = (p1[1] - p0[1]) * 0.2, l = Math.hypot(ex, ey);
+    const nx = -ey / l, ny = ex / l;
+    const o = pos.length / 3;
+    for (const t of [0, 1]) for (const p of [p0, p1]) { pos.push(t, p[0], p[1]); nor.push(nx, ny, 0); }
+    idx.push(o, o + 1, o + 2, o + 1, o + 3, o + 2);
+  }
+  base.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  base.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  base.setIndex(idx);
+  const buf = new THREE.InstancedInterleavedBuffer(data, 9, 1);
+  base.setAttribute('iA', new THREE.InterleavedBufferAttribute(buf, 3, 0));
+  base.setAttribute('iB', new THREE.InterleavedBufferAttribute(buf, 3, 3));
+  base.setAttribute('iDim', new THREE.InterleavedBufferAttribute(buf, 3, 6));
+  base.instanceCount = data.length / 9;
+  return base;
+}
+function extrusionMaterial(c, uniforms) {
+  return new THREE.ShaderMaterial({
+    uniforms: { ...uniforms, uColor: { value: new THREE.Color(c[0], c[1], c[2]) } },
+    vertexShader: `
+      attribute vec3 iA; attribute vec3 iB; attribute vec3 iDim;
+      uniform float uLo; uniform float uHi;
+      varying vec3 vN; varying float vY;
+      void main() {
+        vY = position.z;
+        if (iDim.z < uLo || iDim.z > uHi) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+        vec3 d = iB - iA; float len = length(d);
+        vec3 dir = len > 1e-5 ? d / len : vec3(1.0, 0.0, 0.0);
+        vec3 side = normalize(vec3(-dir.y, dir.x, 0.0));
+        float t = position.x;
+        vec3 p = iA + d * t + dir * (t * 2.0 - 1.0) * iDim.x * 0.3 + side * position.y * iDim.x + vec3(0.0, 0.0, position.z * iDim.y - iDim.y * 0.5);
+        vN = mat3(modelViewMatrix) * (side * normal.x + vec3(0.0, 0.0, normal.y));
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
+      }`,
+    fragmentShader: `
+      uniform vec3 uColor; varying vec3 vN; varying float vY;
+      void main() {
+        vec3 n = normalize(vN);
+        float l = max(dot(n, normalize(vec3(0.35, 0.55, 0.75))), 0.0);
+        float edge = 0.55 + 0.45 * smoothstep(0.0, 0.75, n.z * 0.5 + 0.5);   // darker towards the sides of each bead
+        float seam = 1.0 - 0.6 * smoothstep(0.28, 0.5, abs(vY));    // dark line where one layer meets the next
+        gl_FragColor = vec4(uColor * (0.35 + 0.8 * l) * edge * seam, 1.0);
+      }`,
+    side: THREE.DoubleSide,
+  });
+}
+
 export class SlicerScene {
   constructor(container) {
     this.container = container;
@@ -243,13 +301,12 @@ export class SlicerScene {
   showPreview(parsed, centerIsZero) {
     this.clearPreview();
     const types = new Map();
+    this.previewUniforms = { uLo: { value: 0 }, uHi: { value: parsed.layers } };
     for (const [t, b] of parsed.types) {
-      const geo = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(b.pos, 3));
-      const c = TYPE_COLORS[t] || TYPE_COLORS.DEFAULT;
-      const line = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: new THREE.Color(c[0], c[1], c[2]) }));
-      line.frustumCulled = false;
-      this.previewGroup.add(line);
-      types.set(t, { line, off: b.off });
+      const mesh = new THREE.Mesh(extrusionGeometry(b.pos), extrusionMaterial(TYPE_COLORS[t] || TYPE_COLORS.DEFAULT, this.previewUniforms));
+      mesh.frustumCulled = false;
+      this.previewGroup.add(mesh);
+      types.set(t, { line: mesh, off: b.off });
     }
     const tgeo = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(parsed.travel.pos, 3));
     const travel = new THREE.LineSegments(tgeo, new THREE.LineBasicMaterial({ color: 0x8892a6, transparent: true, opacity: 0.35 }));
@@ -273,7 +330,9 @@ export class SlicerScene {
       const a = off[Math.min(lo, off.length - 1)], b = off[Math.min(hi + 1, off.length - 1)];
       line.geometry.setDrawRange(a * 2, Math.max(0, b - a) * 2);
     };
-    for (const t of p.types.values()) apply(t.line, t.off);
+    // extrusions are instanced boxes drawn up to the top layer; the lower layers are cut in the shader
+    this.previewUniforms.uLo.value = lo; this.previewUniforms.uHi.value = hi;
+    for (const t of p.types.values()) t.line.geometry.instanceCount = t.off[Math.min(hi + 1, t.off.length - 1)];
     // travel moves are only worth showing for the layers being inspected
     apply(p.travel.line, p.travel.off);
     this.requestRender();
