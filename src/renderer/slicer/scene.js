@@ -113,7 +113,16 @@ export class SlicerScene {
     this.dom.addEventListener('pointerdown', (e) => this._down(e), true);
     window.addEventListener('pointermove', (e) => this._move(e));
     window.addEventListener('pointerup', (e) => this._up(e));
-    this.dom.addEventListener('contextmenu', (e) => e.preventDefault());
+    this.dom.addEventListener('pointerdown', (e) => { if (e.button === 2) this._rc = { x: e.clientX, y: e.clientY }; }, true);
+    this.dom.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      const d = this._rc && Math.hypot(e.clientX - this._rc.x, e.clientY - this._rc.y);
+      if (d > 4) return; // the right button was used to pan, not to open a menu
+      this.ray.setFromCamera(this._ndc(e), this.camera);
+      const hits = this.mode === 'model'
+        ? this.ray.intersectObjects([...this.models.values()].filter((m) => !m.model.hidden).map((m) => m.mesh), false) : [];
+      this.onContext(hits.length ? hits[0].object.userData.modelId : null, e);
+    });
 
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(container);
@@ -258,6 +267,7 @@ export class SlicerScene {
     const p = new THREE.Vector3();
     return this.ray.ray.intersectPlane(this.plane, p) ? p : null;
   }
+  onContext() {}
   _down(e) {
     if (e.button !== 0 || this.mode !== 'model') { this.controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE; return; }
     this.ray.setFromCamera(this._ndc(e), this.camera);

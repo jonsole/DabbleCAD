@@ -3,7 +3,7 @@
 import './slicer.css';
 import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
-import { h, clear, button, icon, toast } from '../ui/dom.js';
+import { h, clear, button, icon, toast, popupMenu } from '../ui/dom.js';
 import { ViewCube } from '../view/viewcube.js';
 import { addResizer } from '../ui/resizer.js';
 import { makeDraggable } from '../ui/draggable.js';
@@ -171,6 +171,7 @@ export class SlicerWorkspace {
       onChange: (m, final) => { this.scene.refreshModel(m); this._markDirty(); this._renderTransformValues(m); if (final) this._checkFit(); },
     });
     this.scene.onPick = (id) => this.select(id);
+    this.scene.onContext = (id, e) => this._contextMenu(id, e);
     this.scene.onMove = (m) => { this._markDirty(); this._renderTransformValues(m); };
     this.scene.onMoveEnd = () => { this._checkFit(); };
     document.addEventListener('keydown', (e) => this._key(e));
@@ -180,6 +181,38 @@ export class SlicerWorkspace {
   }
 
   fit() { this.scene.home(); }
+
+  /** Right-click menu: the same shape as 3D Design's, with the slicer's own extras. */
+  _contextMenu(id, e) {
+    if (this.mode === 'preview') return;
+    if (id) this.select(id); else this.select(null);
+    const at = { x: e.clientX, y: e.clientY };
+    const m = this.selectedModel;
+    if (!m) {
+      popupMenu([
+        { label: 'Arrange', icon: 'align', disabled: !this.models.length, onClick: () => this.arrange() },
+        { label: 'Auto-orient all', icon: 'orient', disabled: !this._movable().length, onClick: () => this.autoOrient() },
+        { label: 'Show all', icon: 'bulb', disabled: !this.models.some((x) => x.hidden), onClick: () => { this.models.forEach((x) => { x.hidden = false; }); this._modelsChanged(); this._renderModels(); this._checkpoint(); } },
+        'sep',
+        { label: 'Fit plate in view', icon: 'fit', onClick: () => this.fit() },
+        { label: 'Home view', icon: 'home', onClick: () => this.scene.home() },
+      ], at);
+      return;
+    }
+    const s = m.size, off = !!m.locked;
+    popupMenu([
+      { label: 'Duplicate', icon: 'duplicate', disabled: false, onClick: () => this.duplicate(m.id) },
+      { label: 'Delete', icon: 'trash', shortcut: 'Del', disabled: off, onClick: () => this.removeModel(m.id) },
+      'sep',
+      { label: 'Auto-orient for printing', icon: 'orient', disabled: off, title: 'Turn it to need the least support', onClick: () => this.autoOrient() },
+      { label: 'Reset rotation and scale', icon: 'drop', disabled: off, onClick: () => this.resetSelected() },
+      { label: 'Arrange', icon: 'align', onClick: () => this.arrange() },
+      'sep',
+      { label: m.locked ? 'Unlock' : 'Lock', icon: m.locked ? 'unlock' : 'lock', onClick: () => { m.locked = !m.locked; this._checkpoint(); this._renderModels(); this._renderTransform(); this.scene.requestRender(); } },
+      { label: 'Hide', icon: 'eyeOff', onClick: () => { m.hidden = true; this.selected = null; this._modelsChanged(); this._renderModels(); this._checkpoint(); } },
+      { label: 'Details…', icon: 'stats', onClick: () => toast(`${m.name}: ${s.x.toFixed(1)} × ${s.y.toFixed(1)} × ${s.z.toFixed(1)} mm · ${Math.round(m.triangles).toLocaleString()} triangles`, 'info', 6000) },
+    ], at);
+  }
 
   /** Turn the selected model (all movable ones when nothing is selected) to the orientation needing the least support. */
   autoOrient() {
