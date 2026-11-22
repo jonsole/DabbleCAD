@@ -4,14 +4,14 @@
 const SEARCH_BACK = 60, SEARCH_AHEAD = 6000;
 // Better behind than ahead: the printer rarely reaches the programmed feed rate (acceleration), and the
 // guess never runs more than a little past the next expected report.
-const SPEED = 0.7, MAX_AHEAD_S = 0.6;
+const SPEED = 0.7;
 
 export class NozzleFollower {
   /** @param parsed parseGcode() result (needs path / pathAt) */
   constructor(parsed) {
     this.p = parsed.path; this.at = parsed.pathAt; this.n = this.at.length;
     this.k = -1; this.u = 0; this.t = 0; this.lost = true;
-    this.shown = null;   // { k, u } last point given out: never go back past it (unless the printer really went back)
+    this.tau = null; this.lastNow = 0;   // where the shown nozzle is, as time along the path
   }
 
   /** The first move at or after a byte offset in the file. */
@@ -46,31 +46,47 @@ export class NozzleFollower {
     this.lost = !(r.k > 0 && r.d <= 3);
     if (!this.lost) {
       this.k = r.k; this.u = r.u; this.t = now;
-      // the guess got ahead by more than a little: the printer is really further back (a pause, a restart)
-      if (this.shown && (this.shown.k - r.k) > 400) this.shown = null;
     }
     return !this.lost;
   }
 
-  /** Where the nozzle should be now: on from the last report along the path at the feed rates. */
-  estimate(now) {
-    if (this.lost) return null;
-    const p = this.p;
-    let dt = Math.min(MAX_AHEAD_S, Math.max(0, (now - this.t) / 1000)), k = this.k, u = this.u;
-    while (k < this.n) {
+  /** Time (s, at SPEED x feed rate) to reach the end of each move from the start of the file. */
+  _times() {
+    if (this.T) return this.T;
+    const p = this.p, T = new Float64Array(this.n);
+    for (let k = 1; k < this.n; k++) {
       const i0 = (k - 1) * 4, i1 = k * 4;
       const L = Math.hypot(p[i1] - p[i0], p[i1 + 1] - p[i0 + 1], p[i1 + 2] - p[i0 + 2]);
-      const v = Math.max(1, (p[i1 + 3] / 60) * SPEED);                    // mm/s
-      const need = ((1 - u) * L) / v;
-      if (dt < need) { u += L > 1e-9 ? (dt * v) / L : 1; break; }
-      dt -= need; k++; u = 0;
-      if (k >= this.n) { k = this.n - 1; u = 1; break; }
+      T[k] = T[k - 1] + L / Math.max(1, (p[i1 + 3] / 60) * SPEED);
     }
-    // never move backwards: if the last report put the nozzle behind what was shown, wait there for it
-    const sh = this.shown;
-    if (sh && (k < sh.k || (k === sh.k && u < sh.u))) { k = sh.k; u = sh.u; }
-    this.shown = { k, u };
-    const i0 = (k - 1) * 4, i1 = k * 4;
+    return (this.T = T);
+  }
+  _timeAt(k, u) { const T = this._times(); return T[k - 1] + (T[k] - T[k - 1]) * u; }
+  _at(tau) {
+    const T = this._times();
+    let lo = 1, hi = this.n - 1;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (T[mid] < tau) lo = mid + 1; else hi = mid; }
+    const d = T[lo] - T[lo - 1];
+    return { k: lo, u: d > 1e-9 ? Math.min(1, Math.max(0, (tau - T[lo - 1]) / d)) : 1 };
+  }
+
+  /**
+   * Where to draw the nozzle now. The target runs on from the last report along the path; the shown
+   * nozzle chases it smoothly, a little faster when behind and slower (never stopping, never going
+   * back) when ahead, so reports nudge it instead of making it jump or halt.
+   */
+  estimate(now) {
+    if (this.lost) return null;
+    const target = this._timeAt(this.k, this.u) + Math.min(2, Math.max(0, (now - this.t) / 1000));
+    const dt = this.lastNow ? Math.min(0.25, Math.max(0, (now - this.lastNow) / 1000)) : 0;
+    this.lastNow = now;
+    if (this.tau == null || Math.abs(target - this.tau) > 5) this.tau = target;           // first time, or a real jump
+    else {
+      const rate = Math.min(2.5, Math.max(0.3, 1 + (target - this.tau) / 0.8));
+      this.tau += dt * rate;
+    }
+    const { k, u } = this._at(this.tau);
+    const p = this.p, i0 = (k - 1) * 4, i1 = k * 4;
     return { k, x: p[i0] + (p[i1] - p[i0]) * u, y: p[i0 + 1] + (p[i1 + 1] - p[i0 + 1]) * u, z: p[i0 + 2] + (p[i1 + 2] - p[i0 + 2]) * u };
   }
 }
