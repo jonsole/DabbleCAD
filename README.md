@@ -187,6 +187,13 @@ storage instead and are separate from the desktop library.
 - **Print check:** before exporting, find shapes that are not closed solids, parts
   floating above the plate, thin walls, steep overhangs, and designs too big for
   your printer bed, with a one-click fix for resting the design on the plate.
+- **Slicer workspace:** a third workspace beside 3D Design and Laser. Slice in the browser with CuraEngine
+  (WebAssembly), preview the G-code layer by layer, and save it. Every Cura setting is available, organised
+  OrcaSlicer-style into **Printer**, **Filament** and **Process** with their own presets, modified markers and
+  resets, so it is always clear what a setting belongs to. Single extruder only; no per-model settings.
+  CuraEngine is AGPL-3.0, so it is not bundled: it is a separate package
+  (<https://github.com/jonsole/DabbleCAD-curaengine>) loaded at run time from the address in
+  `src/renderer/config.js`, which keeps this repository Apache-2.0.
 - **Open in slicer:** send the design straight to your slicer from the Export dialog.
 - A getting-started guide on first launch (reopen it from the **?** button).
 - Blocks and Bricks views.
@@ -342,7 +349,8 @@ DabbleCAD is an early project, not a claim of production certification.
 
 - Rounding or bevelling edges keeps the overall size but makes holes and gaps
   slightly tighter, and very detailed shapes are refused because they take too long.
-- The print check is a quick geometric estimate, not a slicer. Imported meshes that
+- The built-in slicer supports a single extruder and no per-model settings, and the printer presets are bed-size
+  starting points, so review the start/end G-code before printing. The print check is a quick geometric estimate. Imported meshes that
   are not closed solids fall back to a simpler grouping method.
 - Generator threads use a rounded printable profile, not a machined ISO thread. Print
   a bolt and nut pair and adjust the clearance before relying on a fit.

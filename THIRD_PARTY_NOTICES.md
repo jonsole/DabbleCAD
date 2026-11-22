@@ -24,6 +24,14 @@ distributed under the MIT license reproduced below.
 - **fflate 0.8.3**, included through Three.js: Copyright (c) 2026 Arjun Barrett.
   <https://github.com/101arrowz/fflate>
 
+## Slicing engine (browser slicer)
+
+- **CuraEngine** (WebAssembly build by SynDaver Labs, from Symple Slicer) and the Cura setting definitions are
+  **not part of this repository**. They live in the separate AGPL-3.0 repository
+  <https://github.com/jonsole/DabbleCAD-curaengine> and are loaded at run time by the Slicer workspace, which runs
+  the engine as a separate program in a Web Worker. CuraEngine is licensed under the **GNU AGPL-3.0**; the
+  definitions under the LGPL-3.0. Source: <https://github.com/SynDaverCO/CuraEngine>
+
 ### MIT License
 
 Permission is hereby granted, free of charge, to any person obtaining a copy

@@ -29,6 +29,7 @@ const KEY = {
   state: 'dabble.drive.state', // per design: { driveId, remoteTime, dirty, rev }
   tombs: 'dabble.drive.tombstones', // Drive files to move to the bin (deleted here while offline)
   folder: 'dabble.drive.folder',
+  sets: 'dabble.drive.sets', // folders of one-file-per-item JSON (slicer presets): { path: { key: { driveId, updated, name } } }
   clientId: 'dabble.drive.clientId',
   desktopClient: 'dabble.drive.desktopClient', // { id, secret } pasted in Settings (desktop)
   who: 'dabble.drive.who', // { email, name } of the signed-in account
@@ -201,15 +202,15 @@ async function ensureFolder() {
 }
 
 /** Create (no id) or update a design file, content and details together. */
-async function upload({ id, name, content, appProperties, parent, thumb }) {
-  const meta = { name, mimeType: FILE_MIME, appProperties };
+async function upload({ id, name, content, appProperties, parent, thumb, mimeType = FILE_MIME }) {
+  const meta = { name, mimeType, appProperties };
   if (!id) meta.parents = [parent];
   const m = /^data:(image\/[a-z]+);base64,(.+)$/.exec(thumb || '');
   // Drive shows this preview in its own file list; it is base64url without padding
   if (m && m[2].length < 1.9e6) meta.contentHints = { thumbnail: { mimeType: m[1], image: m[2].replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '') } };
   const boundary = 'dabble' + Math.random().toString(36).slice(2);
   const body = `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n`
-    + `--${boundary}\r\nContent-Type: ${FILE_MIME}\r\n\r\n${content}\r\n--${boundary}--`;
+    + `--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n${content}\r\n--${boundary}--`;
   const url = id ? `${UPLOAD}/files/${id}?uploadType=multipart&fields=${q(FILE_FIELDS)}` : `${UPLOAD}/files?uploadType=multipart&fields=${q(FILE_FIELDS)}`;
   return call(url, { method: id ? 'PATCH' : 'POST', body, headers: { 'Content-Type': `multipart/related; boundary=${boundary}` } });
 }
@@ -288,6 +289,8 @@ async function syncOnce() {
     }
     // 4. push: designs changed here
     for (const [id, s] of Object.entries(loadState())) if (s.dirty) await push(id, folder.id);
+    await syncExtras(folder.id, remote);
+    for (const [path, adapter] of sets) await syncSet(folder, path, adapter);
     lastPull = Date.now();
     setStatus('synced');
   } catch (e) {
@@ -297,6 +300,107 @@ async function syncOnce() {
     else setStatus('error', e.message);
   }
   if (changed.length) window.dispatchEvent(new CustomEvent('dabble-designs-changed', { detail: { ids: changed } }));
+}
+
+// ------------------------------------------------------------------ extra synced files
+// Other parts of the app (the slicer's presets) keep one JSON file each in the DabbleCAD folder.
+// read/merge are theirs: merge(remoteText | null) applies what's on Drive and returns what Drive should hold.
+const extras = new Map();
+export function registerSyncFile(name, merge) { extras.set(name, merge); if (isLinked()) soon(500); }
+/** Something in a registered file changed here: sync it soon. */
+export function syncFileChanged() { if (isLinked()) soon(); }
+
+async function syncExtras(folderId, remote) {
+  for (const [name, merge] of extras) {
+    const f = remote.find((r) => r.name === name && !(r.appProperties && r.appProperties.dabbleId));
+    const text = f ? await call(`${API}/files/${f.id}?alt=media`, { text: true }) : null;
+    const next = merge(text);
+    if (next === false) { if (f) await call(`${API}/files/${f.id}?fields=id`, { method: 'PATCH', json: { trashed: true } }); continue; }  // retired file
+    if (next == null || next === text) continue;
+    try { await upload({ id: f && f.id, name, content: next, appProperties: { dabbleFile: name }, parent: folderId }); } catch (e) {
+      if (e.status !== 404 || !f) throw e;
+      await upload({ name, content: next, appProperties: { dabbleFile: name }, parent: folderId });
+    }
+  }
+}
+
+// ------------------------------------------------------------------ folders of named JSON files
+// A part of the app can keep a set of items (e.g. the slicer's printer presets) as one readable JSON
+// file per item in a sub folder such as DabbleCAD/Slicer presets/Printer. The adapter:
+//   items()            -> [{ key, name, updated, content }]   what is here now
+//   tombstones()       -> { key: time }                       items deleted here (their files go to the bin)
+//   apply(key, text)   -> true if it took the Drive version   a file that is new or newer on Drive
+//   remove(key)                                               the file was deleted on Drive
+const sets = new Map();
+const subfolders = new Map();   // 'parentId/name' -> folder id (this session)
+const madeFolders = new Set();  // sub folders this session had to create (empty because they're new)
+export function registerSyncFolder(path, adapter) { sets.set(path.join('/'), { path, ...adapter }); if (isLinked()) soon(500); }
+
+async function subfolder(parentId, name) {
+  const k = parentId + '/' + name;
+  if (subfolders.has(k)) return subfolders.get(k);
+  const esc = name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  const found = await listAll(`mimeType='${FOLDER_MIME}' and name='${esc}' and '${parentId}' in parents and trashed=false`);
+  const id = found.length ? found[0].id : (await call(`${API}/files?fields=id`, { method: 'POST', json: { name, mimeType: FOLDER_MIME, parents: [parentId] } })).id;
+  subfolders.set(k, id);
+  if (!found.length) madeFolders.add(id);
+  return id;
+}
+const jsonName = (name) => `${String(name || 'Untitled').replace(/[\\/:*?"<>|]/g, '_').trim() || 'Untitled'}.json`;
+
+async function syncSet(root, key, a) {
+  let folderId = root.id;
+  for (const part of a.path) folderId = await subfolder(folderId, part);
+  const all = ls.get(KEY.sets, {});
+  const state = all[key] || {};
+  const save = () => { const x = ls.get(KEY.sets, {}); x[key] = state; ls.set(KEY.sets, x); };
+  const trash = async (id) => { try { await call(`${API}/files/${id}?fields=id`, { method: 'PATCH', json: { trashed: true } }); } catch (e) { if (e.status !== 404) throw e; } };
+  let remote;
+  try { remote = await listAll(`'${folderId}' in parents and trashed=false`); } catch (e) {
+    if (e.status === 404) { subfolders.clear(); return; }  // the folder went away: found or made again next time
+    throw e;
+  }
+  const tombs = a.tombstones();
+  // 1. deleted here: to the bin on Drive
+  for (const f of remote) {
+    const k = f.appProperties && f.appProperties.dabbleKey;
+    if (k && tombs[k] && tombs[k] >= Number(f.appProperties.updated || 0)) { await trash(f.id); delete state[k]; f.gone = true; }
+  }
+  // 2. new or changed on Drive (another computer): take it when it is newer than ours
+  const items = new Map(a.items().map((it) => [it.key, it]));
+  const seen = new Set();
+  for (const f of remote) {
+    const k = f.appProperties && f.appProperties.dabbleKey;
+    if (f.gone || !k || seen.has(k)) continue;
+    seen.add(k);
+    const upd = Number(f.appProperties.updated || 0), here = items.get(k);
+    if (!here || upd > (here.updated || 0)) {
+      const text = await call(`${API}/files/${f.id}?alt=media`, { text: true });
+      if (a.apply(k, text)) state[k] = { driveId: f.id, updated: upd, name: f.name };
+    } else if (!state[k] || state[k].driveId !== f.id) state[k] = { driveId: f.id, updated: Math.min(upd, here.updated || 0), name: f.name };
+  }
+  // 3. gone from Drive (deleted there): delete here too, unless it changed here since. Never when the
+  //    folder had to be made again (a lost folder, not deletions).
+  const trustDeletes = !root.created && !madeFolders.has(folderId);
+  for (const k of Object.keys(state)) {
+    if (seen.has(k)) continue;
+    const here = items.get(k);
+    if (here && (here.updated || 0) > (state[k].updated || 0)) { delete state[k]; continue; }   // re-upload below
+    if (here && trustDeletes) a.remove(k);
+    delete state[k];
+  }
+  // 4. new or changed here: upload, one named file each
+  for (const it of a.items()) {
+    const s = state[it.key];
+    const name = jsonName(it.name);
+    if (s && s.driveId && (s.updated || 0) >= (it.updated || 0) && s.name === name) continue;
+    const meta = { name, content: it.content, appProperties: { dabbleKey: it.key, updated: String(it.updated || 0) }, parent: folderId, mimeType: 'application/json' };
+    let f;
+    try { f = await upload({ ...meta, id: s && s.driveId }); } catch (e) { if (e.status !== 404 || !s) throw e; f = await upload(meta); }
+    state[it.key] = { driveId: f.id, updated: it.updated || 0, name };
+  }
+  madeFolders.delete(folderId);
+  save();
 }
 
 async function pull(f, id) {
@@ -350,7 +454,7 @@ export async function signIn() {
   const before = account();
   if (who && before && before.email !== who.email) {
     // a different Google account: its Drive knows nothing of these designs; they stay here, unsynced
-    ls.del(KEY.state); ls.del(KEY.tombs); ls.del(KEY.folder);
+    ls.del(KEY.state); ls.del(KEY.tombs); ls.del(KEY.folder); ls.del(KEY.sets); subfolders.clear();
   }
   if (who) ls.set(KEY.who, who);
   ls.set(KEY.linked, true);

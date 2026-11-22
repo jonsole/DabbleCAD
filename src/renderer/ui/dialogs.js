@@ -179,6 +179,7 @@ export function exportDialog(app) {
     h('div', { class: 'insp-note' }, 'Holes are never exported on their own. Hidden shapes are skipped. Sizes are in millimetres.'),
     h('div', { class: 'modal-actions' },
       button({ label: 'Print check', icon: 'stats', cls: 'btn-outline', title: 'Look for problems before you print', onClick: () => { m.close(); printCheckDialog(app, { selectedOnly }); } }),
+      button({ label: 'Slice to G-code', icon: 'export', cls: 'btn-outline', title: 'Open the Slicer workspace', onClick: () => { m.close(); app.openSlicer({ selectedOnly }); } }),
       isDesktop ? button({ label: 'Open in slicer', icon: 'export', cls: 'btn-outline', title: 'Send the design straight to your slicer', onClick: () => { m.close(); app.openInSlicer(selectedOnly); } }) : null));
 }
 

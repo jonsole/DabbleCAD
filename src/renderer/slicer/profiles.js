@@ -1,0 +1,317 @@
+// Presets for the three scopes (printer, filament, process) and the working state on top of them.
+//
+// Each scope has its own preset: a set of overrides to Cura's defaults for the settings that belong
+// to that scope. Choosing a preset replaces that scope's overrides; editing a setting afterwards
+// marks it as modified against the preset, and the preset can be saved under a new name.
+import { SCOPE_ORDER } from './taxonomy.js';
+
+const MARLIN = 'RepRap (Marlin/Sprinter)';
+const HEAD = [[-20, 10], [10, 10], [10, -10], [-20, -10]];
+
+const START = 'G90 ; absolute positioning\nM82 ; absolute extrusion\nG28 ; home all axes\nG92 E0\nG1 Z2.0 F3000\nG1 X5 Y10 Z0.3 F5000 ; move to the prime line\nG1 X5 Y110 Z0.3 F1500 E15 ; prime line\nG92 E0\nG1 Z2.0 F3000';
+const END = 'M104 S0 ; hot end off\nM140 S0 ; bed off\nG91 ; relative positioning\nG1 E-2 F2700 ; retract\nG1 Z10 F3000 ; lift\nG90 ; absolute positioning\nG1 X0 Y{machine_depth} F3000 ; present the print\nM106 S0 ; fan off\nM84 ; motors off';
+
+function cartesian(w, d, h, extra = {}) {
+  return {
+    machine_width: w, machine_depth: d, machine_height: h, machine_shape: 'rectangular', machine_center_is_zero: false,
+    machine_heated_bed: true, machine_gcode_flavor: MARLIN, machine_nozzle_size: 0.4,
+    machine_start_gcode: START, machine_end_gcode: END,
+    machine_head_with_fans_polygon: HEAD, gantry_height: 30,
+    retraction_enable: true, retraction_amount: 5, retraction_speed: 45, ...extra,
+  };
+}
+
+export const BUILTIN = {
+  printer: [
+    { id: 'generic220', name: 'Generic Marlin 220 × 220 × 250', note: 'A common size. Check the start G-code suits your machine.', overrides: cartesian(220, 220, 250) },
+    { id: 'ender3', name: 'Creality Ender-3 (220 × 220 × 250)', note: 'Bed size only; check the start G-code and retraction for your setup.', overrides: cartesian(220, 220, 250) },
+    { id: 'cr10', name: 'Creality CR-10 (300 × 300 × 400)', note: 'Bed size only; check the start G-code and retraction for your setup.', overrides: cartesian(300, 300, 400) },
+    { id: 'mk3s', name: 'Prusa i3 MK3S+ (250 × 210 × 210)', note: 'Bed size only; Prusa printers want their own start G-code.', overrides: cartesian(250, 210, 210) },
+    { id: 'mini', name: 'Prusa MINI+ (180 × 180 × 180)', note: 'Bed size only; Prusa printers want their own start G-code.', overrides: cartesian(180, 180, 180) },
+    {
+      id: 'voron350', name: 'Voron 2.4 350 (Klipper)', note: 'Assumes your printer.cfg has PRINT_START and PRINT_END macros.',
+      overrides: cartesian(350, 350, 330, {
+        machine_start_gcode: 'PRINT_START BED_TEMP={material_bed_temperature_layer_0} EXTRUDER_TEMP={material_print_temperature_layer_0}',
+        machine_end_gcode: 'PRINT_END', retraction_amount: 0.5, retraction_speed: 40,
+      }),
+    },
+    {
+      id: 'delta200', name: 'Generic delta (round 200 × 300)', note: 'A round bed whose origin is its centre.',
+      overrides: cartesian(200, 200, 300, {
+        machine_shape: 'elliptic', machine_center_is_zero: true,
+        machine_start_gcode: 'G90\nM82\nG28\nG92 E0', machine_end_gcode: 'M104 S0\nM140 S0\nG91\nG1 E-2 F2700\nG1 Z10 F3000\nG90\nG28 X0 Y0\nM84',
+      }),
+    },
+  ],
+  filament: [
+    { id: 'pla', name: 'Generic PLA', overrides: { material_diameter: 1.75, material_print_temperature: 205, material_print_temperature_layer_0: 210, material_bed_temperature: 60, material_bed_temperature_layer_0: 60, cool_fan_enabled: true, cool_fan_speed: 100 } },
+    { id: 'petg', name: 'Generic PETG', overrides: { material_diameter: 1.75, material_print_temperature: 235, material_print_temperature_layer_0: 240, material_bed_temperature: 80, material_bed_temperature_layer_0: 80, cool_fan_enabled: true, cool_fan_speed: 50 } },
+    { id: 'abs', name: 'Generic ABS', overrides: { material_diameter: 1.75, material_print_temperature: 245, material_print_temperature_layer_0: 245, material_bed_temperature: 100, material_bed_temperature_layer_0: 100, cool_fan_enabled: false } },
+    { id: 'asa', name: 'Generic ASA', overrides: { material_diameter: 1.75, material_print_temperature: 250, material_print_temperature_layer_0: 250, material_bed_temperature: 100, material_bed_temperature_layer_0: 100, cool_fan_enabled: true, cool_fan_speed: 20 } },
+    { id: 'tpu', name: 'Generic TPU', overrides: { material_diameter: 1.75, material_print_temperature: 225, material_print_temperature_layer_0: 225, material_bed_temperature: 50, material_bed_temperature_layer_0: 50, cool_fan_enabled: true, cool_fan_speed: 60 } },
+  ],
+  process: [
+    { id: 'standard', name: '0.20 mm Standard', overrides: { layer_height: 0.2, wall_thickness: 1.2, infill_sparse_density: 20, speed_print: 50, speed_travel: 150 } },
+    { id: 'draft', name: '0.28 mm Draft', overrides: { layer_height: 0.28, wall_thickness: 1.2, infill_sparse_density: 10, speed_print: 60, speed_travel: 150 } },
+    { id: 'fine', name: '0.12 mm Fine', overrides: { layer_height: 0.12, wall_thickness: 1.2, top_bottom_thickness: 1.0, infill_sparse_density: 20, speed_print: 40, speed_travel: 150 } },
+    { id: 'strong', name: '0.20 mm Strong', overrides: { layer_height: 0.2, wall_thickness: 1.6, top_bottom_thickness: 1.2, infill_sparse_density: 40, speed_print: 45, speed_travel: 150 } },
+    { id: 'cura', name: 'Cura defaults', overrides: {} },
+  ],
+};
+
+export const DEFAULT_SELECTION = { printer: 'generic220', filament: 'pla', process: 'standard' };
+
+export class Profiles {
+  /**
+   * @param store SettingsStore
+   * @param info  Map key -> { scope } from taxonomy.buildIndex
+   * @param saved previously persisted state (or undefined)
+   * @param persist callback(state) to save it
+   */
+  constructor(store, info, saved, persist) {
+    this.store = store; this.info = info; this.persist = persist || (() => {});
+    const s = saved || {};
+    this.user = { printer: [], filament: [], process: [], ...(s.user || {}) };
+    this.connections = { ...(s.connections || {}) };  // printer preset id -> how to reach that printer (kept on this computer only: it holds passwords)
+    this.colors = { ...(s.colors || {}) };         // preview colour per feature type (#rrggbb), only the ones changed
+    this.deleted = { ...(s.deleted || {}) };         // 'scope/id' -> time it was deleted (so other computers delete it too)
+    this.onPresetsChanged = null;                    // set by the workspace: called after the user presets change
+    this.selected = { ...DEFAULT_SELECTION, ...(s.selected || {}) };
+    for (const sc of SCOPE_ORDER) if (!this.find(sc, this.selected[sc])) this.selected[sc] = DEFAULT_SELECTION[sc];
+    if (s.overrides) store.setOverrides(s.overrides);
+    else for (const sc of SCOPE_ORDER) this._apply(sc, this.find(sc, this.selected[sc]));
+    this.level = s.level || 'simple';
+    store.onChange(() => this.save());
+  }
+
+  save() {
+    this.persist({ user: this.user, deleted: this.deleted, colors: this.colors, connections: this.connections, selected: this.selected, overrides: this.store.overrides, level: this.level });
+  }
+
+  connection(scope = 'printer') { return { kind: 'moonraker', url: '', user: '', password: '', start: false, ...(this.connections[this.selected[scope]] || {}) }; }
+  setConnection(cfg) {
+    const id = this.selected.printer, before = JSON.stringify(this.sharedConnection(id));
+    this.connections[id] = { ...cfg };
+    const p = this.user.printer.find((x) => x.id === id);
+    // the address, firmware and user name travel with a user printer preset (Drive, Export); the password never does
+    if (p && JSON.stringify(this.sharedConnection(id)) !== before) { p.updated = Date.now(); this._changed(); } else this.save();
+  }
+  /** The parts of a printer's connection that are fine to share: no password. */
+  sharedConnection(id) {
+    const c = this.connections[id];
+    return c && c.url ? { kind: c.kind || 'moonraker', url: c.url, user: c.user || '', start: !!c.start } : null;
+  }
+  _takeConnection(id, c) {
+    if (!c || typeof c !== 'object' || !c.url) return;
+    const old = this.connections[id] || {};
+    this.connections[id] = { kind: String(c.kind || 'moonraker'), url: String(c.url), user: String(c.user || ''), start: !!c.start, password: old.password || '' };
+  }
+
+  _changed() { this.save(); if (this.onPresetsChanged) this.onPresetsChanged(); }
+
+  // ------------------------------------------------------------------ sync with Google Drive
+  /** All user presets as one JSON text (the file kept in the DabbleCAD Drive folder). */
+  syncText() {
+    const presets = [];
+    for (const scope of SCOPE_ORDER) for (const p of [...this.user[scope]].sort((a, b) => (a.id < b.id ? -1 : 1))) presets.push({ scope, id: p.id, name: p.name, overrides: p.overrides, updated: p.updated || 0 });
+    const deleted = Object.fromEntries(Object.entries(this.deleted).sort());
+    return JSON.stringify({ format: 'dabblecad-slicer-presets', version: 1, presets, deleted });
+  }
+
+  // One named JSON file per preset (Drive folder 'Slicer presets/<Printer|Filament|Process>'). The file is
+  // the same format as Export preset, so a copy downloaded from Drive can be imported anywhere.
+  presetFile(scope, p) {
+    const conn = scope === 'printer' ? this.sharedConnection(p.id) : null;
+    return JSON.stringify({ format: 'dabblecad-slicer-preset', version: 1, scope, id: p.id, name: p.name, updated: p.updated || 0, overrides: p.overrides, ...(conn ? { connection: conn } : {}) }, null, 2);
+  }
+  syncAdapter(scope) {
+    return {
+      items: () => this.user[scope].map((p) => ({ key: p.id, name: p.name, updated: p.updated || 0, content: this.presetFile(scope, p) })),
+      tombstones: () => Object.fromEntries(Object.entries(this.deleted).filter(([k]) => k.startsWith(scope + '/')).map(([k, t]) => [k.slice(scope.length + 1), t])),
+      apply: (key, text) => {
+        let d; try { d = JSON.parse(text); } catch { return false; }
+        if (!d || d.format !== 'dabblecad-slicer-preset' || d.scope !== scope || typeof d.overrides !== 'object') return false;
+        const tomb = this.deleted[`${scope}/${key}`];
+        if (tomb && tomb >= (d.updated || 0)) return false;
+        const keys = new Set(this.keysOf(scope));
+        const next = { id: key, name: String(d.name || 'Preset'), overrides: Object.fromEntries(Object.entries(d.overrides).filter(([k]) => keys.has(k))), updated: d.updated || 0 };
+        const list = this.user[scope], i = list.findIndex((x) => x.id === key);
+        if (scope === 'printer') this._takeConnection(key, d.connection);
+        if (i < 0) list.push(next);
+        else {
+          list[i] = next;
+          if (this.selected[scope] === key && !this.modifiedKeys(scope).length) this._apply(scope, next);
+        }
+        this._remoteChanged();
+        return true;
+      },
+      remove: (key) => {
+        const before = this.user[scope].length;
+        this.user[scope] = this.user[scope].filter((p) => p.id !== key);
+        if (this.user[scope].length === before) return;
+        if (!this.find(scope, this.selected[scope])) { this.selected[scope] = DEFAULT_SELECTION[scope]; this._apply(scope, this.find(scope, this.selected[scope])); }
+        this._remoteChanged();
+      },
+    };
+  }
+  _remoteChanged() {
+    this.save();
+    clearTimeout(this._remoteTimer);
+    this._remoteTimer = setTimeout(() => window.dispatchEvent(new CustomEvent('dabble-slicer-presets-changed')), 50);
+  }
+
+  /**
+   * Merge the Drive copy into this computer's presets (the newer edit of each preset wins, a deletion
+   * beats an older copy) and return the text Drive should now hold.
+   */
+  mergeRemote(text) {
+    let changed = false;
+    let remote = null;
+    try { const d = text && JSON.parse(text); if (d && d.format === 'dabblecad-slicer-presets') remote = d; } catch { /* unreadable: treat as empty */ }
+    if (remote) {
+      for (const [k, t] of Object.entries(remote.deleted || {})) {
+        if (!(this.deleted[k] >= t)) { this.deleted[k] = t; changed = true; }
+      }
+      for (const r of remote.presets || []) {
+        if (!SCOPE_ORDER.includes(r.scope) || !r.id) continue;
+        const tomb = this.deleted[`${r.scope}/${r.id}`];
+        if (tomb && tomb >= (r.updated || 0)) continue;
+        const list = this.user[r.scope], i = list.findIndex((x) => x.id === r.id);
+        const keys = new Set(this.keysOf(r.scope));
+        const next = { id: r.id, name: String(r.name || 'Preset'), overrides: Object.fromEntries(Object.entries(r.overrides || {}).filter(([k]) => keys.has(k))), updated: r.updated || 0 };
+        if (i < 0) { list.push(next); changed = true; }
+        else if ((r.updated || 0) > (list[i].updated || 0)) {
+          list[i] = next; changed = true;
+          if (this.selected[r.scope] === r.id && !this.modifiedKeys(r.scope).length) this._apply(r.scope, next);
+        }
+      }
+      // presets deleted on another computer
+      for (const scope of SCOPE_ORDER) {
+        const keep = this.user[scope].filter((p) => { const t = this.deleted[`${scope}/${p.id}`]; return !(t && t >= (p.updated || 0)); });
+        if (keep.length !== this.user[scope].length) {
+          this.user[scope] = keep; changed = true;
+          if (!this.find(scope, this.selected[scope])) { this.selected[scope] = DEFAULT_SELECTION[scope]; this._apply(scope, this.find(scope, this.selected[scope])); }
+        }
+      }
+    }
+    const cutoff = Date.now() - 90 * 864e5;                    // forget old tombstones
+    for (const [k, t] of Object.entries(this.deleted)) if (t < cutoff) { delete this.deleted[k]; changed = true; }
+    if (changed) { this.save(); window.dispatchEvent(new CustomEvent('dabble-slicer-presets-changed')); }
+    return this.syncText();
+  }
+
+  list(scope) { return [...BUILTIN[scope].map((p) => ({ ...p, builtin: true })), ...this.user[scope]]; }
+  find(scope, id) { return this.list(scope).find((p) => p.id === id); }
+  current(scope) { return this.find(scope, this.selected[scope]); }
+
+  keysOf(scope) { return [...this.info].filter(([, n]) => n.scope === scope).map(([k]) => k); }
+
+  _apply(scope, preset) {
+    const next = { ...this.store.overrides };
+    for (const k of this.keysOf(scope)) delete next[k];
+    for (const [k, v] of Object.entries((preset && preset.overrides) || {})) next[k] = v;
+    this.store.setOverrides(next);
+  }
+
+  select(scope, id) {
+    const p = this.find(scope, id);
+    if (!p) return;
+    this.selected[scope] = id;
+    this._apply(scope, p);
+    this.save();
+  }
+
+  /** Overrides belonging to one scope in the working state. */
+  scopeOverrides(scope) {
+    const out = {};
+    for (const k of this.keysOf(scope)) if (this.store.isOverridden(k)) out[k] = this.store.overrides[k];
+    return out;
+  }
+
+  /** The value a setting has in the selected preset (undefined when the preset leaves it at Cura's default). */
+  baseline(key) {
+    const n = this.info.get(key);
+    const p = n && this.current(n.scope);
+    return p ? p.overrides[key] : undefined;
+  }
+
+  /** Is this setting different from the selected preset? */
+  isModified(key) {
+    const base = this.baseline(key);
+    const has = this.store.isOverridden(key);
+    if (!has) return base !== undefined;
+    return base === undefined || JSON.stringify(base) !== JSON.stringify(this.store.overrides[key]);
+  }
+
+  modifiedKeys(scope) { return this.keysOf(scope).filter((k) => this.isModified(k)); }
+
+  /** Put one setting back to what the preset says. */
+  resetKey(key) {
+    const base = this.baseline(key);
+    if (base === undefined) this.store.reset(key); else this.store.set(key, base);
+  }
+  resetScope(scope) { this._apply(scope, this.current(scope)); this.save(); }
+
+  /** Add a ready-made preset (e.g. read from a Cura project) and select it. */
+  addPreset(scope, name, overrides) {
+    const keys = new Set(this.keysOf(scope));
+    const id = 'user-' + Date.now().toString(36) + '-' + scope;
+    this.user[scope].push({ id, name, overrides: Object.fromEntries(Object.entries(overrides).filter(([k]) => keys.has(k))), updated: Date.now() });
+    this.select(scope, id);
+    this._changed();
+    return id;
+  }
+
+  saveAs(scope, name) {
+    const id = 'user-' + Date.now().toString(36);
+    this.user[scope].push({ id, name, overrides: this.scopeOverrides(scope), updated: Date.now() });
+    if (scope === 'printer' && this.connections[this.selected.printer]) this.connections[id] = { ...this.connections[this.selected.printer] };  // a copy keeps the printer's address
+    this.selected[scope] = id;
+    this._changed();
+    return id;
+  }
+  /** Overwrite the selected user preset with the current values. */
+  update(scope) {
+    const p = this.current(scope);
+    if (!p || p.builtin) return false;
+    p.overrides = this.scopeOverrides(scope);
+    p.updated = Date.now();
+    this._changed();
+    return true;
+  }
+  rename(scope, name) { const p = this.current(scope); if (p && !p.builtin) { p.name = name; p.updated = Date.now(); this._changed(); } }
+  remove(scope) {
+    const p = this.current(scope);
+    if (!p || p.builtin) return false;
+    this.user[scope] = this.user[scope].filter((x) => x.id !== p.id);
+    this.deleted[`${scope}/${p.id}`] = Date.now();
+    this.selected[scope] = DEFAULT_SELECTION[scope];
+    this._apply(scope, this.find(scope, this.selected[scope]));
+    this._changed();
+    return true;
+  }
+
+  setLevel(level) { this.level = level; this.save(); }
+
+  /** One scope as JSON text, for sharing or backup. */
+  exportScope(scope) {
+    const p = this.current(scope);
+    const conn = scope === 'printer' && p ? this.sharedConnection(p.id) : null;
+    return JSON.stringify({ format: 'dabblecad-slicer-preset', scope, name: p ? p.name : scope, overrides: this.scopeOverrides(scope), ...(conn ? { connection: conn } : {}) }, null, 2);
+  }
+  importScope(text) {
+    const d = JSON.parse(text);
+    if (d.format !== 'dabblecad-slicer-preset' || !SCOPE_ORDER.includes(d.scope) || typeof d.overrides !== 'object') throw new Error('This is not a DabbleCAD slicer preset');
+    const keys = new Set(this.keysOf(d.scope));
+    const overrides = Object.fromEntries(Object.entries(d.overrides).filter(([k]) => keys.has(k)));
+    const id = 'user-' + Date.now().toString(36);
+    this.user[d.scope].push({ id, name: String(d.name || 'Imported'), overrides, updated: Date.now() });
+    if (d.scope === 'printer') this._takeConnection(id, d.connection);
+    this._changed();
+    this.select(d.scope, id);
+    return d.scope;
+  }
+}
+
+/** g/cm³, to estimate the weight of the filament a print uses (user presets assume PLA). */
+export const FILAMENT_DENSITY = { pla: 1.24, petg: 1.27, abs: 1.04, asa: 1.07, tpu: 1.21 };

@@ -20,7 +20,7 @@ export function parseLength(text, units) {
   return units === 'in' ? v * 25.4 : units === 'brick' ? v * 8 : v;
 }
 
-function protractor() {
+export function protractor() {
   const pts = [];
   const seg = (a, r0, r1) => pts.push(Math.cos(a) * r0, Math.sin(a) * r0, 0, Math.cos(a) * r1, Math.sin(a) * r1, 0);
   for (let i = 0; i < 360; i++) {
@@ -107,6 +107,8 @@ export class Gizmo {
       const el = this._handle('gz-rot gz-rot-' + axis, title, icon('rotate', 22));
       add(el, pos);
       el.addEventListener('pointerdown', (e) => this._rotateDrag(e, axis));
+      el.addEventListener('pointerenter', () => { if (!this.dragging) this._showProtractor(axis); });
+      el.addEventListener('pointerleave', () => { if (!this.dragging) { this.protractor.visible = false; this.viewport.requestRender(); } });
     };
     rot('z', (b, c, o) => [b.max.x + o, b.min.y - o, b.min.z], 'Rotate around Z (Shift: 45° steps)');
     rot('x', (b, c, o) => [c.x, b.max.y + o * 1.5, b.max.z], 'Rotate around X (Shift: 45° steps)');
@@ -365,6 +367,22 @@ export class Gizmo {
     });
   }
 
+  /** Place the protractor ring around the selection for a rotation axis (also shown on hover). */
+  _showProtractor(axis) {
+    const ed = this.editor, vp = this.viewport;
+    if (!this.box) return;
+    const c = this.box.getCenter(new THREE.Vector3());
+    const cWorld = c.clone().applyMatrix4(ed.frame);
+    const basis = axis === 'x' ? new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0))
+      : axis === 'y' ? new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0))
+        : new THREE.Matrix4();
+    const scale = vp.unitsPerPixel(cWorld) * RING_PX;
+    this.protractor.matrix.copy(ed.frame).multiply(T(c.x, c.y, c.z)).multiply(basis).multiply(S(scale, scale, scale));
+    this.protractor.updateMatrixWorld(true);
+    this.protractor.visible = true;
+    vp.requestRender();
+  }
+
   _rotateDrag(e, axis) {
     const ed = this.editor, vp = this.viewport;
     const dup = e.altKey && ed._duplicateInPlace().length > 0;
@@ -395,14 +413,7 @@ export class Gizmo {
       return facing >= 0 ? a : -a;
     };
     const a0 = angleAt(e);
-    // protractor
-    const basis = axis === 'x' ? new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0))
-      : axis === 'y' ? new THREE.Matrix4().makeBasis(new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0))
-        : new THREE.Matrix4();
-    const scale = vp.unitsPerPixel(cWorld) * RING_PX;
-    this.protractor.matrix.copy(ed.frame).multiply(T(c.x, c.y, c.z)).multiply(basis).multiply(S(scale, scale, scale));
-    this.protractor.updateMatrixWorld(true);
-    this.protractor.visible = true;
+    this._showProtractor(axis);
     let prev = a0, total = 0;
     this._drag(e, 'rotate', (ev) => {
       const a = angleAt(ev);

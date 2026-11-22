@@ -39,7 +39,9 @@ export class Inspector {
     this.host.append(h('div', { class: 'insp-head' },
       h('div', { class: 'insp-title', title: 'Double-click to rename', onDblclick: () => this.app.renameNode(first) }, title),
       button({ icon: allLocked ? 'lock' : 'unlock', title: allLocked ? 'Unlock (Ctrl+L)' : 'Lock (Ctrl+L)', cls: allLocked ? 'active' : '', onClick: () => ed.toggleLock() }),
-      button({ icon: 'bulb', title: 'Hide (Ctrl+H)', onClick: () => ed.hideSelection() })));
+      button({ icon: 'bulb', title: 'Hide (Ctrl+H)', onClick: () => ed.hideSelection() }),
+      button({ icon: 'duplicate', title: 'Duplicate (Ctrl+D)', onClick: () => ed.duplicate() }),
+      button({ icon: 'trash', title: 'Delete (Del)', onClick: () => ed.deleteSelection() })));
 
     if (allLocked) {
       this.host.append(h('div', { class: 'insp-section' }, h('div', { class: 'insp-note' }, 'This selection is locked. Unlock it to make changes.')));

@@ -1,11 +1,17 @@
 // Application shell: layout, toolbars, keyboard shortcuts, auto-save and file handling.
 import { APP_NAME } from './brand.js';
+
+/** The commit this build was made from (set in vite.config.mjs). */
+const BUILD = typeof __APP_BUILD__ === 'object' ? __APP_BUILD__ : { sha: 'unknown', short: 'dev', branch: '', date: '' };
+const BUILD_TITLE = `Commit ${BUILD.sha}${BUILD.branch ? `\nBranch ${BUILD.branch}` : ''}${BUILD.date ? `\nBuilt ${new Date(BUILD.date).toLocaleString()}` : ''}`;
 import * as THREE from 'three';
 import { initSolid } from './core/solid.js';
 import { h, clear, button, icon, toast, popupMenu, promptDialog, confirmDialog } from './ui/dom.js';
 import { platform } from './platform.js';
 import { Viewport, HOME_VIEW } from './view/viewport.js';
 import { ViewCube } from './view/viewcube.js';
+import { addResizer } from './ui/resizer.js';
+import { makeDraggable } from './ui/draggable.js';
 import { Gizmo, formatLength } from './view/gizmo.js';
 import { buildVoxels, disposeVoxels } from './view/voxels.js';
 import { Editor } from './editor.js';
@@ -20,6 +26,7 @@ import { initFonts, ensureFont } from './core/fonts.js';
 import { kindName } from './core/shapes.js';
 import { importFiles, exportModel, IMPORT_FILTERS, extrusionNode, dataUrlToBytes } from './core/io.js';
 import { LaserWorkspace } from './laser/workspace.js';
+import { SlicerWorkspace } from './slicer/workspace.js';
 
 const SNAPS = [0, 0.1, 0.25, 0.5, 1, 2, 5];
 // DabbleCAD's own mark: a "D" with a splash dot.
@@ -76,7 +83,7 @@ export class App {
       this.modeSeg.append(b);
     }
     this.themeBtn = button({ icon: 'sun', title: 'Switch between dark and light mode', onClick: () => this.setTheme(this.settings.theme === 'light' ? 'dark' : 'light') });
-    const logo = h('button', { class: 'logo', type: 'button', title: 'Your designs' }, this.logoMark(), h('span', { class: 'logo-name' }, 'DabbleCAD', h('span', { class: 'logo-plus' }, 'Plus')));
+    const logo = h('button', { class: 'logo', type: 'button', title: 'Your designs' }, this.logoMark(), h('span', { class: 'logo-name' }, 'DabbleCAD', h('span', { class: 'logo-plus' }, 'Plus')), h('span', { class: 'logo-commit', title: BUILD_TITLE }, BUILD.short));
     logo.addEventListener('click', () => this.dashboard.show());
     const topbar = h('div', { class: 'topbar', role: 'toolbar', 'aria-label': 'Design and file tools' }, logo, h('span', { class: 'sep' }), this.nameInput, this.saveState, h('span', { class: 'spacer' }),
       this.modeSeg, h('span', { class: 'sep' }),
@@ -89,8 +96,8 @@ export class App {
 
     // top-level workspaces sit directly beneath the DabbleCAD brand
     this.wsTabs = {};
-    const wsTab = (id, label, ic, tip) => { const b = button({ label, icon: ic, title: tip, size: 17, cls: 'ws-tab', onClick: () => this.setViewMode(id === 'laser' ? 'laser' : this.last3d || 'design') }); b.dataset.mode = id === 'laser' ? 'laser' : 'workspace-3d'; this.wsTabs[id] = b; return b; };
-    const workspaceBar = h('div', { class: 'workspace-bar', role: 'tablist', 'aria-label': 'Workspace' }, wsTab('3d', '3D Design', 'cube', '3D design workspace'), wsTab('laser', 'Laser', 'laser', 'Laser workspace: draw, set up cuts and engraves, and run your laser'));
+    const wsTab = (id, label, ic, tip) => { const b = button({ label, icon: ic, title: tip, size: 17, cls: 'ws-tab', onClick: () => this.setViewMode(id === 'laser' || id === 'slicer' ? id : this.last3d || 'design') }); b.dataset.mode = id === '3d' ? 'workspace-3d' : id; this.wsTabs[id] = b; return b; };
+    const workspaceBar = h('div', { class: 'workspace-bar', role: 'tablist', 'aria-label': 'Workspace' }, wsTab('3d', '3D Design', 'cube', '3D design workspace'), wsTab('laser', 'Laser', 'laser', 'Laser workspace: draw, set up cuts and engraves, and run your laser'), wsTab('slicer', 'Slicer', 'cube', 'Slicer workspace: slice your design to G-code for a 3D printer'));
     this.wsTabs['3d'].classList.add('active');
     const toolbar = h('div', { class: 'toolbar', role: 'toolbar', 'aria-label': 'Editing tools' },
       tb('outliner', 'list', 'Objects list', () => this.toggleOutliner()), h('span', { class: 'sep' }),
@@ -127,7 +134,10 @@ export class App {
     this.viewEl = h('div', { class: 'viewport' });
     this.side = h('div', { class: 'side' });
     this.laserRoot = h('div', { class: 'laser-root' });
-    root.append(topbar, workspaceBar, toolbar, h('div', { class: 'main' }, this.outliner, this.viewEl, this.side), this.laserRoot);
+    this.slicerRoot = h('div', { class: 'slicer-root' });
+    root.append(topbar, workspaceBar, toolbar, h('div', { class: 'main' }, this.outliner, this.viewEl, this.side), this.laserRoot, this.slicerRoot);
+    addResizer(this.outliner, { side: 'left', key: '3d-outliner', min: 170, max: 460 });
+    addResizer(this.side, { side: 'right', key: '3d-side', min: 240, max: 640 });
 
     this.viewport = new Viewport(this.viewEl, this.settings);
     this.editor = new Editor(this.viewport, this.settings);
@@ -144,6 +154,7 @@ export class App {
       this.projBtn)));
 
     this.inspectorEl = h('div', { class: 'inspector' });
+    makeDraggable(this.inspectorEl, { key: '3d-inspector' });
     this.banner = h('div', { class: 'mode-banner' });
     this.status = h('div', { class: 'statusbar' });
     this.snapSel = h('select', { class: 'select', title: 'Snap Grid' });
@@ -162,6 +173,8 @@ export class App {
     this.shapes = new ShapesPanel(this.editor, this.side, this);
     this.dashboard = new Dashboard(this);
     this.laser = new LaserWorkspace(this, this.laserRoot);
+    this.slicer = new SlicerWorkspace(this, this.slicerRoot);
+    this.modeSeg.before(this.slicer.modeSeg);
     this._syncThemeButton();
     this._syncProjection();
   }
@@ -202,6 +215,7 @@ export class App {
       if (!files.length) return;
       // in the laser workspace the drop belongs to the laser canvas, not the hidden 3D design
       if (this.viewMode === 'laser') this.laser.importData(files);
+      else if (this.viewMode === 'slicer') this.slicer.importData(files);
       else this.importData(files);
     });
     window.addEventListener('blur', () => this.flushSave());
@@ -423,6 +437,22 @@ export class App {
     for (const msg of res.messages) toast(msg, 'warn', 6000);
   }
 
+  /** Open the Slicer workspace and add the design (or just the selection) to its build plate. */
+  async openSlicer({ selectedOnly = false } = {}) {
+    let name;
+    if (selectedOnly) {
+      const nodes = this.editor.selectedNodes();
+      name = nodes.length === 1 ? (nodes[0].name || kindName(nodes[0])) : `${nodes.length} objects`;
+    }
+    this.slicer.pendingAdd = { selectedOnly, name };   // so the first open does not also add the whole design
+    this.setViewMode('slicer');
+    if (await this.slicer.ready) {
+      const add = this.slicer.pendingAdd;
+      this.slicer.pendingAdd = null;
+      if (add) await this.slicer.addFromDesign(add);
+    }
+  }
+
   async exportAs(format, selectedOnly, { fuse = true } = {}) {
     try {
       const out = await this.editor._busy(() => exportModel(this.editor, format, { selectedOnly, fuse }));
@@ -566,16 +596,20 @@ export class App {
     if (mode === this.viewMode) return;
     this.viewMode = mode;
     for (const b of this.modeSeg.children) b.classList.toggle('active', b.dataset.mode === mode);
-    const laser = mode === 'laser', voxel = this._isVoxel();
+    const slicer = mode === 'slicer', laser = mode === 'laser' || slicer, voxel = this._isVoxel();
     if (!laser) this.last3d = mode;
     this.wsTabs['3d'].classList.toggle('active', !laser);
-    this.wsTabs.laser.classList.toggle('active', laser);
+    this.wsTabs.laser.classList.toggle('active', mode === 'laser');
+    this.wsTabs.slicer.classList.toggle('active', slicer);
     this.modeSeg.style.display = laser ? 'none' : '';
+    this.slicer.modeSeg.style.display = slicer ? '' : 'none';
     this.editor.disabled = voxel || laser;
-    document.getElementById('app').classList.toggle('laser-mode', laser);
-    this.laser.setActive(laser);
+    document.getElementById('app').classList.toggle('laser-mode', mode === 'laser');
+    document.getElementById('app').classList.toggle('slicer-mode', slicer);
+    this.laser.setActive(mode === 'laser');
+    this.slicer.setActive(slicer);
     if (!laser) this.viewport.resize();
-    if (voxel || laser) { this.editor.setTool('select'); this.editor.clearSelection(); }
+    if (voxel || laser) { this.editor.setTool('select'); if (!slicer) this.editor.clearSelection(); }  // the Slicer's "Selected" button needs the selection
     this.viewEl.classList.toggle('voxel-mode', voxel);
     this.voxelBar.classList.toggle('open', voxel);
     this.viewport.objects.visible = !voxel;
@@ -701,6 +735,8 @@ export class App {
         { label: 'Select all', icon: 'select', shortcut: 'Ctrl+A', onClick: () => ed.selectAll() },
         { label: 'Show all', icon: 'bulb', shortcut: 'Ctrl+Shift+H', disabled: !ed.doc.nodes.some((x) => x.hidden), onClick: () => ed.showAll() },
         'sep',
+        { label: 'Slice design…', icon: 'export', disabled: !ed.doc.nodes.length, onClick: () => this.openSlicer() },
+        'sep',
         { label: 'Fit all in view', icon: 'fit', shortcut: 'F', onClick: () => this.fit() },
         { label: 'Home view', icon: 'home', onClick: () => this.viewport.home() },
         { label: 'Reset workplane', icon: 'workplane', disabled: !ed.hasFrame, onClick: () => { ed.setFrame(null); this._updateBanner(); } },
@@ -729,6 +765,8 @@ export class App {
       { label: 'Drop to workplane', icon: 'drop', shortcut: 'D', disabled: !movable.length, onClick: () => ed.dropToWorkplane() },
       { label: 'Workplane on selection', icon: 'workplane', shortcut: 'Shift+W', onClick: () => { ed.workplaneAtSelection(); this._updateBanner(); } },
       'sep',
+      { label: 'Slice…', icon: 'export', title: 'Add the selection to the build plate in the Slicer', onClick: () => this.openSlicer({ selectedOnly: true }) },
+      'sep',
       { label: locked ? 'Unlock' : 'Lock', icon: locked ? 'unlock' : 'lock', shortcut: 'Ctrl+L', onClick: () => ed.toggleLock() },
       { label: 'Hide', icon: 'eyeOff', shortcut: 'Ctrl+H', onClick: () => ed.hideSelection() },
       { label: 'Rename…', icon: 'pencil', disabled: n !== 1, onClick: () => this.renameNode(ed.selectedNodes()[0]) },
@@ -743,7 +781,7 @@ export class App {
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
     if (document.querySelector('.modal-backdrop')) return;
     if (this.dashboard.isOpen) { if (e.key === 'Escape') this.dashboard.hide(); return; }
-    if (this.viewMode === 'laser') return; // the laser workspace has its own shortcuts
+    if (this.viewMode === 'laser' || this.viewMode === 'slicer') return; // those workspaces have their own shortcuts
     const ed = this.editor;
     const ctrl = e.ctrlKey || e.metaKey, shift = e.shiftKey;
     const key = e.key.length === 1 ? e.key.toLowerCase() : e.key;
