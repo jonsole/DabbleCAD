@@ -43,29 +43,35 @@ function extrusionMaterial(hex, uniforms) {
     uniforms: { ...uniforms, uColor: { value: new THREE.Color(hex) } },
     vertexShader: `
       attribute vec3 iA; attribute vec3 iB; attribute vec3 iDim; attribute float iSeq;
-      uniform float uLo; uniform float uHi; uniform float uDone; uniform float uHideRest;
-      varying vec3 vN; varying float vY; varying float vL; varying float vLayer;
+      uniform float uLo; uniform float uHi; uniform float uDone; uniform float uFrac; uniform float uHideRest;
+      varying vec3 vN; varying float vY; varying float vL; varying float vLayer; varying float vT;
       void main() {
-        vY = position.z; vL = iSeq; vLayer = iDim.z;
-        bool hide = uHideRest > 0.5 && iSeq >= uDone;   // Monitor 'progress': only what is printed so far
+        vY = position.z; vL = iSeq; vLayer = iDim.z; vT = position.x;
+        // uDone: the move the nozzle is on, uFrac: how far along it. Monitor 'progress' draws only what is printed,
+        // the current move up to the nozzle
+        bool cur = abs(iSeq - uDone) < 0.5;
+        bool hide = uHideRest > 0.5 && (iSeq > uDone + 0.5 || (cur && uFrac <= 0.001));
         if (hide || iDim.z < uLo || iDim.z > uHi) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
         vec3 d = iB - iA; float len = length(d);
         vec3 dir = len > 1e-5 ? d / len : vec3(1.0, 0.0, 0.0);
         vec3 side = normalize(vec3(-dir.y, dir.x, 0.0));
         float t = position.x;
+        if (cur && uHideRest > 0.5) { d *= uFrac; t = position.x; }
         vec3 p = iA + d * t + dir * (t * 2.0 - 1.0) * iDim.x * 0.3 + side * position.y * iDim.x + vec3(0.0, 0.0, position.z * iDim.y - iDim.y * 0.5);
         vN = mat3(modelViewMatrix) * (side * normal.x + vec3(0.0, 0.0, normal.y));
         gl_Position = projectionMatrix * modelViewMatrix * vec4(p, 1.0);
       }`,
     fragmentShader: `
-      uniform vec3 uColor; uniform float uDone; uniform float uActive; varying vec3 vN; varying float vY; varying float vL; varying float vLayer;
+      uniform vec3 uColor; uniform float uDone; uniform float uFrac; uniform float uActive; varying vec3 vN; varying float vY; varying float vL; varying float vLayer; varying float vT;
       void main() {
         vec3 n = normalize(vN);
         float l = max(dot(n, normalize(vec3(0.35, 0.55, 0.75))), 0.0);
         float edge = 0.55 + 0.45 * smoothstep(0.0, 0.75, n.z * 0.5 + 0.5);   // darker towards the sides of each bead
         float seam = 1.0 - 0.6 * smoothstep(0.28, 0.5, abs(vY));    // dark line where one layer meets the next
-        vec3 col = vL >= uDone ? vec3(0.42, 0.44, 0.48) : uColor;   // uDone: the first move not printed yet
-        if (uActive >= 0.0 && vL < uDone && vLayer < uActive - 0.5) col *= 0.45;   // finished layers darker than the one being printed   // Monitor 'whole print': layers still to print are grey
+        bool cur = abs(vL - uDone) < 0.5;
+        bool printed = vL < uDone - 0.5 || (cur && vT <= uFrac);
+        vec3 col = printed ? uColor : vec3(0.42, 0.44, 0.48);       // Monitor 'whole print': still to print in grey
+        if (uActive >= 0.0 && printed && vLayer < uActive - 0.5) col *= 0.45;   // finished layers darker than the one being printed
         gl_FragColor = vec4(col * (0.35 + 0.8 * l) * edge * seam, 1.0);
       }`,
     side: THREE.DoubleSide,
@@ -329,7 +335,7 @@ export class SlicerScene {
   showPreview(parsed, centerIsZero) {
     this.clearPreview();
     const types = new Map();
-    this.previewUniforms = { uLo: { value: 0 }, uHi: { value: parsed.layers }, uDone: { value: 1e9 }, uHideRest: { value: 0 }, uActive: { value: -1 } };
+    this.previewUniforms = { uLo: { value: 0 }, uHi: { value: parsed.layers }, uDone: { value: 1e9 }, uFrac: { value: 0 }, uHideRest: { value: 0 }, uActive: { value: -1 } };
     for (const [t, b] of parsed.types) {
       const geo = extrusionGeometry(b.pos);
       const mesh = new THREE.Mesh(geo, extrusionMaterial(typeHex(t, this.typeColors), this.previewUniforms));
@@ -407,9 +413,10 @@ export class SlicerScene {
    * Moves before number `n` (in file order) are printed (null: show everything normally).
    * style 'whole': the rest in grey; 'progress': the rest not drawn at all.
    */
-  setPrinted(n, style = 'whole') {
+  setPrinted(n, style = 'whole', frac = 0) {
     if (!this.preview) return;
     this.previewUniforms.uDone.value = n == null ? 1e9 : n;
+    this.previewUniforms.uFrac.value = frac;
     // the layer being printed: the last one starting at or before move n
     let active = -1;
     const lp = this.preview.layerPath;

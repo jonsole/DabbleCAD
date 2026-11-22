@@ -87,6 +87,6 @@ export class NozzleFollower {
     }
     const { k, u } = this._at(this.tau);
     const p = this.p, i0 = (k - 1) * 4, i1 = k * 4;
-    return { k, x: p[i0] + (p[i1] - p[i0]) * u, y: p[i0 + 1] + (p[i1 + 1] - p[i0 + 1]) * u, z: p[i0 + 2] + (p[i1 + 2] - p[i0 + 2]) * u };
+    return { k, u, x: p[i0] + (p[i1] - p[i0]) * u, y: p[i0 + 1] + (p[i1 + 1] - p[i0 + 1]) * u, z: p[i0 + 2] + (p[i1 + 2] - p[i0 + 2]) * u };
   }
 }

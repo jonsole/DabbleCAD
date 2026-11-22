@@ -581,7 +581,7 @@ export class SlicerWorkspace {
     try { localStorage.setItem('dabblecad.slicer.monitorStyle', this.monStyle); } catch { /* ignore */ }
     for (const b of this.monStyleSeg.children) b.classList.toggle('active', b.dataset.style === this.monStyle);
     if (!this._showNozzle) this.scene.setNozzle(null);
-    if (this._lastSeq !== undefined) this.scene.setPrinted(this._lastSeq, this.monStyle);
+    if (this._lastSeq !== undefined) this.scene.setPrinted(this._lastSeq, this.monStyle, this._lastFrac || 0);
   }
 
   _syncModeButtons() {
@@ -662,7 +662,7 @@ export class SlicerWorkspace {
         if (now - last < 33 || document.hidden) return;              // about 30 updates a second is plenty
         last = now;
         const e = this._follower.estimate(performance.now());
-        if (e) { this.scene.setNozzle(this._showNozzle ? e : null); this.scene.setPrinted(e.k, this.monStyle); this._lastSeq = e.k; }
+        if (e) { this.scene.setNozzle(this._showNozzle ? e : null); this.scene.setPrinted(e.k, this.monStyle, e.u); this._lastSeq = e.k; this._lastFrac = e.u; }
       };
       this._followRaf = requestAnimationFrame(frame);
     }
@@ -745,7 +745,7 @@ export class SlicerWorkspace {
       let seq = null;
       if (live && f && st.filePos != null) seq = Math.max(0, f.indexAtByte(st.filePos) - 60);   // the printer reads ahead of where it is printing
       else if (live && layer != null && pp && pp.layerPath) seq = pp.layerPath[Math.min(layer, pp.layerPath.length - 1)] ?? null;
-      this._lastSeq = seq;
+      this._lastSeq = seq; this._lastFrac = 0;
       this.scene.setPrinted(seq, this.monStyle);
     }
     if (!live) { this._lastSeq = null; this.scene.setPrinted(null); }
