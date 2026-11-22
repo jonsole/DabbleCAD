@@ -41,6 +41,11 @@ export class SlicerWorkspace {
     this.controller = null;
     this.log = [];
     this.root.append(h('div', { class: 'sl-loading' }, 'Loading the slicer…'));
+    // the view switch lives in the app's top bar (beside Import/Export), like 3D Design's mode switch
+    this.modeSeg = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Slicer view', style: { display: 'none' } },
+      button({ label: 'Model', icon: 'cube', size: 16, title: 'Show the models on the bed', cls: 'active', onClick: () => this.setMode('model') }),
+      button({ label: 'Preview', icon: 'eye', size: 16, title: 'Show the sliced G-code layer by layer', cls: 'disabled', onClick: () => this.setMode('preview') }),
+      this.monitorBtn = button({ label: 'Monitor', icon: 'stats', size: 16, title: "Show the printer's own web page (set the address in Printer settings)", onClick: () => this.showMonitor(!this.monitoring) }));
   }
 
   // ------------------------------------------------------------------ lifecycle
@@ -112,10 +117,6 @@ export class SlicerWorkspace {
     this.modelList = h('div', { class: 'outliner-list' });
     this.outliner = h('div', { class: 'outliner open' });
     // top toolbar, built like the 3D Design one
-    this.modeSeg = h('div', { class: 'mode-group', role: 'group', 'aria-label': 'View' },
-      button({ label: 'Model', title: 'Show the models on the bed', cls: 'active', onClick: () => this.setMode('model') }),
-      button({ label: 'Preview', title: 'Show the sliced G-code layer by layer', cls: 'disabled', onClick: () => this.setMode('preview') }),
-      this.monitorBtn = button({ label: 'Monitor', title: "Show the printer's own web page (set the address in Printer settings)", onClick: () => this.showMonitor(!this.monitoring) }));
     this.progress = h('i');
     this.progressWrap = h('div', { class: 'sl-progress', hidden: true }, this.progress);
     this.sliceBtn = button({ label: 'Slice', icon: 'export', cls: 'btn-primary sl-slice', title: 'Slice the plate to G-code', onClick: () => this.slice() });
@@ -132,7 +133,6 @@ export class SlicerWorkspace {
       button({ icon: 'plus', label: 'Import', title: 'Add an STL, OBJ, 3MF or PLY file', onClick: () => this.importFiles() }), h('span', { class: 'sep' }),
       this.undoBtn = button({ icon: 'undo', title: 'Undo (Ctrl+Z)', onClick: () => this.undo() }),
       this.redoBtn = button({ icon: 'redo', title: 'Redo (Ctrl+Y)', onClick: () => this.redo() }), h('span', { class: 'sep' }),
-      this.modeSeg, h('span', { class: 'spacer' }),
       this.dupBtn = button({ icon: 'duplicate', title: 'Copy the selected model', onClick: () => this.selected && this.duplicate(this.selected) }),
       this.delBtn = button({ icon: 'trash', title: 'Remove the selected model (Del)', onClick: () => this.selected && this.removeModel(this.selected) }), h('span', { class: 'sep' }),
       this.arrangeBtn = button({ icon: 'align', title: 'Arrange: space the models out on the bed', onClick: () => this.arrange() }),

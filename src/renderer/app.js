@@ -174,6 +174,7 @@ export class App {
     this.dashboard = new Dashboard(this);
     this.laser = new LaserWorkspace(this, this.laserRoot);
     this.slicer = new SlicerWorkspace(this, this.slicerRoot);
+    this.modeSeg.before(this.slicer.modeSeg);
     this._syncThemeButton();
     this._syncProjection();
   }
@@ -601,6 +602,7 @@ export class App {
     this.wsTabs.laser.classList.toggle('active', mode === 'laser');
     this.wsTabs.slicer.classList.toggle('active', slicer);
     this.modeSeg.style.display = laser ? 'none' : '';
+    this.slicer.modeSeg.style.display = slicer ? '' : 'none';
     this.editor.disabled = voxel || laser;
     document.getElementById('app').classList.toggle('laser-mode', mode === 'laser');
     document.getElementById('app').classList.toggle('slicer-mode', slicer);
