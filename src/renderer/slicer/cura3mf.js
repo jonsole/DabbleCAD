@@ -63,7 +63,7 @@ export function readCuraProject(bytes, defs, scopeOf) {
   const files = unzipSync(bytes);
   const all = Object.keys(files);
   const names = all.filter((n) => /(^|\/)cura\//i.test(n));
-  if (!names.length) throw new Error('This 3MF has no Cura settings in it. In Cura use File → Save Project…');
+  if (!names.some((n) => /\.cfg$/i.test(n))) throw new Error('This 3MF holds only the model, no settings (it looks like a File → Export… file). In Cura use File → Save Project… and choose to save with the settings, then import that.');
   const seen = [];
   const kinds = {};            // kind -> merged raw values
   let machine = '', quality = '', materialInfo = null;
