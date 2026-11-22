@@ -557,6 +557,7 @@ export class SlicerWorkspace {
       this._stopPolling();
       if (this.monitorEl) this.monitorEl.hidden = true;
       this.scene.setPrintedLayers(null);
+      this.scene.setNozzle(null);
       if (this.printJob) {   // back to the current slice
         if (this.result) this.scene.showPreview(this.result.parsed, this.store.get('machine_center_is_zero')); else this.scene.clearPreview();
       }
@@ -674,6 +675,7 @@ export class SlicerWorkspace {
     for (const t of st.temps.filter(real)) this.monTemps.append(h('div', { class: 'sl-mon-row' }, h('span', {}, t.name), h('span', {}, t.current != null ? `${t.current.toFixed(0)}°` : '–', t.target ? ` / ${t.target.toFixed(0)}°` : '')));
     // the layers already printed in colour, the rest grey (nothing to grey out when the printer is not printing)
     const live = st.state === 'printing' || st.state === 'paused';
+    this.scene.setNozzle(st.nozzle || null);
     this.scene.setPrintedLayers(live && layer != null ? layer : null);
     this._maybeFetchRunning(st, live);
     const base = (s) => String(s || '').replace(/^.*[\\/]/, '');

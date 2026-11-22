@@ -318,7 +318,7 @@ export class SlicerScene {
   }
 
   clearPreview() {
-    for (const c of [...this.previewGroup.children]) { this.previewGroup.remove(c); c.geometry && c.geometry.dispose(); c.material && c.material.dispose(); }
+    for (const c of [...this.previewGroup.children]) { this.previewGroup.remove(c); if (c === this.nozzle) continue; c.geometry && c.geometry.dispose(); c.material && c.material.dispose(); }
     this.preview = null;
   }
 
@@ -360,6 +360,23 @@ export class SlicerScene {
     for (const t of p.types.values()) t.line.geometry.instanceCount = t.off[Math.min(hi + 1, t.off.length - 1)];
     // travel moves are only worth showing for the layers being inspected
     apply(p.travel.line, p.travel.off);
+    this.requestRender();
+  }
+  /** Show the printer's nozzle at a G-code position ({x,y,z}), or hide it (null). */
+  setNozzle(p) {
+    if (!this.nozzle) {
+      const mat = new THREE.MeshStandardMaterial({ color: 0xffb020, emissive: 0x553300, roughness: 0.35, metalness: 0.3, depthTest: false, transparent: true, opacity: 0.95 });
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(2.6, 6, 24), mat);
+      cone.rotation.x = -Math.PI / 2; cone.position.z = 3;          // tip at the origin, pointing down (Z up)
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 4.5, 9, 24), mat);
+      body.rotation.x = Math.PI / 2; body.position.z = 10.5;
+      this.nozzle = new THREE.Group(); this.nozzle.add(cone, body);
+      this.nozzle.renderOrder = 10; cone.renderOrder = 10; body.renderOrder = 10;
+      this.previewGroup.add(this.nozzle);
+    }
+    if (this.nozzle.parent !== this.previewGroup) this.previewGroup.add(this.nozzle);   // after a new preview
+    this.nozzle.visible = !!p;
+    if (p) this.nozzle.position.set(p.x, p.y, p.z);
     this.requestRender();
   }
   /** Colour the layers below `n` as printed and grey out the rest (null: everything in colour). */

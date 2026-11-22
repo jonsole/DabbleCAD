@@ -165,7 +165,11 @@ function duetStatus(m) {
   if (temps.length === before) {                           // no tool reported its heater: list every heater that isn't the bed
     heaters.forEach((hh, i) => { if (i !== bed && hh) temps.push({ name: heaters.length <= 2 ? 'Nozzle' : `Heater ${i}`, current: num(hh.current), target: num(hh.active) }); });
   }
-  return { state, path: (job.file && job.file.fileName) || job.lastFileName || null, file: String((job.file && job.file.fileName) || job.lastFileName || '').replace(/^.*[\\/]/, '') || null, progress, layer: num(job.layer), layers: num(job.file && job.file.numLayers),
+  // where the nozzle is, in G-code coordinates (userPosition; machinePosition on older firmware)
+  const ax = (L) => ((m.move && m.move.axes) || []).find((a) => a && a.letter === L);
+  const at = (L) => { const a = ax(L); return a ? num(a.userPosition != null ? a.userPosition : a.machinePosition) : null; };
+  const nozzle = at('X') != null && at('Y') != null && at('Z') != null ? { x: at('X'), y: at('Y'), z: at('Z') } : null;
+  return { nozzle, state, path: (job.file && job.file.fileName) || job.lastFileName || null, file: String((job.file && job.file.fileName) || job.lastFileName || '').replace(/^.*[\\/]/, '') || null, progress, layer: num(job.layer), layers: num(job.file && job.file.numLayers),
     timeLeft: num(job.timesLeft && (job.timesLeft.file != null ? job.timesLeft.file : job.timesLeft.filament)), elapsed: num(job.duration), temps };
 }
 
@@ -177,7 +181,8 @@ async function duetModel(cfg, c) {
     const d = json(r);
     return d && d.result !== undefined ? d.result : d;
   };
-  return { state: await get('state'), job: await get('job'), heat: await get('heat'), tools: await get('tools') };
+  let move = null; try { move = await get('move'); } catch { /* no position: fine */ }
+  return { state: await get('state'), job: await get('job'), heat: await get('heat'), tools: await get('tools'), move };
 }
 async function duetRrStatusOld(cfg) {            // RepRapFirmware 2.x: rr_status
   const r = await request(cfg, '/rr_status?type=3');
@@ -208,7 +213,9 @@ async function duetRrStatusOld(cfg) {            // RepRapFirmware 2.x: rr_statu
       layers = num(f.numLayers) || (num(f.height) && num(f.layerHeight) ? Math.round(f.height / f.layerHeight) : null);
     } catch { /* keep going without it */ }
   }
-  return { state: st, file, path, progress: num(d.fractionPrinted) != null ? d.fractionPrinted / 100 : null, layer: num(d.currentLayer), layers, timeLeft: num(d.timesLeft && d.timesLeft.file), elapsed: num(d.printDuration), temps };
+  const xyz = d.coords && (d.coords.xyz || d.coords.machine);
+  const nozzle = Array.isArray(xyz) && xyz.length >= 3 ? { x: num(xyz[0]), y: num(xyz[1]), z: num(xyz[2]) } : null;
+  return { nozzle, state: st, file, path, progress: num(d.fractionPrinted) != null ? d.fractionPrinted / 100 : null, layer: num(d.currentLayer), layers, timeLeft: num(d.timesLeft && d.timesLeft.file), elapsed: num(d.printDuration), temps };
 }
 
 const encPath = (p) => String(p).split('/').map(encodeURIComponent).join('/');
@@ -217,7 +224,7 @@ const toBytes = (r, what) => { if (!r.ok) fail(r, what); return new TextEncoder(
 export async function openStatus(cfg) {
   if (cfg.kind === 'moonraker') {
     return { async read() {
-      const r = await request(cfg, '/printer/objects/query?print_stats&virtual_sdcard&extruder&heater_bed', { headers: key(cfg) });
+      const r = await request(cfg, '/printer/objects/query?print_stats&virtual_sdcard&extruder&heater_bed&gcode_move', { headers: key(cfg) });
       if (!r.ok) fail(r, 'Moonraker did not report its status');
       const s = ((json(r) || {}).result || {}).status || {};
       const ps = s.print_stats || {}, p = s.virtual_sdcard && num(s.virtual_sdcard.progress);
@@ -226,7 +233,9 @@ export async function openStatus(cfg) {
       const temps = [];
       if (s.heater_bed) temps.push({ name: 'Bed', current: num(s.heater_bed.temperature), target: num(s.heater_bed.target) });
       if (s.extruder) temps.push({ name: 'Nozzle', current: num(s.extruder.temperature), target: num(s.extruder.target) });
-      return { state, file: ps.filename || null, path: ps.filename || null, progress: state === 'done' ? 1 : state === 'idle' ? null : p, layer: num(ps.info && ps.info.current_layer), layers: num(ps.info && ps.info.total_layer),
+      const gp = s.gcode_move && s.gcode_move.gcode_position;
+      const nozzle = Array.isArray(gp) && gp.length >= 3 ? { x: num(gp[0]), y: num(gp[1]), z: num(gp[2]) } : null;
+      return { nozzle, state, file: ps.filename || null, path: ps.filename || null, progress: state === 'done' ? 1 : state === 'idle' ? null : p, layer: num(ps.info && ps.info.current_layer), layers: num(ps.info && ps.info.total_layer),
         timeLeft: el != null && p > 0.01 && state === 'printing' ? el / p - el : null, elapsed: el, temps };
     },
     async download(path) { return toBytes(await request(cfg, `/server/files/gcodes/${encPath(path)}`, { headers: key(cfg) }), 'Moonraker would not give up the file'); },
