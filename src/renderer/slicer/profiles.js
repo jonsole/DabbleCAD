@@ -89,7 +89,23 @@ export class Profiles {
   }
 
   connection(scope = 'printer') { return { kind: 'moonraker', url: '', user: '', password: '', start: false, ...(this.connections[this.selected[scope]] || {}) }; }
-  setConnection(cfg) { this.connections[this.selected.printer] = { ...cfg }; this.save(); }
+  setConnection(cfg) {
+    const id = this.selected.printer, before = JSON.stringify(this.sharedConnection(id));
+    this.connections[id] = { ...cfg };
+    const p = this.user.printer.find((x) => x.id === id);
+    // the address, firmware and user name travel with a user printer preset (Drive, Export); the password never does
+    if (p && JSON.stringify(this.sharedConnection(id)) !== before) { p.updated = Date.now(); this._changed(); } else this.save();
+  }
+  /** The parts of a printer's connection that are fine to share: no password. */
+  sharedConnection(id) {
+    const c = this.connections[id];
+    return c && c.url ? { kind: c.kind || 'moonraker', url: c.url, user: c.user || '', start: !!c.start } : null;
+  }
+  _takeConnection(id, c) {
+    if (!c || typeof c !== 'object' || !c.url) return;
+    const old = this.connections[id] || {};
+    this.connections[id] = { kind: String(c.kind || 'moonraker'), url: String(c.url), user: String(c.user || ''), start: !!c.start, password: old.password || '' };
+  }
 
   _changed() { this.save(); if (this.onPresetsChanged) this.onPresetsChanged(); }
 
@@ -105,7 +121,8 @@ export class Profiles {
   // One named JSON file per preset (Drive folder 'Slicer presets/<Printer|Filament|Process>'). The file is
   // the same format as Export preset, so a copy downloaded from Drive can be imported anywhere.
   presetFile(scope, p) {
-    return JSON.stringify({ format: 'dabblecad-slicer-preset', version: 1, scope, id: p.id, name: p.name, updated: p.updated || 0, overrides: p.overrides }, null, 2);
+    const conn = scope === 'printer' ? this.sharedConnection(p.id) : null;
+    return JSON.stringify({ format: 'dabblecad-slicer-preset', version: 1, scope, id: p.id, name: p.name, updated: p.updated || 0, overrides: p.overrides, ...(conn ? { connection: conn } : {}) }, null, 2);
   }
   syncAdapter(scope) {
     return {
@@ -119,6 +136,7 @@ export class Profiles {
         const keys = new Set(this.keysOf(scope));
         const next = { id: key, name: String(d.name || 'Preset'), overrides: Object.fromEntries(Object.entries(d.overrides).filter(([k]) => keys.has(k))), updated: d.updated || 0 };
         const list = this.user[scope], i = list.findIndex((x) => x.id === key);
+        if (scope === 'printer') this._takeConnection(key, d.connection);
         if (i < 0) list.push(next);
         else {
           list[i] = next;
@@ -247,6 +265,7 @@ export class Profiles {
   saveAs(scope, name) {
     const id = 'user-' + Date.now().toString(36);
     this.user[scope].push({ id, name, overrides: this.scopeOverrides(scope), updated: Date.now() });
+    if (scope === 'printer' && this.connections[this.selected.printer]) this.connections[id] = { ...this.connections[this.selected.printer] };  // a copy keeps the printer's address
     this.selected[scope] = id;
     this._changed();
     return id;
@@ -277,7 +296,8 @@ export class Profiles {
   /** One scope as JSON text, for sharing or backup. */
   exportScope(scope) {
     const p = this.current(scope);
-    return JSON.stringify({ format: 'dabblecad-slicer-preset', scope, name: p ? p.name : scope, overrides: this.scopeOverrides(scope) }, null, 2);
+    const conn = scope === 'printer' && p ? this.sharedConnection(p.id) : null;
+    return JSON.stringify({ format: 'dabblecad-slicer-preset', scope, name: p ? p.name : scope, overrides: this.scopeOverrides(scope), ...(conn ? { connection: conn } : {}) }, null, 2);
   }
   importScope(text) {
     const d = JSON.parse(text);
@@ -286,6 +306,7 @@ export class Profiles {
     const overrides = Object.fromEntries(Object.entries(d.overrides).filter(([k]) => keys.has(k)));
     const id = 'user-' + Date.now().toString(36);
     this.user[d.scope].push({ id, name: String(d.name || 'Imported'), overrides, updated: Date.now() });
+    if (d.scope === 'printer') this._takeConnection(id, d.connection);
     this._changed();
     this.select(d.scope, id);
     return d.scope;
