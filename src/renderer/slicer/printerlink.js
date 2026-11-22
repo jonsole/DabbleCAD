@@ -156,9 +156,15 @@ function duetStatus(m) {
   const heaters = heat.heaters || [];
   const bed = (heat.bedHeaters || []).filter((i) => i >= 0)[0];
   if (bed != null && heaters[bed]) temps.push({ name: 'Bed', current: num(heaters[bed].current), target: num(heaters[bed].active) });
-  const tools = m.tools || [];
-  if (tools.length) tools.forEach((t, i) => { const hi = (t.heaters || [])[0]; if (hi != null && heaters[hi]) temps.push({ name: tools.length > 1 ? `Tool ${t.number != null ? t.number : i}` : 'Nozzle', current: num(heaters[hi].current), target: num((t.active || [])[0]) }); });
-  else heaters.forEach((hh, i) => { if (i !== bed) temps.push({ name: i === 1 || heaters.length === 2 ? 'Nozzle' : `Heater ${i}`, current: num(hh.current), target: num(hh.active) }); });
+  const tools = Array.isArray(m.tools) ? m.tools : [];
+  const before = temps.length;
+  tools.forEach((t, i) => {
+    const hi = (t.heaters || [])[0];
+    if (hi != null && heaters[hi]) temps.push({ name: tools.length > 1 ? `Tool ${t.number != null ? t.number : i}` : 'Nozzle', current: num(heaters[hi].current), target: num((t.active || [])[0] != null ? t.active[0] : heaters[hi].active) });
+  });
+  if (temps.length === before) {                           // no tool reported its heater: list every heater that isn't the bed
+    heaters.forEach((hh, i) => { if (i !== bed && hh) temps.push({ name: heaters.length <= 2 ? 'Nozzle' : `Heater ${i}`, current: num(hh.current), target: num(hh.active) }); });
+  }
   return { state, path: (job.file && job.file.fileName) || job.lastFileName || null, file: String((job.file && job.file.fileName) || job.lastFileName || '').replace(/^.*[\\/]/, '') || null, progress, layer: num(job.layer), layers: num(job.file && job.file.numLayers),
     timeLeft: num(job.timesLeft && (job.timesLeft.file != null ? job.timesLeft.file : job.timesLeft.filament)), elapsed: num(job.duration), temps };
 }
@@ -179,8 +185,20 @@ async function duetRrStatusOld(cfg) {            // RepRapFirmware 2.x: rr_statu
   const d = json(r) || {};
   const st = { I: 'idle', P: 'printing', D: 'paused', S: 'paused', R: 'printing', M: 'printing', B: 'busy', F: 'busy', C: 'busy', H: 'error', O: 'error' }[d.status] || 'idle';
   const temps = [];
-  if (d.temps && d.temps.bed) temps.push({ name: 'Bed', current: num(d.temps.bed.current), target: num(d.temps.bed.active) });
-  if (d.temps && d.temps.heads) (d.temps.heads.current || []).forEach((cur, i, all) => temps.push({ name: all.length > 1 ? `Tool ${i}` : 'Nozzle', current: num(cur), target: num((d.temps.heads.active || [])[i]) }));
+  const t = d.temps || {};
+  if (t.bed) temps.push({ name: 'Bed', current: num(t.bed.current), target: num(t.bed.active) });
+  if (t.heads && Array.isArray(t.heads.current)) {            // older 1.x/2.x layout
+    t.heads.current.forEach((cur, i, all) => temps.push({ name: all.length > 1 ? `Tool ${i}` : 'Nozzle', current: num(cur), target: num((t.heads.active || [])[i]) }));
+  } else if (Array.isArray(t.current)) {                      // every heater in one list; the bed's is skipped
+    const bedIdx = t.bed && num(t.bed.heater) != null ? t.bed.heater : 0;
+    const act = (t.tools && t.tools.active) || [];
+    let n = 0;
+    t.current.forEach((cur, i) => {
+      if (i === bedIdx || cur == null || cur < -200) return;
+      const target = num(Array.isArray(act[n]) ? act[n][0] : act[n]);
+      temps.push({ name: 'Nozzle' + (t.current.length > 2 ? ` ${n}` : ''), current: num(cur), target }); n++;
+    });
+  }
   let file = null, layers = null, path = null;
   if (st === 'printing' || st === 'paused') {          // which file is it? (best effort)
     try {

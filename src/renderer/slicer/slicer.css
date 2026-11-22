@@ -180,4 +180,4 @@
 .sl-mon-temps:empty { display: none; }
 .sl-mon-note { font-size: 11px; color: #f5a524; }
 .sl-mon-note:empty { display: none; }
-.sl-monitor a { font-size: 12px; color: var(--accent); }
+.sl-mon-link { width: 28px; height: 28px; min-width: 0; padding: 0; display: inline-flex; align-items: center; justify-content: center; text-decoration: none; }

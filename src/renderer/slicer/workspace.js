@@ -575,14 +575,14 @@ export class SlicerWorkspace {
     this.monLayer = h('span'); this.monLeft = h('span'); this.monElapsed = h('span');
     this.monTemps = h('div', { class: 'sl-mon-temps' });
     this.monNote = h('div', { class: 'sl-mon-note' });
-    this.monLink = h('a', { target: '_blank', rel: 'noopener' }, "Open the printer's own page");
+    this.monLink = h('a', { target: '_blank', rel: 'noopener', class: 'btn btn-ghost sl-mon-link', title: "Open the printer's own web page" }, icon('external', 16));
     this.monitorEl = h('div', { class: 'inspector sl-inspector sl-monitor' },
-      h('div', { class: 'insp-head sl-mon-head' }, h('div', { class: 'insp-title' }, 'Printer'), this.monState),
+      h('div', { class: 'insp-head sl-mon-head' }, h('div', { class: 'insp-title' }, 'Printer'), this.monState, this.monLink),
       h('div', { class: 'sl-mon-body' },
       this.monFile,
       h('div', { class: 'sl-mon-prog' }, h('div', { class: 'sl-mon-track' }, this.monBar), this.monPct),
       row('Layer', this.monLayer), row('Time left', this.monLeft), row('Elapsed', this.monElapsed),
-      this.monTemps, this.monNote, this.monLink));
+      this.monTemps, this.monNote));
     this.viewEl.append(this.monitorEl);
     makeDraggable(this.monitorEl, { key: 'slicer-monitor' });
   }
