@@ -37,16 +37,24 @@ function extrusionGeometry(data) {
   base.instanceCount = data.length / 9;
   return base;
 }
-function extrusionMaterial(hex, uniforms) {
+function extrusionMaterial(hex, uniforms, ghost = false) {
+  // ghost: the layers not printed yet (Monitor), drawn as a faint see-through shell over the real ones
   return new THREE.ShaderMaterial({
     uniforms: { ...uniforms, uColor: { value: new THREE.Color(hex) } },
+    defines: ghost ? { GHOST: 1 } : {},
+    transparent: ghost, depthWrite: !ghost,
     vertexShader: `
       attribute vec3 iA; attribute vec3 iB; attribute vec3 iDim;
-      uniform float uLo; uniform float uHi;
+      uniform float uLo; uniform float uHi; uniform float uDone;
       varying vec3 vN; varying float vY; varying float vL;
       void main() {
         vY = position.z; vL = iDim.z;
-        if (iDim.z < uLo || iDim.z > uHi) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
+        #ifdef GHOST
+        bool hide = iDim.z < uDone;
+        #else
+        bool hide = iDim.z >= uDone;
+        #endif
+        if (hide || iDim.z < uLo || iDim.z > uHi) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
         vec3 d = iB - iA; float len = length(d);
         vec3 dir = len > 1e-5 ? d / len : vec3(1.0, 0.0, 0.0);
         vec3 side = normalize(vec3(-dir.y, dir.x, 0.0));
@@ -62,8 +70,11 @@ function extrusionMaterial(hex, uniforms) {
         float l = max(dot(n, normalize(vec3(0.35, 0.55, 0.75))), 0.0);
         float edge = 0.55 + 0.45 * smoothstep(0.0, 0.75, n.z * 0.5 + 0.5);   // darker towards the sides of each bead
         float seam = 1.0 - 0.6 * smoothstep(0.28, 0.5, abs(vY));    // dark line where one layer meets the next
-        vec3 col = vL >= uDone ? vec3(0.42, 0.44, 0.48) : uColor;   // layers not printed yet are grey
-        gl_FragColor = vec4(col * (0.35 + 0.8 * l) * edge * seam, 1.0);
+        #ifdef GHOST
+        gl_FragColor = vec4(vec3(0.62, 0.65, 0.7) * (0.6 + 0.4 * l), 0.035);
+        return;
+        #endif
+        gl_FragColor = vec4(uColor * (0.35 + 0.8 * l) * edge * seam, 1.0);
       }`,
     side: THREE.DoubleSide,
   });
@@ -318,7 +329,7 @@ export class SlicerScene {
   }
 
   clearPreview() {
-    for (const c of [...this.previewGroup.children]) { this.previewGroup.remove(c); if (c === this.nozzle) continue; c.geometry && c.geometry.dispose(); c.material && c.material.dispose(); }
+    for (const c of [...this.previewGroup.children]) { this.previewGroup.remove(c); if (c === this.nozzle) continue; c.geometry && c.geometry.dispose(); c.material && c.material.dispose(); for (const k of c.children || []) k.material && k.material.dispose(); }
     this.preview = null;
   }
 
@@ -328,10 +339,14 @@ export class SlicerScene {
     const types = new Map();
     this.previewUniforms = { uLo: { value: 0 }, uHi: { value: parsed.layers }, uDone: { value: 1e9 } };
     for (const [t, b] of parsed.types) {
-      const mesh = new THREE.Mesh(extrusionGeometry(b.pos), extrusionMaterial(typeHex(t, this.typeColors), this.previewUniforms));
+      const geo = extrusionGeometry(b.pos);
+      const mesh = new THREE.Mesh(geo, extrusionMaterial(typeHex(t, this.typeColors), this.previewUniforms));
       mesh.frustumCulled = false;
+      const ghost = new THREE.Mesh(geo, extrusionMaterial(0x9aa3b0, this.previewUniforms, true));
+      ghost.frustumCulled = false; ghost.renderOrder = 5; ghost.visible = false;
+      mesh.add(ghost);   // follows the type's visibility
       this.previewGroup.add(mesh);
-      types.set(t, { line: mesh, off: b.off });
+      types.set(t, { line: mesh, ghost, off: b.off });
     }
     const tgeo = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(parsed.travel.pos, 3));
     const travel = new THREE.LineSegments(tgeo, new THREE.LineBasicMaterial({ color: 0x8892a6, transparent: true, opacity: 0.35 }));
@@ -365,13 +380,21 @@ export class SlicerScene {
   /** Show the printer's nozzle at a G-code position ({x,y,z}), or hide it (null). */
   setNozzle(p) {
     if (!this.nozzle) {
-      const mat = new THREE.MeshStandardMaterial({ color: 0xffb020, emissive: 0x553300, roughness: 0.35, metalness: 0.3, depthTest: false, transparent: true, opacity: 0.95 });
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(2.6, 6, 24), mat);
-      cone.rotation.x = -Math.PI / 2; cone.position.z = 3;          // tip at the origin, pointing down (Z up)
-      const body = new THREE.Mesh(new THREE.CylinderGeometry(4.5, 4.5, 9, 24), mat);
-      body.rotation.x = Math.PI / 2; body.position.z = 10.5;
-      this.nozzle = new THREE.Group(); this.nozzle.add(cone, body);
-      this.nozzle.renderOrder = 10; cone.renderOrder = 10; body.renderOrder = 10;
+      // a brass MK8-style nozzle without its thread: conical tip and a 7 mm hex, tip at the origin
+      const brass = { color: 0xd9b45a, emissive: 0x2a1c00, roughness: 0.28, metalness: 0.55, depthTest: false, transparent: true, opacity: 0.97 };
+      const tipMat = new THREE.MeshStandardMaterial(brass);
+      const hexMat = new THREE.MeshStandardMaterial({ ...brass, flatShading: true });
+      const V = (r, y) => new THREE.Vector2(r, y);
+      const tip = new THREE.Mesh(new THREE.LatheGeometry([V(0, 0), V(0.22, 0), V(0.5, 0.12), V(0.62, 0.45), V(3.5, 3.4), V(3.5, 3.6), V(0, 3.6)], 40), tipMat);
+      const hex = new THREE.Mesh(new THREE.CylinderGeometry(4.04, 4.04, 4.4, 6), hexMat);
+      hex.position.y = 3.4 + 2.2;
+      const top = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.6, 0.5, 6), hexMat);   // the small chamfer where the thread starts
+      top.position.y = 3.4 + 4.4 + 0.25;
+      this.nozzle = new THREE.Group();
+      const body = new THREE.Group(); body.add(tip, hex, top);
+      body.rotation.x = Math.PI / 2;                                 // built Y-up; the scene is Z-up
+      this.nozzle.add(body);
+      for (const o of [tip, hex, top]) o.renderOrder = 10;
       this.previewGroup.add(this.nozzle);
     }
     if (this.nozzle.parent !== this.previewGroup) this.previewGroup.add(this.nozzle);   // after a new preview
@@ -383,6 +406,7 @@ export class SlicerScene {
   setPrintedLayers(n) {
     if (!this.preview) return;
     this.previewUniforms.uDone.value = n == null ? 1e9 : n;
+    for (const t of this.preview.types.values()) t.ghost.visible = n != null;
     this.requestRender();
   }
   /** Extrusion segments per layer boundary, summed over feature types: lets a print fraction be turned into a layer. */
