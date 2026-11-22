@@ -656,7 +656,9 @@ export class SlicerWorkspace {
     this.monLeft.textContent = st.timeLeft != null ? formatTime(st.timeLeft) : '–';
     this.monElapsed.textContent = st.elapsed != null ? formatTime(st.elapsed) : '–';
     clear(this.monTemps);
-    for (const t of st.temps) this.monTemps.append(h('div', { class: 'sl-mon-row' }, h('span', {}, t.name), h('span', {}, t.current != null ? `${t.current.toFixed(0)}°` : '–', t.target ? ` / ${t.target.toFixed(0)}°` : '')));
+    // unconnected sensors read as nonsense (e.g. 2000° or -273°): leave those heaters out
+    const real = (t) => t.current != null && t.current > -50 && t.current < 600;
+    for (const t of st.temps.filter(real)) this.monTemps.append(h('div', { class: 'sl-mon-row' }, h('span', {}, t.name), h('span', {}, t.current != null ? `${t.current.toFixed(0)}°` : '–', t.target ? ` / ${t.target.toFixed(0)}°` : '')));
     // the layers already printed in colour, the rest grey (nothing to grey out when the printer is not printing)
     const live = st.state === 'printing' || st.state === 'paused';
     this.scene.setPrintedLayers(live && layer != null ? layer : null);
