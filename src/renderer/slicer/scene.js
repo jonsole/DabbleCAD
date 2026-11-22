@@ -103,10 +103,13 @@ export class SlicerScene {
     this.controls.mouseButtons = { LEFT: THREE.MOUSE.ROTATE, MIDDLE: THREE.MOUSE.PAN, RIGHT: THREE.MOUSE.ROTATE };
     this.controls.addEventListener('change', () => this.requestRender());
 
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x556070, 1.1));
-    const sun = new THREE.DirectionalLight(0xffffff, 1.4);
-    sun.position.set(-200, -300, 500);
-    this.scene.add(sun);
+    // the same rig as the 3D Design viewport: sky fill, a headlight that follows the camera, a fixed sun
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x8d939c, 1.25);
+    hemi.position.set(0, 0, 1);
+    this.head = new THREE.DirectionalLight(0xffffff, 1.55);
+    const sun = new THREE.DirectionalLight(0xffffff, 0.75);
+    sun.position.set(-120, -160, 320);
+    this.scene.add(hemi, this.head, this.head.target, sun);
 
     this.bedGroup = new THREE.Group();
     this.modelGroup = new THREE.Group();
@@ -217,7 +220,7 @@ export class SlicerScene {
     for (const m of list) {
       let e = this.models.get(m.id);
       if (!e) {
-        const mesh = new THREE.Mesh(m.geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.55, metalness: 0.05 }));
+        const mesh = new THREE.Mesh(m.geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.05 }));
         mesh.matrixAutoUpdate = false;
         mesh.userData.modelId = m.id;
         this.modelGroup.add(mesh);
@@ -398,7 +401,18 @@ export class SlicerScene {
     if (this._raf || this._disposed) return;
     this._raf = requestAnimationFrame(() => { this._raf = 0; this.render(); });
   }
+  _aimHeadlight() {
+    const cam = this.camera, t = this.controls.target;
+    cam.updateMatrixWorld();
+    const right = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0);
+    const up = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1);
+    const dir = new THREE.Vector3().subVectors(cam.position, t).normalize();
+    this.head.position.copy(t).addScaledVector(dir, 1000).addScaledVector(right, -450).addScaledVector(up, 520);
+    this.head.target.position.copy(t);
+    this.head.target.updateMatrixWorld();
+  }
   render() {
+    this._aimHeadlight();
     this.renderer.render(this.scene, this.camera);
     for (const fn of this.renderListeners) fn();
   }
