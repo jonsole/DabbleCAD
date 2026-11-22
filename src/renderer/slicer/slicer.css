@@ -184,3 +184,6 @@
 
 .sl-mon-style { display: flex; margin-bottom: 4px; }
 .sl-mon-style .btn { flex: 1; height: 26px; font-size: 12px; justify-content: center; }
+
+.sl-progress.sl-indet i { width: 40% !important; animation: sl-indet 1.1s ease-in-out infinite; }
+@keyframes sl-indet { from { transform: translateX(-100%); } to { transform: translateX(250%); } }

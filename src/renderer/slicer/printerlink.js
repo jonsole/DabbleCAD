@@ -35,7 +35,7 @@ const base = (url) => {
 };
 
 /** One HTTP request: through the desktop app when there is one, otherwise the browser's fetch. */
-async function request(cfg, path, { method = 'GET', headers = {}, body } = {}) {
+async function request(cfg, path, { method = 'GET', headers = {}, body, onProgress } = {}) {
   const h = { ...headers };
   // a username means an HTTP login (e.g. a reverse proxy in front of the printer); without one the password is the API key
   if (cfg.user) h.Authorization = 'Basic ' + btoa(unescape(encodeURIComponent(`${cfg.user}:${cfg.password || ''}`)));
@@ -46,13 +46,26 @@ async function request(cfg, path, { method = 'GET', headers = {}, body } = {}) {
     if (r.error) throw new Error(r.error);
     return r;
   }
-  let res;
-  try { res = await fetch(url, { method, headers: h, body, cache: 'no-store' }); } catch (e) {
+  const unreachable = () => {
     const mixed = location.protocol === 'https:' && /^http:/i.test(url);
     throw new Error(mixed
       ? `The browser won't let this https page talk to an http printer. Use the desktop app, or open DabbleCAD over http. (${KINDS[cfg.kind].cors})`
       : `Couldn't reach ${base(cfg.url)}. Check the address and that the printer is on. If it is, the printer must allow this page: ${KINDS[cfg.kind].cors}`);
+  };
+  if (onProgress && body) {
+    // XMLHttpRequest can report how much of an upload has gone (fetch can't)
+    return new Promise((resolve, reject) => {
+      const x = new XMLHttpRequest();
+      x.open(method, url);
+      for (const [k, v] of Object.entries(h)) x.setRequestHeader(k, v);
+      x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+      x.onload = () => resolve({ status: x.status, ok: x.status >= 200 && x.status < 300, text: x.responseText });
+      x.onerror = () => { try { unreachable(); } catch (e) { reject(e); } };
+      x.send(body);
+    });
   }
+  let res;
+  try { res = await fetch(url, { method, headers: h, body, cache: 'no-store' }); } catch { unreachable(); }
   return { status: res.status, ok: res.ok, text: await res.text() };
 }
 
@@ -103,16 +116,16 @@ export async function testConnection(cfg) {
 }
 
 /** Upload G-code and optionally start it. `file` is { name, data: Uint8Array }. */
-export async function sendGcode(cfg, file, { start = false } = {}) {
+export async function sendGcode(cfg, file, { start = false, onProgress } = {}) {
   if (cfg.kind === 'moonraker') {
     const m = multipart({ root: 'gcodes', print: start ? 'true' : 'false' }, file);
-    const r = await request(cfg, '/server/files/upload', { method: 'POST', headers: { 'Content-Type': m.type, ...key(cfg) }, body: m.body });
+    const r = await request(cfg, '/server/files/upload', { method: 'POST', headers: { 'Content-Type': m.type, ...key(cfg) }, body: m.body, onProgress });
     if (!r.ok) fail(r, 'Moonraker refused the file');
     return start ? 'Sent and started' : 'Sent to the printer';
   }
   if (cfg.kind === 'octoprint') {
     const m = multipart({ print: start ? 'true' : 'false', select: 'true' }, file);
-    const r = await request(cfg, '/api/files/local', { method: 'POST', headers: { 'Content-Type': m.type, ...key(cfg) }, body: m.body });
+    const r = await request(cfg, '/api/files/local', { method: 'POST', headers: { 'Content-Type': m.type, ...key(cfg) }, body: m.body, onProgress });
     if (!r.ok) fail(r, 'OctoPrint refused the file');
     return start ? 'Sent and started' : 'Sent to the printer';
   }
@@ -121,8 +134,8 @@ export async function sendGcode(cfg, file, { start = false } = {}) {
     const path = `0:/gcodes/${file.name}`;
     const sh = c.session ? { 'X-Session-Key': c.session } : {};
     let r;
-    if (c.mode === 'rr') r = await request(cfg, `/rr_upload?name=${encodeURIComponent(path)}&time=${encodeURIComponent(new Date().toISOString().slice(0, 19))}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file.data });
-    else r = await request(cfg, `/machine/file/${encodeURIComponent(path)}`, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream', ...sh }, body: file.data });
+    if (c.mode === 'rr') r = await request(cfg, `/rr_upload?name=${encodeURIComponent(path)}&time=${encodeURIComponent(new Date().toISOString().slice(0, 19))}`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: file.data, onProgress });
+    else r = await request(cfg, `/machine/file/${encodeURIComponent(path)}`, { method: 'PUT', headers: { 'Content-Type': 'application/octet-stream', ...sh }, body: file.data, onProgress });
     if (!r.ok) fail(r, 'The Duet refused the file');
     if (c.mode === 'rr') { let d = {}; try { d = JSON.parse(r.text); } catch { /* ignore */ } if (d.err) throw new Error('The Duet could not store the file (is there an SD card?).'); }
     if (start) {

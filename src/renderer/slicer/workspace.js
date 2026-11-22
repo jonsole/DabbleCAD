@@ -851,7 +851,7 @@ export class SlicerWorkspace {
     const busy = !!this.controller;
     this.sliceBtn.hidden = busy;
     this.cancelBtn.hidden = !busy;
-    this.progressWrap.hidden = !busy;
+    this.progressWrap.hidden = !busy && !this.sending;
     // Save and Send only make sense for an up-to-date slice; Slice only when there is something new to slice
     const fresh = !!this.result && !this.dirty;
     this.saveBtn.hidden = busy;
@@ -864,7 +864,7 @@ export class SlicerWorkspace {
     this.sliceBtn.classList.toggle('disabled', !this._active().length || fresh);
     this.sliceBtn.title = fresh ? 'Already sliced: change the plate or a setting to slice again' : 'Slice the plate to G-code';
     this.modeSeg.children[1].classList.toggle('disabled', !this.result);
-    if (busy) return;
+    if (busy || this.sending) return;
     const st = this.store;
     if (this.result) {
       const r = this.result.summary;
@@ -944,15 +944,20 @@ export class SlicerWorkspace {
     }
     const name = `${this.app._fileBase()}`.replace(/[^\w .()-]+/g, '_') + '.gcode';
     this.sending = true; this._updateBar();
-    this.status.textContent = `Sending ${name} to the printer…`;
+    this.status.textContent = `Sending to the printer…`;
+    this.statusSub.hidden = false; this.statusSub.textContent = name;
+    this.progress.style.width = '0';
+    this.progressWrap.classList.toggle('sl-indet', !!(window.dabbleNative && window.dabbleNative.printerFetch));   // the desktop route can't report progress
+    const onProgress = (f) => { const pc = Math.round(f * 100); this.progress.style.width = pc + '%'; this.status.textContent = pc < 100 ? `Sending to the printer… ${pc}%` : 'Sent: waiting for the printer…'; };
     try {
       const sent = this.result;   // the Monitor keeps drawing exactly this G-code, whatever is sliced afterwards
-      const msg = await sendGcode(cfg, { name, data: new Uint8Array(sent.gcode) }, { start: !!cfg.start });
+      const msg = await sendGcode(cfg, { name, data: new Uint8Array(sent.gcode) }, { start: !!cfg.start, onProgress });
       this.printJob = { name, gcode: sent.gcode, parsed: sent.parsed, centerIsZero: this.store.get('machine_center_is_zero') };
       toast(`${msg}: ${name}`, 'ok', 4000);
       this.showMonitor(true);
     } catch (err) { toast(err.message || String(err), 'warn', 9000); }
     this.sending = false;
+    this.progressWrap.classList.remove('sl-indet');
     this._updateBar();
   }
 
