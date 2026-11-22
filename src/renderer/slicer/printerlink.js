@@ -169,7 +169,7 @@ function duetStatus(m) {
   const ax = (L) => ((m.move && m.move.axes) || []).find((a) => a && a.letter === L);
   const at = (L) => { const a = ax(L); return a ? num(a.userPosition != null ? a.userPosition : a.machinePosition) : null; };
   const nozzle = at('X') != null && at('Y') != null && at('Z') != null ? { x: at('X'), y: at('Y'), z: at('Z') } : null;
-  return { nozzle, state, path: (job.file && job.file.fileName) || job.lastFileName || null, file: String((job.file && job.file.fileName) || job.lastFileName || '').replace(/^.*[\\/]/, '') || null, progress, layer: num(job.layer), layers: num(job.file && job.file.numLayers),
+  return { filePos: num(job.filePosition), nozzle, state, path: (job.file && job.file.fileName) || job.lastFileName || null, file: String((job.file && job.file.fileName) || job.lastFileName || '').replace(/^.*[\\/]/, '') || null, progress, layer: num(job.layer), layers: num(job.file && job.file.numLayers),
     timeLeft: num(job.timesLeft && (job.timesLeft.file != null ? job.timesLeft.file : job.timesLeft.filament)), elapsed: num(job.duration), temps };
 }
 
@@ -235,7 +235,7 @@ export async function openStatus(cfg) {
       if (s.extruder) temps.push({ name: 'Nozzle', current: num(s.extruder.temperature), target: num(s.extruder.target) });
       const gp = s.gcode_move && s.gcode_move.gcode_position;
       const nozzle = Array.isArray(gp) && gp.length >= 3 ? { x: num(gp[0]), y: num(gp[1]), z: num(gp[2]) } : null;
-      return { nozzle, state, file: ps.filename || null, path: ps.filename || null, progress: state === 'done' ? 1 : state === 'idle' ? null : p, layer: num(ps.info && ps.info.current_layer), layers: num(ps.info && ps.info.total_layer),
+      return { filePos: s.virtual_sdcard ? num(s.virtual_sdcard.file_position) : null, nozzle, state, file: ps.filename || null, path: ps.filename || null, progress: state === 'done' ? 1 : state === 'idle' ? null : p, layer: num(ps.info && ps.info.current_layer), layers: num(ps.info && ps.info.total_layer),
         timeLeft: el != null && p > 0.01 && state === 'printing' ? el / p - el : null, elapsed: el, temps };
     },
     async position() {

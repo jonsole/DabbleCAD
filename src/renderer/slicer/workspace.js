@@ -19,6 +19,7 @@ import { SettingsPanel } from './settingspanel.js';
 import { PlateModel, fitProblem, arrange } from './model.js';
 import { SlicerScene } from './scene.js';
 import { sendGcode, openStatus } from './printerlink.js';
+import { NozzleFollower } from './follow.js';
 import { registerSyncFile, registerSyncFolder, syncFileChanged } from '../drive.js';
 import { ModelGizmo } from './modelgizmo.js';
 import { bestOrientation } from './orient.js';
@@ -550,6 +551,7 @@ export class SlicerWorkspace {
       if (job) this.scene.showPreview(job.parsed, job.centerIsZero);   // the G-code that was sent, not the plate
       const shown = job ? job.parsed : this.result && this.result.parsed;
       if (shown) this.scene.setLayerRange(0, shown.layers - 1);
+      this._follower = shown && shown.path ? new NozzleFollower(shown) : null;
       this._buildMonitorCard();
       this.monitorEl.hidden = false;
       this._startPolling();
@@ -616,8 +618,8 @@ export class SlicerWorkspace {
         this._session = session;
         if (this._pollToken !== token) { session.close(); return; }
         const st = await session.read();
-        this._showStatus(st);
         this._printing = st.state === 'printing' || st.state === 'paused';
+        this._showStatus(st);
       } catch (err) {
         this._showStatusError(err);
         if (session) { try { session.close(); } catch { /* ignore */ } session = null; }
@@ -626,7 +628,29 @@ export class SlicerWorkspace {
     }
     if (session) session.close();
   }
-  _stopPolling() { this._pollToken = null; this._printing = false; }
+  _stopPolling() { this._pollToken = null; this._printing = false; cancelAnimationFrame(this._followRaf); this._followRaf = 0; }
+
+  /**
+   * A reported nozzle position: if it lies on the G-code being shown, follow the tool path from there
+   * (moving the marker every frame) until the next report. Returns false when it can't (other file, idle).
+   */
+  _nozzleReport(p, live) {
+    const f = this._follower;
+    if (!p || !live || !f || !f.anchor(p, performance.now(), this._filePos)) { cancelAnimationFrame(this._followRaf); this._followRaf = 0; return false; }
+    if (!this._followRaf) {
+      let last = 0;
+      const frame = (now) => {
+        if (!this.monitoring || !this._printing || !this._follower || this._follower.lost) { this._followRaf = 0; return; }
+        this._followRaf = requestAnimationFrame(frame);
+        if (now - last < 33 || document.hidden) return;              // about 30 updates a second is plenty
+        last = now;
+        const e = this._follower.estimate(performance.now());
+        if (e) this.scene.setNozzle(e);
+      };
+      this._followRaf = requestAnimationFrame(frame);
+    }
+    return true;
+  }
 
   /** While printing, the nozzle position alone is read twice a second (one small request) so the marker keeps up. */
   async _pollPosition(token) {
@@ -636,7 +660,10 @@ export class SlicerWorkspace {
       const s = this._session;
       if (!this._printing || !s || !s.position || document.hidden || this._posBusy) continue;
       this._posBusy = true;
-      try { const p = await s.position(); if (p && this._pollToken === token && this._printing) this.scene.setNozzle(p, { smooth: 500 }); } catch { /* the 3 s status read reports problems */ }
+      try {
+        const p = await s.position();
+        if (p && this._pollToken === token && this._printing && !this._nozzleReport(p, true)) this.scene.setNozzle(p, { smooth: 500 });
+      } catch { /* the 3 s status read reports problems */ }
       this._posBusy = false;
     }
   }
@@ -657,6 +684,7 @@ export class SlicerWorkspace {
       this.printJob = { name: base(st.path), gcode: bytes, parsed, centerIsZero: this.store.get('machine_center_is_zero'), fromPrinter: true };
       this.scene.showPreview(parsed, this.printJob.centerIsZero);
       this.scene.setLayerRange(0, parsed.layers - 1);
+      this._follower = new NozzleFollower(parsed);
       this.monNote.textContent = '';
     } catch (err) {
       this._fetchFailed = st.path;
@@ -691,7 +719,8 @@ export class SlicerWorkspace {
     for (const t of st.temps.filter(real)) this.monTemps.append(h('div', { class: 'sl-mon-row' }, h('span', {}, t.name), h('span', {}, t.current != null ? `${t.current.toFixed(0)}°` : '–', t.target ? ` / ${t.target.toFixed(0)}°` : '')));
     // the layers already printed in colour, the rest grey (nothing to grey out when the printer is not printing)
     const live = st.state === 'printing' || st.state === 'paused';
-    this.scene.setNozzle(st.nozzle || null);
+    this._filePos = st.filePos;
+    if (!this._nozzleReport(st.nozzle, live)) this.scene.setNozzle(st.nozzle || null);
     this.scene.setPrintedLayers(live && layer != null ? layer : null);
     this._maybeFetchRunning(st, live);
     const base = (s) => String(s || '').replace(/^.*[\\/]/, '');

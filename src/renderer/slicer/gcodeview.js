@@ -65,6 +65,9 @@ export async function parseGcode(bytes, { onProgress, signal, filamentDiameter =
   let layerIdx = -1; // index of the current layer in order of appearance (raft layers are numbered below zero)
   const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
 
+  // every move in file order (for following the nozzle in Monitor): end point, feed rate, where it is in the file
+  const path = [], pathAt = [];
+  let feed = 3000;
   let pos = 0, lines = 0;
   const len = text.length;
   while (pos < len) {
@@ -86,15 +89,17 @@ export async function parseGcode(bytes, { onProgress, signal, filamentDiameter =
       const c = code ? code[0] : '';
       if (c === 'G0' || c === 'G1') {
         let nx = x, ny = y, nz = z, ne = null;
-        const re = /([XYZE])(-?\d*\.?\d+)/g;
+        const re = /([XYZEF])(-?\d*\.?\d+)/g;
         let m;
         while ((m = re.exec(line))) {
           const v = parseFloat(m[2]);
           if (m[1] === 'X') nx = absPos ? v : x + v;
           else if (m[1] === 'Y') ny = absPos ? v : y + v;
           else if (m[1] === 'Z') nz = absPos ? v : z + v;
+          else if (m[1] === 'F') feed = v;
           else ne = v;
         }
+        if (nx !== x || ny !== y || nz !== z) { path.push(nx, ny, nz, feed); pathAt.push(pos); }
         const moved = nx !== x || ny !== y;
         const extruding = moved && ne !== null && (absE ? ne > e + 1e-6 : ne > 1e-6);
         const de = ne === null ? 0 : absE ? ne - e : ne;
@@ -129,5 +134,5 @@ export async function parseGcode(bytes, { onProgress, signal, filamentDiameter =
   const types = new Map();
   for (const [t, b] of buckets) { b.off.push(b.g.n / 9); types.set(t, { pos: b.g.done(), off: Uint32Array.from(b.off) }); }
   trOff.push(tr.n / 6);
-  return { layers, layerZ, types, travel: { pos: tr.done(), off: Uint32Array.from(trOff) }, bounds: { min, max } };
+  return { path: Float32Array.from(path), pathAt: Uint32Array.from(pathAt), layers, layerZ, types, travel: { pos: tr.done(), off: Uint32Array.from(trOff) }, bounds: { min, max } };
 }
