@@ -574,6 +574,16 @@ export class SlicerWorkspace {
     this.scene.requestRender();
   }
 
+  /** Monitor view: 'whole' (every layer, the unprinted ones grey, no nozzle) or 'progress' (printed layers and the nozzle). */
+  _setMonStyle(style) {
+    this.monStyle = style === 'progress' ? 'progress' : 'whole';
+    this._showNozzle = this.monStyle === 'progress';
+    try { localStorage.setItem('dabblecad.slicer.monitorStyle', this.monStyle); } catch { /* ignore */ }
+    for (const b of this.monStyleSeg.children) b.classList.toggle('active', b.dataset.style === this.monStyle);
+    if (!this._showNozzle) { cancelAnimationFrame(this._followRaf); this._followRaf = 0; this.scene.setNozzle(null); }
+    if (this._lastLayer !== undefined) this.scene.setPrintedLayers(this._lastLayer, this.monStyle);
+  }
+
   _syncModeButtons() {
     const [mBtn, pBtn, monBtn] = this.modeSeg.children;
     monBtn.classList.toggle('active', !!this.monitoring);
@@ -592,15 +602,22 @@ export class SlicerWorkspace {
     this.monTemps = h('div', { class: 'sl-mon-temps' });
     this.monNote = h('div', { class: 'sl-mon-note' });
     this.monLink = h('a', { target: '_blank', rel: 'noopener', class: 'btn btn-ghost sl-mon-link', title: "Open the printer's own web page" }, icon('external', 16));
+    let saved = 'whole';
+    try { saved = localStorage.getItem('dabblecad.slicer.monitorStyle') || 'whole'; } catch { /* ignore */ }
+    this.monStyleSeg = h('div', { class: 'segmented sl-mon-style', role: 'group', 'aria-label': 'Monitor view' },
+      ...[['whole', 'Whole print', 'Every layer: the printed ones in colour, the rest grey'], ['progress', 'Progress', 'Only what has been printed, with the nozzle']].map(([id, label, title]) => {
+        const b = button({ label, title, onClick: () => this._setMonStyle(id) }); b.dataset.style = id; return b;
+      }));
     this.monitorEl = h('div', { class: 'inspector sl-inspector sl-monitor' },
       h('div', { class: 'insp-head sl-mon-head' }, h('div', { class: 'insp-title' }, 'Printer'), this.monState, this.monLink),
-      h('div', { class: 'sl-mon-body' },
+      h('div', { class: 'sl-mon-body' }, this.monStyleSeg,
       this.monFile,
       h('div', { class: 'sl-mon-prog' }, h('div', { class: 'sl-mon-track' }, this.monBar), this.monPct),
       row('Layer', this.monLayer), row('Time left', this.monLeft), row('Elapsed', this.monElapsed),
       this.monTemps, this.monNote));
     this.viewEl.append(this.monitorEl);
     makeDraggable(this.monitorEl, { key: 'slicer-monitor' });
+    this._setMonStyle(saved);
   }
 
   async _startPolling() {
@@ -636,6 +653,7 @@ export class SlicerWorkspace {
    */
   _nozzleReport(p, live) {
     const f = this._follower;
+    if (!this._showNozzle) { cancelAnimationFrame(this._followRaf); this._followRaf = 0; return true; }
     if (!p || !live || !f || !f.anchor(p, performance.now(), this._filePos)) { cancelAnimationFrame(this._followRaf); this._followRaf = 0; return false; }
     if (!this._followRaf) {
       let last = 0;
@@ -658,11 +676,11 @@ export class SlicerWorkspace {
     while (this._pollToken === token) {
       await sleep(500);
       const s = this._session;
-      if (!this._printing || !s || !s.position || document.hidden || this._posBusy) continue;
+      if (!this._printing || !this._showNozzle || !s || !s.position || document.hidden || this._posBusy) continue;
       this._posBusy = true;
       try {
         const p = await s.position();
-        if (p && this._pollToken === token && this._printing && !this._nozzleReport(p, true)) this.scene.setNozzle(p, { smooth: 500 });
+        if (p && this._pollToken === token && this._printing && this._showNozzle && !this._nozzleReport(p, true)) this.scene.setNozzle(p, { smooth: 500 });
       } catch { /* the 3 s status read reports problems */ }
       this._posBusy = false;
     }
@@ -720,8 +738,10 @@ export class SlicerWorkspace {
     // the layers already printed in colour, the rest grey (nothing to grey out when the printer is not printing)
     const live = st.state === 'printing' || st.state === 'paused';
     this._filePos = st.filePos;
-    if (!this._nozzleReport(st.nozzle, live)) this.scene.setNozzle(st.nozzle || null);
-    this.scene.setPrintedLayers(live && layer != null ? layer : null);
+    if (!this._showNozzle) this.scene.setNozzle(null);
+    else if (!this._nozzleReport(st.nozzle, live)) this.scene.setNozzle(st.nozzle || null);
+    this._lastLayer = live && layer != null ? layer : null;
+    this.scene.setPrintedLayers(this._lastLayer, this.monStyle);
     this._maybeFetchRunning(st, live);
     const base = (s) => String(s || '').replace(/^.*[\\/]/, '');
     const fetchNote = this._fetching ? 'Reading the G-code from the printer…' : (live && this._fetchFailed && this._fetchFailed === st.path ? this._fetchErr : '');

@@ -37,23 +37,16 @@ function extrusionGeometry(data) {
   base.instanceCount = data.length / 9;
   return base;
 }
-function extrusionMaterial(hex, uniforms, ghost = false) {
-  // ghost: the layers not printed yet (Monitor), drawn as a faint see-through shell over the real ones
+function extrusionMaterial(hex, uniforms) {
   return new THREE.ShaderMaterial({
     uniforms: { ...uniforms, uColor: { value: new THREE.Color(hex) } },
-    defines: ghost ? { GHOST: 1 } : {},
-    transparent: ghost, depthWrite: !ghost,
     vertexShader: `
       attribute vec3 iA; attribute vec3 iB; attribute vec3 iDim;
-      uniform float uLo; uniform float uHi; uniform float uDone;
+      uniform float uLo; uniform float uHi; uniform float uDone; uniform float uHideRest;
       varying vec3 vN; varying float vY; varying float vL;
       void main() {
         vY = position.z; vL = iDim.z;
-        #ifdef GHOST
-        bool hide = iDim.z < uDone;
-        #else
-        bool hide = iDim.z >= uDone;
-        #endif
+        bool hide = uHideRest > 0.5 && iDim.z >= uDone;   // Monitor 'progress': only what is printed so far
         if (hide || iDim.z < uLo || iDim.z > uHi) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
         vec3 d = iB - iA; float len = length(d);
         vec3 dir = len > 1e-5 ? d / len : vec3(1.0, 0.0, 0.0);
@@ -70,11 +63,8 @@ function extrusionMaterial(hex, uniforms, ghost = false) {
         float l = max(dot(n, normalize(vec3(0.35, 0.55, 0.75))), 0.0);
         float edge = 0.55 + 0.45 * smoothstep(0.0, 0.75, n.z * 0.5 + 0.5);   // darker towards the sides of each bead
         float seam = 1.0 - 0.6 * smoothstep(0.28, 0.5, abs(vY));    // dark line where one layer meets the next
-        #ifdef GHOST
-        gl_FragColor = vec4(vec3(0.62, 0.65, 0.7) * (0.6 + 0.4 * l), 0.035);
-        return;
-        #endif
-        gl_FragColor = vec4(uColor * (0.35 + 0.8 * l) * edge * seam, 1.0);
+        vec3 col = vL >= uDone ? vec3(0.42, 0.44, 0.48) : uColor;   // Monitor 'whole print': layers still to print are grey
+        gl_FragColor = vec4(col * (0.35 + 0.8 * l) * edge * seam, 1.0);
       }`,
     side: THREE.DoubleSide,
   });
@@ -337,16 +327,13 @@ export class SlicerScene {
   showPreview(parsed, centerIsZero) {
     this.clearPreview();
     const types = new Map();
-    this.previewUniforms = { uLo: { value: 0 }, uHi: { value: parsed.layers }, uDone: { value: 1e9 } };
+    this.previewUniforms = { uLo: { value: 0 }, uHi: { value: parsed.layers }, uDone: { value: 1e9 }, uHideRest: { value: 0 } };
     for (const [t, b] of parsed.types) {
       const geo = extrusionGeometry(b.pos);
       const mesh = new THREE.Mesh(geo, extrusionMaterial(typeHex(t, this.typeColors), this.previewUniforms));
       mesh.frustumCulled = false;
-      const ghost = new THREE.Mesh(geo, extrusionMaterial(0x9aa3b0, this.previewUniforms, true));
-      ghost.frustumCulled = false; ghost.renderOrder = 5; ghost.visible = false;
-      mesh.add(ghost);   // follows the type's visibility
       this.previewGroup.add(mesh);
-      types.set(t, { line: mesh, ghost, off: b.off });
+      types.set(t, { line: mesh, off: b.off });
     }
     const tgeo = new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(parsed.travel.pos, 3));
     const travel = new THREE.LineSegments(tgeo, new THREE.LineBasicMaterial({ color: 0x8892a6, transparent: true, opacity: 0.35 }));
@@ -414,11 +401,14 @@ export class SlicerScene {
     };
     this._nozzleAnim = requestAnimationFrame(step);
   }
-  /** Colour the layers below `n` as printed and grey out the rest (null: everything in colour). */
-  setPrintedLayers(n) {
+  /**
+   * Layers below `n` are printed (null: show everything normally). style 'whole': the rest in grey;
+   * 'progress': the rest not drawn at all.
+   */
+  setPrintedLayers(n, style = 'whole') {
     if (!this.preview) return;
     this.previewUniforms.uDone.value = n == null ? 1e9 : n;
-    for (const t of this.preview.types.values()) t.ghost.visible = n != null;
+    this.previewUniforms.uHideRest.value = n != null && style === 'progress' ? 1 : 0;
     this.requestRender();
   }
   /** Extrusion segments per layer boundary, summed over feature types: lets a print fraction be turned into a layer. */
