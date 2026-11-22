@@ -19,7 +19,7 @@ import { SettingsPanel } from './settingspanel.js';
 import { PlateModel, fitProblem, arrange } from './model.js';
 import { SlicerScene } from './scene.js';
 import { sendGcode, openStatus } from './printerlink.js';
-import { registerSyncFile, syncFileChanged } from '../drive.js';
+import { registerSyncFile, registerSyncFolder, syncFileChanged } from '../drive.js';
 import { ModelGizmo } from './modelgizmo.js';
 import { bestOrientation } from './orient.js';
 import { writeBinaryStl, buildArgs, runEngine, gcodeSummary, formatTime } from './engine.js';
@@ -74,7 +74,10 @@ export class SlicerWorkspace {
     this.panel = new SettingsPanel({ store: this.store, defs, index, info, profiles: this.profiles });
     // keep the user's printer / filament / process presets in the DabbleCAD folder of their Google Drive
     this.profiles.onPresetsChanged = () => syncFileChanged();
-    registerSyncFile('slicer-presets.json', (text) => this.profiles.mergeRemote(text));
+    // each preset is its own named JSON file on Drive: DabbleCAD/Slicer presets/Printer/RatRig.json, ...
+    for (const [scope, label] of [['printer', 'Printer'], ['filament', 'Filament'], ['process', 'Process']]) registerSyncFolder(['Slicer presets', label], this.profiles.syncAdapter(scope));
+    // the older single file holding every preset: take what it has, then move it to the bin
+    registerSyncFile('slicer-presets.json', (text) => { if (text) this.profiles.mergeRemote(text); return text ? false : null; });
     window.addEventListener('dabble-slicer-presets-changed', () => { if (this.panel) { this.panel._renderChrome(); this.panel._renderBody(); } });
     this._build();
     this.store.onChange(() => this._settingsChanged());

@@ -49,7 +49,7 @@ function startFakeGoogle() {
         return send(400, { error: 'unsupported_grant_type' });
       }
       if (p === '/revoke') { refreshRevoked = true; state.revoked++; return send(200, {}); }
-      if (p === '/__state') return send(200, { ...state, files: [...files.values()].map((f) => ({ ...meta(f), trashed: f.trashed, content: f.content })) });
+      if (p === '/__state') return send(200, { ...state, files: [...files.values()].map((f) => ({ ...meta(f), parents: f.parents, trashed: f.trashed, content: f.content })) });
       // ---- Drive API
       if (!(req.headers.authorization || '').startsWith('Bearer tok-')) return send(401, { error: { message: 'Invalid credentials' } });
       if (p === '/drive/v3/about') return send(200, { user: { emailAddress: 'me@example.com', displayName: 'Me' } });
@@ -77,13 +77,16 @@ function startFakeGoogle() {
       if (req.method === 'POST') {
         const md = JSON.parse(raw);
         fid = 'f' + nextId++;
-        files.set(fid, { ...md, id: fid, parents: [], trashed: false, modifiedTime: now() });
+        files.set(fid, { ...md, id: fid, parents: md.parents || [], trashed: false, modifiedTime: now() });
         return send(200, { id: fid });
       }
       const q = url.searchParams.get('q') || '';
       let list;
-      if (q.includes('google-apps.folder')) list = [...files.values()].filter((f) => (f.mimeType || '').endsWith('folder') && !f.trashed);
-      else {
+      if (q.includes('google-apps.folder')) {
+        const name = /name='((?:[^'\\]|\\.)*)'/.exec(q), parent = /'([^']+)' in parents/.exec(q);
+        list = [...files.values()].filter((f) => (f.mimeType || '').endsWith('folder') && !f.trashed
+          && (!name || f.name === name[1].replace(/\\(.)/g, '$1')) && (!parent || (f.parents || []).includes(parent[1])));
+      } else {
         const parent = /'([^']+)' in parents/.exec(q)[1];
         list = [...files.values()].filter((f) => (f.parents || []).includes(parent) && !f.trashed);
       }

@@ -102,6 +102,46 @@ export class Profiles {
     return JSON.stringify({ format: 'dabblecad-slicer-presets', version: 1, presets, deleted });
   }
 
+  // One named JSON file per preset (Drive folder 'Slicer presets/<Printer|Filament|Process>'). The file is
+  // the same format as Export preset, so a copy downloaded from Drive can be imported anywhere.
+  presetFile(scope, p) {
+    return JSON.stringify({ format: 'dabblecad-slicer-preset', version: 1, scope, id: p.id, name: p.name, updated: p.updated || 0, overrides: p.overrides }, null, 2);
+  }
+  syncAdapter(scope) {
+    return {
+      items: () => this.user[scope].map((p) => ({ key: p.id, name: p.name, updated: p.updated || 0, content: this.presetFile(scope, p) })),
+      tombstones: () => Object.fromEntries(Object.entries(this.deleted).filter(([k]) => k.startsWith(scope + '/')).map(([k, t]) => [k.slice(scope.length + 1), t])),
+      apply: (key, text) => {
+        let d; try { d = JSON.parse(text); } catch { return false; }
+        if (!d || d.format !== 'dabblecad-slicer-preset' || d.scope !== scope || typeof d.overrides !== 'object') return false;
+        const tomb = this.deleted[`${scope}/${key}`];
+        if (tomb && tomb >= (d.updated || 0)) return false;
+        const keys = new Set(this.keysOf(scope));
+        const next = { id: key, name: String(d.name || 'Preset'), overrides: Object.fromEntries(Object.entries(d.overrides).filter(([k]) => keys.has(k))), updated: d.updated || 0 };
+        const list = this.user[scope], i = list.findIndex((x) => x.id === key);
+        if (i < 0) list.push(next);
+        else {
+          list[i] = next;
+          if (this.selected[scope] === key && !this.modifiedKeys(scope).length) this._apply(scope, next);
+        }
+        this._remoteChanged();
+        return true;
+      },
+      remove: (key) => {
+        const before = this.user[scope].length;
+        this.user[scope] = this.user[scope].filter((p) => p.id !== key);
+        if (this.user[scope].length === before) return;
+        if (!this.find(scope, this.selected[scope])) { this.selected[scope] = DEFAULT_SELECTION[scope]; this._apply(scope, this.find(scope, this.selected[scope])); }
+        this._remoteChanged();
+      },
+    };
+  }
+  _remoteChanged() {
+    this.save();
+    clearTimeout(this._remoteTimer);
+    this._remoteTimer = setTimeout(() => window.dispatchEvent(new CustomEvent('dabble-slicer-presets-changed')), 50);
+  }
+
   /**
    * Merge the Drive copy into this computer's presets (the newer edit of each preset wins, a deletion
    * beats an older copy) and return the text Drive should now hold.
