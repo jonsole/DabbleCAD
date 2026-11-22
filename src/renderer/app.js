@@ -1,5 +1,9 @@
 // Application shell: layout, toolbars, keyboard shortcuts, auto-save and file handling.
 import { APP_NAME } from './brand.js';
+
+/** The commit this build was made from (set in vite.config.mjs). */
+const BUILD = typeof __APP_BUILD__ === 'object' ? __APP_BUILD__ : { sha: 'unknown', short: 'dev', branch: '', date: '' };
+const BUILD_TITLE = `Commit ${BUILD.sha}${BUILD.branch ? `\nBranch ${BUILD.branch}` : ''}${BUILD.date ? `\nBuilt ${new Date(BUILD.date).toLocaleString()}` : ''}`;
 import * as THREE from 'three';
 import { initSolid } from './core/solid.js';
 import { h, clear, button, icon, toast, popupMenu, promptDialog, confirmDialog } from './ui/dom.js';
@@ -79,7 +83,7 @@ export class App {
       this.modeSeg.append(b);
     }
     this.themeBtn = button({ icon: 'sun', title: 'Switch between dark and light mode', onClick: () => this.setTheme(this.settings.theme === 'light' ? 'dark' : 'light') });
-    const logo = h('button', { class: 'logo', type: 'button', title: 'Your designs' }, this.logoMark(), h('span', { class: 'logo-name' }, 'DabbleCAD', h('span', { class: 'logo-plus' }, 'Plus')));
+    const logo = h('button', { class: 'logo', type: 'button', title: 'Your designs' }, this.logoMark(), h('span', { class: 'logo-name' }, 'DabbleCAD', h('span', { class: 'logo-plus' }, 'Plus')), h('span', { class: 'logo-commit', title: BUILD_TITLE }, BUILD.short));
     logo.addEventListener('click', () => this.dashboard.show());
     const topbar = h('div', { class: 'topbar', role: 'toolbar', 'aria-label': 'Design and file tools' }, logo, h('span', { class: 'sep' }), this.nameInput, this.saveState, h('span', { class: 'spacer' }),
       this.modeSeg, h('span', { class: 'sep' }),
