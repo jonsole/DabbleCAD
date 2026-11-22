@@ -238,6 +238,12 @@ export async function openStatus(cfg) {
       return { nozzle, state, file: ps.filename || null, path: ps.filename || null, progress: state === 'done' ? 1 : state === 'idle' ? null : p, layer: num(ps.info && ps.info.current_layer), layers: num(ps.info && ps.info.total_layer),
         timeLeft: el != null && p > 0.01 && state === 'printing' ? el / p - el : null, elapsed: el, temps };
     },
+    async position() {
+      const r = await request(cfg, '/printer/objects/query?gcode_move=gcode_position', { headers: key(cfg) });
+      if (!r.ok) return null;
+      const gp = ((((json(r) || {}).result || {}).status || {}).gcode_move || {}).gcode_position;
+      return Array.isArray(gp) && gp.length >= 3 ? { x: num(gp[0]), y: num(gp[1]), z: num(gp[2]) } : null;
+    },
     async download(path) { return toBytes(await request(cfg, `/server/files/gcodes/${encPath(path)}`, { headers: key(cfg) }), 'Moonraker would not give up the file'); },
     close() {} };
   }
@@ -268,6 +274,20 @@ export async function openStatus(cfg) {
         if (c.mode === 'rr') { old = true; return duetRrStatusOld(cfg); }
         throw e;
       }
+    },
+    async position() {             // one small request: just the axes
+      if (old) {
+        const r = await request(cfg, '/rr_status?type=1');
+        const xyz = r.ok && ((json(r) || {}).coords || {}).xyz;
+        return Array.isArray(xyz) && xyz.length >= 3 ? { x: num(xyz[0]), y: num(xyz[1]), z: num(xyz[2]) } : null;
+      }
+      const sh = c.session ? { 'X-Session-Key': c.session } : {};
+      const r = c.mode === 'rr' ? await request(cfg, '/rr_model?key=move.axes&flags=d99') : await request(cfg, '/machine/model?key=move.axes&flags=d99', { headers: sh });
+      if (!r.ok) return null;
+      const d = json(r); let axes = d && d.result !== undefined ? d.result : d;
+      if (axes && !Array.isArray(axes) && Array.isArray(axes.axes)) axes = axes.axes;
+      const at = (L) => { const a = (Array.isArray(axes) ? axes : []).find((x) => x && x.letter === L); return a ? num(a.userPosition != null ? a.userPosition : a.machinePosition) : null; };
+      return at('X') != null && at('Y') != null && at('Z') != null ? { x: at('X'), y: at('Y'), z: at('Z') } : null;
     },
     async download(path) {
       const full = /^\d+:\//.test(path) ? path : path.startsWith('/') ? path : `0:/gcodes/${path}`;

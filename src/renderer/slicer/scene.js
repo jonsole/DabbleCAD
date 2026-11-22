@@ -378,7 +378,7 @@ export class SlicerScene {
     this.requestRender();
   }
   /** Show the printer's nozzle at a G-code position ({x,y,z}), or hide it (null). */
-  setNozzle(p) {
+  setNozzle(p, { smooth = 0 } = {}) {
     if (!this.nozzle) {
       // a brass MK8-style nozzle without its thread: conical tip and a 7 mm hex, tip at the origin
       const brass = { color: 0xd9b45a, emissive: 0x2a1c00, roughness: 0.28, metalness: 0.55, depthTest: false, transparent: true, opacity: 0.97 };
@@ -398,9 +398,21 @@ export class SlicerScene {
       this.previewGroup.add(this.nozzle);
     }
     if (this.nozzle.parent !== this.previewGroup) this.previewGroup.add(this.nozzle);   // after a new preview
+    cancelAnimationFrame(this._nozzleAnim);
+    const wasVisible = this.nozzle.visible;
     this.nozzle.visible = !!p;
-    if (p) this.nozzle.position.set(p.x, p.y, p.z);
-    this.requestRender();
+    if (!p) { this.requestRender(); return; }
+    const to = new THREE.Vector3(p.x, p.y, p.z);
+    if (!smooth || !wasVisible) { this.nozzle.position.copy(to); this.requestRender(); return; }
+    // glide to the new spot over about one polling interval, so the marker moves instead of jumping
+    const from = this.nozzle.position.clone(), t0 = performance.now();
+    const step = () => {
+      const f = Math.min(1, (performance.now() - t0) / smooth);
+      this.nozzle.position.lerpVectors(from, to, f);
+      this.render();
+      if (f < 1) this._nozzleAnim = requestAnimationFrame(step);
+    };
+    this._nozzleAnim = requestAnimationFrame(step);
   }
   /** Colour the layers below `n` as printed and grey out the rest (null: everything in colour). */
   setPrintedLayers(n) {

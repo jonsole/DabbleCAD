@@ -608,13 +608,16 @@ export class SlicerWorkspace {
     this.monLink.href = url;
     const token = this._pollToken = {};
     let session = null;
+    this._pollPosition(token);
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     while (this._pollToken === token) {
       try {
         if (!session) session = await openStatus(cfg);
         this._session = session;
         if (this._pollToken !== token) { session.close(); return; }
-        this._showStatus(await session.read());
+        const st = await session.read();
+        this._showStatus(st);
+        this._printing = st.state === 'printing' || st.state === 'paused';
       } catch (err) {
         this._showStatusError(err);
         if (session) { try { session.close(); } catch { /* ignore */ } session = null; }
@@ -623,7 +626,20 @@ export class SlicerWorkspace {
     }
     if (session) session.close();
   }
-  _stopPolling() { this._pollToken = null; }
+  _stopPolling() { this._pollToken = null; this._printing = false; }
+
+  /** While printing, the nozzle position alone is read twice a second (one small request) so the marker keeps up. */
+  async _pollPosition(token) {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    while (this._pollToken === token) {
+      await sleep(500);
+      const s = this._session;
+      if (!this._printing || !s || !s.position || document.hidden || this._posBusy) continue;
+      this._posBusy = true;
+      try { const p = await s.position(); if (p && this._pollToken === token && this._printing) this.scene.setNozzle(p, { smooth: 500 }); } catch { /* the 3 s status read reports problems */ }
+      this._posBusy = false;
+    }
+  }
 
   /** The printer is running a file that isn't the one sent from here: read it from the printer and draw that. */
   async _maybeFetchRunning(st, live) {
