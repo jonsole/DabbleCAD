@@ -18,6 +18,12 @@ export const TYPE_LABELS = {
   SUPPORT: 'Support', 'SUPPORT-INTERFACE': 'Support interface', SKIRT: 'Skirt / brim / raft', 'PRIME-TOWER': 'Prime tower',
 };
 
+export const typeHex = (t, overrides = {}) => {
+  if (overrides[t]) return overrides[t];
+  const c = TYPE_COLORS[t] || TYPE_COLORS.DEFAULT;
+  return '#' + c.map((v) => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
+};
+
 class Growable {
   constructor(n) { this.a = new Float32Array(n); this.n = 0; }
   push6(a, b, c, d, e, f) {

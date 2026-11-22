@@ -1,7 +1,7 @@
 // The slicer's 3D view: print bed, build volume, models you can drag around, and the G-code preview.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { TYPE_COLORS } from './gcodeview.js';
+import { TYPE_COLORS, typeHex } from './gcodeview.js';
 
 const css = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 
@@ -32,9 +32,9 @@ function extrusionGeometry(data) {
   base.instanceCount = data.length / 9;
   return base;
 }
-function extrusionMaterial(c, uniforms) {
+function extrusionMaterial(hex, uniforms) {
   return new THREE.ShaderMaterial({
-    uniforms: { ...uniforms, uColor: { value: new THREE.Color(c[0], c[1], c[2]) } },
+    uniforms: { ...uniforms, uColor: { value: new THREE.Color(hex) } },
     vertexShader: `
       attribute vec3 iA; attribute vec3 iB; attribute vec3 iDim;
       uniform float uLo; uniform float uHi;
@@ -71,6 +71,7 @@ export class SlicerScene {
     this.problems = new Set();
     this.volume = { width: 220, depth: 220, height: 250, shape: 'rectangular' };
     this.mode = 'model';
+    this.typeColors = {};
     this.onPick = () => {};
     this.onMove = () => {};
     this.onMoveEnd = () => {};
@@ -303,7 +304,7 @@ export class SlicerScene {
     const types = new Map();
     this.previewUniforms = { uLo: { value: 0 }, uHi: { value: parsed.layers } };
     for (const [t, b] of parsed.types) {
-      const mesh = new THREE.Mesh(extrusionGeometry(b.pos), extrusionMaterial(TYPE_COLORS[t] || TYPE_COLORS.DEFAULT, this.previewUniforms));
+      const mesh = new THREE.Mesh(extrusionGeometry(b.pos), extrusionMaterial(typeHex(t, this.typeColors), this.previewUniforms));
       mesh.frustumCulled = false;
       this.previewGroup.add(mesh);
       types.set(t, { line: mesh, off: b.off });
@@ -336,6 +337,13 @@ export class SlicerScene {
     // travel moves are only worth showing for the layers being inspected
     apply(p.travel.line, p.travel.off);
     this.requestRender();
+  }
+  /** Change the preview colour of one feature type (or back to its default with null). */
+  setTypeColor(type, hex) {
+    this.typeColors = { ...this.typeColors };
+    if (hex) this.typeColors[type] = hex; else delete this.typeColors[type];
+    const t = this.preview && this.preview.types.get(type);
+    if (t) { t.line.material.uniforms.uColor.value.set(typeHex(type, this.typeColors)); this.requestRender(); }
   }
   setTypeVisible(type, on) { const t = this.preview && this.preview.types.get(type); if (t) { t.line.visible = on; this.requestRender(); } }
   setTravelVisible(on) { if (this.preview) { this.preview.travel.line.visible = on; this.requestRender(); } }

@@ -36,6 +36,10 @@
 .sl-vs-tip { position: absolute; right: 20px; top: 50%; transform: translateY(-50%); padding: 1px 6px; border-radius: 4px; font: 600 11px/1.4 ui-monospace, Consolas, monospace; background: var(--panel); color: var(--text, #fff); border: 1px solid var(--border); white-space: nowrap; pointer-events: none; }
 .sl-legend { position: absolute; right: 104px; top: 14px; order: -1; padding: 8px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
 .sl-legend-row { display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.sl-swatch { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; padding: 0; border: 0; border-radius: 3px; background: none; cursor: pointer; flex: none; }
+.sl-swatch::-webkit-color-swatch-wrapper { padding: 0; }
+.sl-swatch::-webkit-color-swatch { border: 1px solid rgba(255,255,255,.25); border-radius: 3px; }
+.sl-swatch::-moz-color-swatch { border: 1px solid rgba(255,255,255,.25); border-radius: 3px; }
 .sl-legend-row i { width: 12px; height: 12px; border-radius: 3px; flex: none; }
 .sl-legend-row i.sl-travel { background: transparent; border: 1px dashed var(--muted); }
 .sl-banner a, .mode-banner a { color: var(--accent); }

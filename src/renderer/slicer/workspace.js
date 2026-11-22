@@ -22,7 +22,7 @@ import { registerSyncFile, syncFileChanged } from '../drive.js';
 import { ModelGizmo } from './modelgizmo.js';
 import { bestOrientation } from './orient.js';
 import { writeBinaryStl, buildArgs, runEngine, gcodeSummary, formatTime } from './engine.js';
-import { parseGcode, TYPE_COLORS, TYPE_LABELS } from './gcodeview.js';
+import { parseGcode, TYPE_LABELS, typeHex } from './gcodeview.js';
 
 const MODEL_FILTERS = [{ name: '3D models', extensions: ['stl', 'obj', '3mf', 'ply'] }];
 
@@ -151,6 +151,7 @@ export class SlicerWorkspace {
     addResizer(this.outliner, { side: 'left', key: 'slicer-outliner', min: 170, max: 460 });
     addResizer(this.root.querySelector('.sl-side'), { side: 'right', key: 'slicer-side', min: 300, max: 760 });
     this.scene = new SlicerScene(this.viewEl);
+    this.scene.typeColors = { ...this.profiles.colors };
     this.viewcube = new ViewCube(this.scene);
     this.projBtn = button({ icon: 'persp', title: 'Switch between perspective and orthographic view', onClick: () => { this.scene.setProjection(this.scene.isOrtho ? 'perspective' : 'orthographic'); this.app.patchSettings({ projection: this.scene.isOrtho ? 'orthographic' : 'perspective' }); } });
     this.viewEl.append(
@@ -535,10 +536,14 @@ export class SlicerWorkspace {
     });
     const legend = h('div', { class: 'sl-legend' });
     for (const t of p.types.keys()) {
-      const c = TYPE_COLORS[t] || TYPE_COLORS.DEFAULT;
       const cb = h('input', { type: 'checkbox', checked: true });
       cb.addEventListener('change', () => this.scene.setTypeVisible(t, cb.checked));
-      legend.append(h('label', { class: 'sl-legend-row' }, cb, h('i', { style: { background: `rgb(${c.map((v) => Math.round(v * 255)).join(',')})` } }), TYPE_LABELS[t] || t));
+      // click the swatch to pick another colour (kept with the slicer settings); double-click to go back to the default
+      const sw = h('input', { type: 'color', class: 'sl-swatch', value: typeHex(t, this.profiles.colors), title: 'Click to change the colour (double-click to reset)' });
+      sw.addEventListener('input', () => { this.profiles.colors[t] = sw.value; this.scene.setTypeColor(t, sw.value); });
+      sw.addEventListener('change', () => this.profiles.save());
+      sw.addEventListener('dblclick', (e) => { e.preventDefault(); delete this.profiles.colors[t]; this.scene.setTypeColor(t, null); sw.value = typeHex(t); this.profiles.save(); });
+      legend.append(h('label', { class: 'sl-legend-row' }, cb, sw, TYPE_LABELS[t] || t));
     }
     const travel = h('input', { type: 'checkbox' });
     travel.addEventListener('change', () => this.scene.setTravelVisible(travel.checked));
