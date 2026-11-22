@@ -743,7 +743,7 @@ export class SlicerWorkspace {
       // not following the nozzle: how far through the file the printer is, or else the layer
       const f = this._follower, pp = shown;
       let seq = null;
-      if (live && f && st.filePos != null) seq = f.indexAtByte(st.filePos);
+      if (live && f && st.filePos != null) seq = Math.max(0, f.indexAtByte(st.filePos) - 60);   // the printer reads ahead of where it is printing
       else if (live && layer != null && pp && pp.layerPath) seq = pp.layerPath[Math.min(layer, pp.layerPath.length - 1)] ?? null;
       this._lastSeq = seq;
       this.scene.setPrinted(seq, this.monStyle);

@@ -1,13 +1,17 @@
 // Following the nozzle between the printer's position reports. The printer says where the nozzle is
 // a couple of times a second; in between, the nozzle is moved along the sliced tool path at the
 // G-code's feed rates, starting from the point on the path that matches the last report.
-const SEARCH_BACK = 60, SEARCH_AHEAD = 6000, MAX_AHEAD_S = 1.5;
+const SEARCH_BACK = 60, SEARCH_AHEAD = 6000;
+// Better behind than ahead: the printer rarely reaches the programmed feed rate (acceleration), and the
+// guess never runs more than a little past the next expected report.
+const SPEED = 0.7, MAX_AHEAD_S = 0.6;
 
 export class NozzleFollower {
   /** @param parsed parseGcode() result (needs path / pathAt) */
   constructor(parsed) {
     this.p = parsed.path; this.at = parsed.pathAt; this.n = this.at.length;
     this.k = -1; this.u = 0; this.t = 0; this.lost = true;
+    this.shown = null;   // { k, u } last point given out: never go back past it (unless the printer really went back)
   }
 
   /** The first move at or after a byte offset in the file. */
@@ -40,7 +44,11 @@ export class NozzleFollower {
     if ((!r || r.d > 3) && fileByte != null) { const h = this.indexAtByte(fileByte); r = this._best(pos, h - 3000, h + 300); }
     if (!r || r.d > 3) r = this._best(pos, 1, this.n);                   // look everywhere
     this.lost = !(r.k > 0 && r.d <= 3);
-    if (!this.lost) { this.k = r.k; this.u = r.u; this.t = now; }
+    if (!this.lost) {
+      this.k = r.k; this.u = r.u; this.t = now;
+      // the guess got ahead by more than a little: the printer is really further back (a pause, a restart)
+      if (this.shown && (this.shown.k - r.k) > 400) this.shown = null;
+    }
     return !this.lost;
   }
 
@@ -52,12 +60,16 @@ export class NozzleFollower {
     while (k < this.n) {
       const i0 = (k - 1) * 4, i1 = k * 4;
       const L = Math.hypot(p[i1] - p[i0], p[i1 + 1] - p[i0 + 1], p[i1 + 2] - p[i0 + 2]);
-      const v = Math.max(1, p[i1 + 3] / 60);                              // mm/s
+      const v = Math.max(1, (p[i1 + 3] / 60) * SPEED);                    // mm/s
       const need = ((1 - u) * L) / v;
       if (dt < need) { u += L > 1e-9 ? (dt * v) / L : 1; break; }
       dt -= need; k++; u = 0;
       if (k >= this.n) { k = this.n - 1; u = 1; break; }
     }
+    // never move backwards: if the last report put the nozzle behind what was shown, wait there for it
+    const sh = this.shown;
+    if (sh && (k < sh.k || (k === sh.k && u < sh.u))) { k = sh.k; u = sh.u; }
+    this.shown = { k, u };
     const i0 = (k - 1) * 4, i1 = k * 4;
     return { k, x: p[i0] + (p[i1] - p[i0]) * u, y: p[i0 + 1] + (p[i1 + 1] - p[i0 + 1]) * u, z: p[i0 + 2] + (p[i1 + 2] - p[i0 + 2]) * u };
   }
