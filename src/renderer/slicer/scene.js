@@ -2,6 +2,11 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TYPE_COLORS, typeHex } from './gcodeview.js';
+import { getEdges } from '../core/geometry.js';
+
+// the same outline colour 3D Design uses for selected shapes; the body turns Cura-yellow
+const SEL_COLOR = 0x29c5ff, SEL_FILL = 0xf5c542;
+const selLineMat = new THREE.LineBasicMaterial({ color: SEL_COLOR });
 
 const css = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
 
@@ -240,8 +245,13 @@ export class SlicerScene {
   _paint(mesh, model) {
     const bad = this.problems.has(model.id), sel = this.selected.has(model.id);
     const base = bad ? new THREE.Color(0xef5350) : (this.accent || new THREE.Color(0x4f8cff)).clone().lerp(new THREE.Color(0xffffff), 0.35);
-    mesh.material.color.copy(base);
-    mesh.material.emissive.copy(sel ? (this.accent || new THREE.Color(0x4f8cff)) : new THREE.Color(0x000000)).multiplyScalar(sel ? 0.35 : 0);
+    mesh.material.color.copy(sel && !bad ? new THREE.Color(SEL_FILL) : base);
+    mesh.material.emissive.set(0x000000);
+    let line = mesh.userData.line;
+    if (sel) {
+      const eg = getEdges(model.geometry);
+      if (eg && !line) { line = new THREE.LineSegments(eg, selLineMat); line.raycast = () => {}; mesh.add(line); mesh.userData.line = line; }
+    } else if (line) { mesh.remove(line); mesh.userData.line = null; }
     mesh.material.opacity = bad ? 0.85 : 1;
     mesh.material.transparent = bad;
   }
