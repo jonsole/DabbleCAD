@@ -215,12 +215,12 @@ export class SlicerWorkspace {
   }
 
   /** Turn the selected model (all movable ones when nothing is selected) to the orientation needing the least support. */
-  autoOrient() {
+  autoOrient(list, { added = false } = {}) {
     const sel = this.selectedModel;
-    const targets = sel ? (sel.locked ? [] : [sel]) : this._movable();
-    if (!targets.length) { toast('Nothing to orient: select a model that is not locked.', 'warn'); return; }
+    const targets = list || (sel ? (sel.locked ? [] : [sel]) : this._movable());
+    if (!targets.length) { if (!added) toast('Nothing to orient: select a model that is not locked.', 'warn'); return; }
     const angle = this.store.get('support_angle') || 50;
-    toast('Finding the best orientation…', 'info', 1200);
+    if (!added) toast('Finding the best orientation…', 'info', 1200);
     setTimeout(() => {
       let turned = 0, vol0 = 0, vol1 = 0;
       for (const m of targets) {
@@ -230,10 +230,11 @@ export class SlicerWorkspace {
         Object.assign(m, { rx: r.rx, ry: r.ry, rz: r.rz });
         turned++;
       }
-      if (turned && targets.length > 1) arrange(this._movable(), this.volume);
+      if (turned && (targets.length > 1 || this._movable().length > 1)) arrange(this._movable(), this.volume);
       this.scene.setModels(this.models);
       this._markDirty(); this._checkFit(); this._renderTransform(); this._updateBar();
       const cm3 = (v) => (v / 1000).toFixed(1);
+      if (added) { if (turned) toast(`Turned ${turned > 1 ? `${turned} models` : targets[0].name} to need the least support (${cm3(vol0)} → ${cm3(vol1)} cm³). Ctrl+Z puts it back.`, 'ok', 5000); return; }
       toast(turned ? `Oriented ${turned} model${turned > 1 ? 's' : ''}: estimated support ${cm3(vol0)} → ${cm3(vol1)} cm³` : 'Already well oriented for printing.', turned ? 'ok' : 'info', 4000);
     }, 30);
   }
@@ -350,6 +351,7 @@ export class SlicerWorkspace {
       this._place(m);
       this._afterModelsChanged();
       this.select(m.id);
+      this.autoOrient([m], { added: true });   // so nobody forgets: new models start in their best printing orientation
     } catch (err) {
       console.error('slicer addFromDesign', err); if (!quiet) toast(err.message || String(err), 'warn', 5000);
     }
@@ -365,14 +367,16 @@ export class SlicerWorkspace {
     if (!(await this.ready)) return;
     const res = await importFiles(files, { fitTo: 1e6 });
     let last = null;
+    const added = [];
     for (const node of res.nodes) {
       const geo = bakedWorldGeometry(node, false);
       const m = new PlateModel(node.name || 'Model', geo);
-      this.models.push(m); this._place(m); last = m;
+      this.models.push(m); this._place(m); last = m; added.push(m);
     }
     for (const msg of res.messages) toast(msg, 'warn', 6000);
     this._afterModelsChanged();
     if (last) this.select(last.id);
+    if (added.length) this.autoOrient(added, { added: true });
   }
 
   /** Put a new model somewhere free: arrange everything if there are several. */
