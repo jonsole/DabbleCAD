@@ -558,7 +558,7 @@ export class SlicerWorkspace {
     } else {
       this._stopPolling();
       if (this.monitorEl) this.monitorEl.hidden = true;
-      this.scene.setPrintedLayers(null);
+      this.scene.setPrinted(null);
       this.scene.setNozzle(null);
       if (this.printJob) {   // back to the current slice
         if (this.result) this.scene.showPreview(this.result.parsed, this.store.get('machine_center_is_zero')); else this.scene.clearPreview();
@@ -580,8 +580,8 @@ export class SlicerWorkspace {
     this._showNozzle = this.monStyle === 'progress';
     try { localStorage.setItem('dabblecad.slicer.monitorStyle', this.monStyle); } catch { /* ignore */ }
     for (const b of this.monStyleSeg.children) b.classList.toggle('active', b.dataset.style === this.monStyle);
-    if (!this._showNozzle) { cancelAnimationFrame(this._followRaf); this._followRaf = 0; this.scene.setNozzle(null); }
-    if (this._lastLayer !== undefined) this.scene.setPrintedLayers(this._lastLayer, this.monStyle);
+    if (!this._showNozzle) this.scene.setNozzle(null);
+    if (this._lastSeq !== undefined) this.scene.setPrinted(this._lastSeq, this.monStyle);
   }
 
   _syncModeButtons() {
@@ -653,7 +653,6 @@ export class SlicerWorkspace {
    */
   _nozzleReport(p, live) {
     const f = this._follower;
-    if (!this._showNozzle) { cancelAnimationFrame(this._followRaf); this._followRaf = 0; return true; }
     if (!p || !live || !f || !f.anchor(p, performance.now(), this._filePos)) { cancelAnimationFrame(this._followRaf); this._followRaf = 0; return false; }
     if (!this._followRaf) {
       let last = 0;
@@ -663,7 +662,7 @@ export class SlicerWorkspace {
         if (now - last < 33 || document.hidden) return;              // about 30 updates a second is plenty
         last = now;
         const e = this._follower.estimate(performance.now());
-        if (e) this.scene.setNozzle(e);
+        if (e) { this.scene.setNozzle(this._showNozzle ? e : null); this.scene.setPrinted(e.k, this.monStyle); this._lastSeq = e.k; }
       };
       this._followRaf = requestAnimationFrame(frame);
     }
@@ -676,11 +675,11 @@ export class SlicerWorkspace {
     while (this._pollToken === token) {
       await sleep(500);
       const s = this._session;
-      if (!this._printing || !this._showNozzle || !s || !s.position || document.hidden || this._posBusy) continue;
+      if (!this._printing || !s || !s.position || document.hidden || this._posBusy) continue;
       this._posBusy = true;
       try {
         const p = await s.position();
-        if (p && this._pollToken === token && this._printing && this._showNozzle && !this._nozzleReport(p, true)) this.scene.setNozzle(p, { smooth: 500 });
+        if (p && this._pollToken === token && this._printing && !this._nozzleReport(p, true) && this._showNozzle) this.scene.setNozzle(p, { smooth: 500 });
       } catch { /* the 3 s status read reports problems */ }
       this._posBusy = false;
     }
@@ -738,10 +737,18 @@ export class SlicerWorkspace {
     // the layers already printed in colour, the rest grey (nothing to grey out when the printer is not printing)
     const live = st.state === 'printing' || st.state === 'paused';
     this._filePos = st.filePos;
-    if (!this._showNozzle) this.scene.setNozzle(null);
-    else if (!this._nozzleReport(st.nozzle, live)) this.scene.setNozzle(st.nozzle || null);
-    this._lastLayer = live && layer != null ? layer : null;
-    this.scene.setPrintedLayers(this._lastLayer, this.monStyle);
+    const following = this._nozzleReport(st.nozzle, live);
+    if (!following) {
+      this.scene.setNozzle(this._showNozzle ? st.nozzle || null : null);
+      // not following the nozzle: how far through the file the printer is, or else the layer
+      const f = this._follower, pp = shown;
+      let seq = null;
+      if (live && f && st.filePos != null) seq = f.indexAtByte(st.filePos);
+      else if (live && layer != null && pp && pp.layerPath) seq = pp.layerPath[Math.min(layer, pp.layerPath.length - 1)] ?? null;
+      this._lastSeq = seq;
+      this.scene.setPrinted(seq, this.monStyle);
+    }
+    if (!live) { this._lastSeq = null; this.scene.setPrinted(null); }
     this._maybeFetchRunning(st, live);
     const base = (s) => String(s || '').replace(/^.*[\\/]/, '');
     const fetchNote = this._fetching ? 'Reading the G-code from the printer…' : (live && this._fetchFailed && this._fetchFailed === st.path ? this._fetchErr : '');

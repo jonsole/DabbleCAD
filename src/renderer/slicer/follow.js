@@ -59,6 +59,6 @@ export class NozzleFollower {
       if (k >= this.n) { k = this.n - 1; u = 1; break; }
     }
     const i0 = (k - 1) * 4, i1 = k * 4;
-    return { x: p[i0] + (p[i1] - p[i0]) * u, y: p[i0 + 1] + (p[i1 + 1] - p[i0 + 1]) * u, z: p[i0 + 2] + (p[i1 + 2] - p[i0 + 2]) * u };
+    return { k, x: p[i0] + (p[i1] - p[i0]) * u, y: p[i0 + 1] + (p[i1 + 1] - p[i0 + 1]) * u, z: p[i0 + 2] + (p[i1 + 2] - p[i0 + 2]) * u };
   }
 }

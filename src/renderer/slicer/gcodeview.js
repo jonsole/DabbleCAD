@@ -32,12 +32,12 @@ class Growable {
     x[i] = a; x[i + 1] = b; x[i + 2] = c; x[i + 3] = d; x[i + 4] = e; x[i + 5] = f;
     this.n += 6;
   }
-  /** One extruded segment: from, to, line width, layer height, layer number. */
-  push9(a, b, c, d, e, f, w, h, l) {
-    if (this.n + 9 > this.a.length) { const g = new Float32Array(this.a.length * 2); g.set(this.a); this.a = g; }
+  /** One extruded segment: from, to, line width, layer height, layer number, its move number in the file. */
+  push10(a, b, c, d, e, f, w, h, l, k) {
+    if (this.n + 10 > this.a.length) { const g = new Float32Array(this.a.length * 2); g.set(this.a); this.a = g; }
     const x = this.a, i = this.n;
-    x[i] = a; x[i + 1] = b; x[i + 2] = c; x[i + 3] = d; x[i + 4] = e; x[i + 5] = f; x[i + 6] = w; x[i + 7] = h; x[i + 8] = l;
-    this.n += 9;
+    x[i] = a; x[i + 1] = b; x[i + 2] = c; x[i + 3] = d; x[i + 4] = e; x[i + 5] = f; x[i + 6] = w; x[i + 7] = h; x[i + 8] = l; x[i + 9] = k;
+    this.n += 10;
   }
   done() { return this.a.slice(0, this.n); }
 }
@@ -66,7 +66,7 @@ export async function parseGcode(bytes, { onProgress, signal, filamentDiameter =
   const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
 
   // every move in file order (for following the nozzle in Monitor): end point, feed rate, where it is in the file
-  const path = [], pathAt = [];
+  const path = [], pathAt = [], layerPath = [];
   let feed = 3000;
   let pos = 0, lines = 0;
   const len = text.length;
@@ -77,7 +77,8 @@ export async function parseGcode(bytes, { onProgress, signal, filamentDiameter =
     if (c0 === 59 /* ; */) {
       if (text.startsWith(';LAYER:', pos)) {
         layerIdx++;
-        for (const b of buckets.values()) b.off.push(b.g.n / 9);
+        for (const b of buckets.values()) b.off.push(b.g.n / 10);
+        layerPath.push(path.length / 4);
         trOff.push(tr.n / 6); layerZ.push(z);
       } else if (text.startsWith(';TYPE:', pos)) {
         type = text.slice(pos + 6, end).trim();
@@ -110,7 +111,7 @@ export async function parseGcode(bytes, { onProgress, signal, filamentDiameter =
             // line size from the layer thickness and the filament that was pushed through
             const length = Math.hypot(nx - x, ny - y), h = Math.max(0.05, Math.min(1.2, nz - (layerIdx > 0 && layerZ[layerIdx - 1] !== undefined ? layerZ[layerIdx - 1] : 0) || 0.2));
             const w = Math.max(0.2, Math.min(2.2, (de * filArea) / (length * h) + (1 - Math.PI / 4) * h));
-            bucket.g.push9(x, y, z, nx, ny, nz, w, h, layerIdx);
+            bucket.g.push10(x, y, z, nx, ny, nz, w, h, layerIdx, path.length / 4 - 1);
             if (nx < min[0]) min[0] = nx; if (ny < min[1]) min[1] = ny; if (nz < min[2]) min[2] = nz;
             if (nx > max[0]) max[0] = nx; if (ny > max[1]) max[1] = ny; if (nz > max[2]) max[2] = nz;
             layerZ[layerIdx] = nz;
@@ -132,7 +133,7 @@ export async function parseGcode(bytes, { onProgress, signal, filamentDiameter =
   }
   const layers = layerZ.length;
   const types = new Map();
-  for (const [t, b] of buckets) { b.off.push(b.g.n / 9); types.set(t, { pos: b.g.done(), off: Uint32Array.from(b.off) }); }
+  for (const [t, b] of buckets) { b.off.push(b.g.n / 10); types.set(t, { pos: b.g.done(), off: Uint32Array.from(b.off) }); }
   trOff.push(tr.n / 6);
-  return { path: Float32Array.from(path), pathAt: Uint32Array.from(pathAt), layers, layerZ, types, travel: { pos: tr.done(), off: Uint32Array.from(trOff) }, bounds: { min, max } };
+  return { path: Float32Array.from(path), pathAt: Uint32Array.from(pathAt), layerPath: Uint32Array.from(layerPath), layers, layerZ, types, travel: { pos: tr.done(), off: Uint32Array.from(trOff) }, bounds: { min, max } };
 }

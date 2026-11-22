@@ -30,23 +30,24 @@ function extrusionGeometry(data) {
   base.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   base.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
   base.setIndex(idx);
-  const buf = new THREE.InstancedInterleavedBuffer(data, 9, 1);
+  const buf = new THREE.InstancedInterleavedBuffer(data, 10, 1);
   base.setAttribute('iA', new THREE.InterleavedBufferAttribute(buf, 3, 0));
   base.setAttribute('iB', new THREE.InterleavedBufferAttribute(buf, 3, 3));
   base.setAttribute('iDim', new THREE.InterleavedBufferAttribute(buf, 3, 6));
-  base.instanceCount = data.length / 9;
+  base.setAttribute('iSeq', new THREE.InterleavedBufferAttribute(buf, 1, 9));
+  base.instanceCount = data.length / 10;
   return base;
 }
 function extrusionMaterial(hex, uniforms) {
   return new THREE.ShaderMaterial({
     uniforms: { ...uniforms, uColor: { value: new THREE.Color(hex) } },
     vertexShader: `
-      attribute vec3 iA; attribute vec3 iB; attribute vec3 iDim;
+      attribute vec3 iA; attribute vec3 iB; attribute vec3 iDim; attribute float iSeq;
       uniform float uLo; uniform float uHi; uniform float uDone; uniform float uHideRest;
       varying vec3 vN; varying float vY; varying float vL;
       void main() {
-        vY = position.z; vL = iDim.z;
-        bool hide = uHideRest > 0.5 && iDim.z >= uDone;   // Monitor 'progress': only what is printed so far
+        vY = position.z; vL = iSeq;
+        bool hide = uHideRest > 0.5 && iSeq >= uDone;   // Monitor 'progress': only what is printed so far
         if (hide || iDim.z < uLo || iDim.z > uHi) { gl_Position = vec4(2.0, 2.0, 2.0, 1.0); return; }
         vec3 d = iB - iA; float len = length(d);
         vec3 dir = len > 1e-5 ? d / len : vec3(1.0, 0.0, 0.0);
@@ -63,7 +64,7 @@ function extrusionMaterial(hex, uniforms) {
         float l = max(dot(n, normalize(vec3(0.35, 0.55, 0.75))), 0.0);
         float edge = 0.55 + 0.45 * smoothstep(0.0, 0.75, n.z * 0.5 + 0.5);   // darker towards the sides of each bead
         float seam = 1.0 - 0.6 * smoothstep(0.28, 0.5, abs(vY));    // dark line where one layer meets the next
-        vec3 col = vL >= uDone ? vec3(0.42, 0.44, 0.48) : uColor;   // Monitor 'whole print': layers still to print are grey
+        vec3 col = vL >= uDone ? vec3(0.42, 0.44, 0.48) : uColor;   // uDone: the first move not printed yet   // Monitor 'whole print': layers still to print are grey
         gl_FragColor = vec4(col * (0.35 + 0.8 * l) * edge * seam, 1.0);
       }`,
     side: THREE.DoubleSide,
@@ -402,10 +403,10 @@ export class SlicerScene {
     this._nozzleAnim = requestAnimationFrame(step);
   }
   /**
-   * Layers below `n` are printed (null: show everything normally). style 'whole': the rest in grey;
-   * 'progress': the rest not drawn at all.
+   * Moves before number `n` (in file order) are printed (null: show everything normally).
+   * style 'whole': the rest in grey; 'progress': the rest not drawn at all.
    */
-  setPrintedLayers(n, style = 'whole') {
+  setPrinted(n, style = 'whole') {
     if (!this.preview) return;
     this.previewUniforms.uDone.value = n == null ? 1e9 : n;
     this.previewUniforms.uHideRest.value = n != null && style === 'progress' ? 1 : 0;
