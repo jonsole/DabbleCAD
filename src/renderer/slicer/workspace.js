@@ -536,7 +536,10 @@ export class SlicerWorkspace {
       this.scene.setMode('preview');
       this.previewPanel.hidden = true;
       this.viewEl.classList.add('sl-previewing');
-      if (this.result) this.scene.setLayerRange(0, this.result.parsed.layers - 1);
+      const job = this.printJob;
+      if (job) this.scene.showPreview(job.parsed, job.centerIsZero);   // the G-code that was sent, not the plate
+      const shown = job ? job.parsed : this.result && this.result.parsed;
+      if (shown) this.scene.setLayerRange(0, shown.layers - 1);
       this._buildMonitorCard();
       this.monitorEl.hidden = false;
       this._startPolling();
@@ -544,6 +547,9 @@ export class SlicerWorkspace {
       this._stopPolling();
       if (this.monitorEl) this.monitorEl.hidden = true;
       this.scene.setPrintedLayers(null);
+      if (this.printJob) {   // back to the current slice
+        if (this.result) this.scene.showPreview(this.result.parsed, this.store.get('machine_center_is_zero')); else this.scene.clearPreview();
+      }
       this.scene.setMode(this.mode);
       this.previewPanel.hidden = this.mode !== 'preview';
       this.viewEl.classList.toggle('sl-previewing', this.mode === 'preview');
@@ -615,7 +621,8 @@ export class SlicerWorkspace {
     const pct = st.progress == null ? null : Math.round(st.progress * 1000) / 10;
     this.monBar.style.width = (pct == null ? 0 : pct) + '%';
     this.monPct.textContent = pct == null ? '' : `${pct.toFixed(pct % 1 ? 1 : 0)}%`;
-    const total = this.result ? this.result.parsed.layers : null;
+    const shown = this.printJob ? this.printJob.parsed : this.result && this.result.parsed;
+    const total = shown ? shown.layers : null;
     let layer = st.layer;
     if (layer == null && st.progress != null && st.state !== 'idle') layer = this.scene.layerForFraction(st.progress);
     this.monLayer.textContent = layer != null ? `${layer}${st.layers || total ? ' of ' + (st.layers || total) : ''}` : '–';
@@ -626,8 +633,9 @@ export class SlicerWorkspace {
     // the layers already printed in colour, the rest grey (nothing to grey out when the printer is not printing)
     const live = st.state === 'printing' || st.state === 'paused';
     this.scene.setPrintedLayers(live && layer != null ? layer : null);
-    this.monNote.textContent = !this.result ? 'Slice the model to see its layers drawn here.'
-      : (live && st.file && !String(st.file).startsWith(this.app._fileBase().replace(/[^\w .()-]+/g, '_')) ? 'The printer is running a different file from the one sliced here.' : '');
+    const base = (s) => String(s || '').replace(/^.*[\\/]/, '');
+    this.monNote.textContent = !shown ? 'Send a slice to the printer, or slice a model, to see its layers drawn here.'
+      : (live && st.file && this.printJob && base(st.file) !== base(this.printJob.name) ? 'The printer is running a different file from the one sent from here.' : '');
   }
 
   _buildPreviewPanel() {
@@ -807,7 +815,9 @@ export class SlicerWorkspace {
     this.sending = true; this.sendBtn.classList.add('disabled');
     this.status.textContent = `Sending ${name} to the printer…`;
     try {
-      const msg = await sendGcode(cfg, { name, data: new Uint8Array(this.result.gcode) }, { start: !!cfg.start });
+      const sent = this.result;   // the Monitor keeps drawing exactly this G-code, whatever is sliced afterwards
+      const msg = await sendGcode(cfg, { name, data: new Uint8Array(sent.gcode) }, { start: !!cfg.start });
+      this.printJob = { name, gcode: sent.gcode, parsed: sent.parsed, centerIsZero: this.store.get('machine_center_is_zero') };
       toast(`${msg}: ${name}`, 'ok', 4000);
       this.showMonitor(true);
     } catch (err) { toast(err.message || String(err), 'warn', 9000); }
