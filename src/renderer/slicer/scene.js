@@ -381,7 +381,6 @@ export class SlicerScene {
       this.nozzle = new THREE.Group();
       const body = new THREE.Group(); body.add(tip, hex, top);
       body.rotation.x = Math.PI / 2;                                 // built Y-up; the scene is Z-up
-      body.scale.setScalar(0.55);                                    // smaller than life, so it doesn't hide the print
       this.nozzle.add(body);
       for (const o of [tip, hex, top]) o.renderOrder = 10;
       this.previewGroup.add(this.nozzle);
