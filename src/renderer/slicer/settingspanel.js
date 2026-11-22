@@ -1,5 +1,6 @@
 // The settings side panel: Printer / Filament / Process tabs, a preset picker per tab, pages inside
 // each tab, search across everything, and a modified marker + reset on every changed setting.
+import { readCuraProject } from './cura3mf.js';
 import { h, button, clear, popupMenu, promptDialog, confirmDialog, toast } from '../ui/dom.js';
 import { platform } from '../platform.js';
 import { SCOPES, SCOPE_ORDER, LEVELS, levelOf, levelRank } from './taxonomy.js';
@@ -111,6 +112,7 @@ export class SettingsPanel {
         'sep',
         { label: 'Export preset…', onClick: async () => { const path = await platform.saveDialog({ title: 'Export preset', defaultName: `${cur.name.replace(/[^\w .-]+/g, '')}.dabbleslicer.json`, filters: [{ name: 'Slicer preset', extensions: ['json'] }], data: new TextEncoder().encode(p.exportScope(scope)) }); if (path) toast('Exported to ' + path); } },
         { label: 'Import preset…', onClick: async () => { const files = await platform.openDialog({ filters: [{ name: 'Slicer preset', extensions: ['json'] }] }); if (!files || !files.length) return; try { const sc = p.importScope(new TextDecoder().decode(files[0].data)); this.setScope(sc); toast('Imported preset'); } catch (err) { toast(err.message || String(err), 'warn', 5000); } } },
+        { label: 'Import from Cura project (.3mf)…', onClick: () => this._importCura() },
       ];
       popupMenu(items, e.currentTarget);
     };
@@ -118,6 +120,21 @@ export class SettingsPanel {
       button({ icon: 'bundle', title: 'Save as a new preset', cls: 'btn-ghost', onClick: async () => { const name = await promptDialog('Save preset', 'Name', cur.builtin ? `${cur.name} copy` : cur.name); if (name && name.trim()) { p.saveAs(scope, name.trim()); this._renderChrome(); toast('Saved preset'); } } }),
       button({ icon: 'list', title: 'Preset options', cls: 'btn-ghost', onClick: menu }));
     if (cur.note) this.presetBar.append(h('div', { class: 'sl-note' }, cur.note));
+  }
+
+  /** Read printer, material and quality settings from a Cura project and add them as presets. */
+  async _importCura() {
+    const files = await platform.openDialog({ filters: [{ name: 'Cura project', extensions: ['3mf'] }] });
+    if (!files || !files.length) return;
+    try {
+      const { presets, skipped, machine } = readCuraProject(new Uint8Array(files[0].data), this.defs, (k) => (this.info.get(k) || {}).scope || null);
+      if (!presets.length) throw new Error('No settings found in this project');
+      for (const pr of presets) this.profiles.addPreset(pr.scope, pr.name, pr.overrides);
+      this._renderChrome(); this._renderBody();
+      const count = presets.reduce((n, pr) => n + Object.keys(pr.overrides).length, 0);
+      toast(`Imported "${machine}" from Cura: ${count} settings in ${presets.length} presets${skipped.length ? ` (${skipped.length} not supported)` : ''}`, 'ok', 7000);
+      if (skipped.length) console.info('Cura settings not imported:', skipped);
+    } catch (err) { toast(err.message || String(err), 'warn', 6000); }
   }
 
   // ------------------------------------------------------------------ body

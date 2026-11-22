@@ -136,6 +136,15 @@ export class Profiles {
   }
   resetScope(scope) { this._apply(scope, this.current(scope)); this.save(); }
 
+  /** Add a ready-made preset (e.g. read from a Cura project) and select it. */
+  addPreset(scope, name, overrides) {
+    const keys = new Set(this.keysOf(scope));
+    const id = 'user-' + Date.now().toString(36) + '-' + scope;
+    this.user[scope].push({ id, name, overrides: Object.fromEntries(Object.entries(overrides).filter(([k]) => keys.has(k))) });
+    this.select(scope, id);
+    return id;
+  }
+
   saveAs(scope, name) {
     const id = 'user-' + Date.now().toString(36);
     this.user[scope].push({ id, name, overrides: this.scopeOverrides(scope) });
