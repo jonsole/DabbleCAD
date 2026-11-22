@@ -61,14 +61,21 @@ function readMaterial(xml) {
  */
 export function readCuraProject(bytes, defs, scopeOf) {
   const files = unzipSync(bytes);
-  const names = Object.keys(files).filter((n) => /^cura\//i.test(n));
+  const all = Object.keys(files);
+  const names = all.filter((n) => /(^|\/)cura\//i.test(n));
   if (!names.length) throw new Error('This 3MF has no Cura settings in it. In Cura use File → Save Project…');
+  const seen = [];
   const kinds = {};            // kind -> merged raw values
   let machine = '', quality = '', materialInfo = null;
   for (const n of names) {
-    if (/\.inst\.cfg$/i.test(n)) {
+    if (/\.(inst|extruder|global)?\.?cfg$/i.test(n) && !/preferences\.cfg$/i.test(n)) {
       const ini = parseIni(strFromU8(files[n]));
-      const kind = (ini.metadata && ini.metadata.type) || (/_user\b/.test(n) ? 'user' : '');
+      if (!ini.values) {                                        // a machine / extruder stack, not a settings container
+        if (ini.general && ini.general.name && /global/i.test(n) && !machine) machine = ini.general.name;
+        continue;
+      }
+      const kind = (ini.metadata && ini.metadata.type) || (/_user\b|user_/.test(n) ? 'user' : /changes/i.test(n) ? 'quality_changes' : '');
+      seen.push(`${n} (${kind || 'unknown type'}, ${Object.keys(ini.values).length} values)`);
       if (!ORDER.includes(kind)) continue;
       Object.assign((kinds[kind] = kinds[kind] || {}), ini.values || {});
       if (kind === 'quality_changes' && ini.general && ini.general.name && !quality) quality = ini.general.name;
@@ -91,6 +98,10 @@ export function readCuraProject(bytes, defs, scopeOf) {
     const v = typed(def, String(raw));
     if (v === undefined) { skipped.push(key); continue; }
     by[scope][key] = v;
+  }
+  if (!Object.keys(merged).length || (skipped.length && !Object.values(by).some((o) => Object.keys(o).length))) {
+    console.warn('Cura import found:', { files: all, containers: seen, skipped });
+    throw new Error(`No settings found. ${seen.length ? `Read ${seen.length} Cura containers but none matched this slicer's settings` : `The project has ${names.length} Cura files but no settings containers`} (details in the browser console).`);
   }
   const label = machine || 'Cura';
   const presets = [];
