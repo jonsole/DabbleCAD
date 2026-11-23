@@ -74,8 +74,8 @@ function extrusionMaterial(hex, uniforms) {
         bool printed = vL < uDone - 0.5 || (cur && vT <= uFrac);
         vec3 col = printed ? uColor : vec3(0.42, 0.44, 0.48);       // Monitor 'whole print': still to print in grey
         if (uActive >= 0.0 && printed && vLayer < uActive - 0.5) col *= 0.45;   // finished layers darker than the one being printed
-        gl_FragColor = vec4((col * (0.38 + 0.6 * l) + vec3(0.12) * spec) * edge * seam, 1.0);
-        #include <colorspace_fragment>
+        // colours go out as they are (no sRGB conversion: that washed them out); lit brighter than before
+        gl_FragColor = vec4((col * (0.5 + 0.7 * l) + vec3(0.14) * spec) * edge * seam, 1.0);
       }`,
     side: THREE.DoubleSide,
   });
