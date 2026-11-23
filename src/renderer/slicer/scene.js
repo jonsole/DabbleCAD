@@ -65,14 +65,17 @@ function extrusionMaterial(hex, uniforms) {
       uniform vec3 uColor; uniform float uDone; uniform float uFrac; uniform float uActive; varying vec3 vN; varying float vY; varying float vL; varying float vLayer; varying float vT;
       void main() {
         vec3 n = normalize(vN);
-        float l = max(dot(n, normalize(vec3(0.35, 0.55, 0.75))), 0.0);
-        float edge = 0.55 + 0.45 * smoothstep(0.0, 0.75, n.z * 0.5 + 0.5);   // darker towards the sides of each bead
-        float seam = 1.0 - 0.6 * smoothstep(0.28, 0.5, abs(vY));    // dark line where one layer meets the next
+        vec3 L = normalize(vec3(0.35, 0.55, 0.75));
+        float l = max(dot(n, L), 0.0);
+        float spec = pow(max(dot(n, normalize(L + vec3(0.0, 0.0, 1.0))), 0.0), 24.0);   // a little shine on each bead
+        float edge = 0.62 + 0.38 * smoothstep(0.0, 0.75, n.z * 0.5 + 0.5);    // darker towards the sides of each bead
+        float seam = 1.0 - 0.45 * smoothstep(0.3, 0.5, abs(vY));     // dark line where one layer meets the next
         bool cur = abs(vL - uDone) < 0.5;
         bool printed = vL < uDone - 0.5 || (cur && vT <= uFrac);
         vec3 col = printed ? uColor : vec3(0.42, 0.44, 0.48);       // Monitor 'whole print': still to print in grey
         if (uActive >= 0.0 && printed && vLayer < uActive - 0.5) col *= 0.45;   // finished layers darker than the one being printed
-        gl_FragColor = vec4(col * (0.35 + 0.8 * l) * edge * seam, 1.0);
+        // colours go out as they are (no sRGB conversion: that washed them out); lit brighter than before
+        gl_FragColor = vec4((col * (0.5 + 0.7 * l) + vec3(0.14) * spec) * edge * seam, 1.0);
       }`,
     side: THREE.DoubleSide,
   });
