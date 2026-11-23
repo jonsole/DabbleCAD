@@ -295,6 +295,39 @@ repository anyway. If you fork this
 repository, replace the one in `config.js` with your own (it only works from the
 origins its owner allowed).
 
+### AI apps (MCP)
+
+AI apps that speak the [Model Context Protocol](https://modelcontextprotocol.io) (Claude Code,
+Claude Desktop, Cursor, VS Code and others) can design in DabbleCAD Plus, slice the design and
+send it to your printer. Turn it on in **Settings → AI connection**.
+
+- **Desktop app:** the app serves `http://127.0.0.1:7787/mcp` itself. Settings shows the
+  address, a token and a ready-made command for Claude Code:
+  `claude mcp add --transport http dabblecad http://127.0.0.1:7787/mcp --header "Authorization: Bearer <token>"`.
+- **Web version:** a web page can't accept connections, so download the small helper from
+  Settings and run it with Node.js 18 or later: `node dabblecad-mcp.cjs`. It prints the
+  address and token, and the open DabbleCAD Plus tab connects to it by itself.
+  (`--port`, `--new-token` and `--verbose` are there if you need them.)
+
+What an AI app can do: read the design, add and change shapes and holes, group, align,
+move faces, edges and corners, take screenshots to check its work, open, save and export
+designs, undo and redo (each tool call is one undo step); and in the slicer, read and change
+any of the ~600 settings, choose and save presets, put objects on the plate, arrange them,
+slice (with print time and filament), and send the G-code to the printer set up in the
+Printer preset, or check on a print.
+
+The safeguards:
+- Only programs on this computer with the token can connect; the server listens on
+  127.0.0.1 only and refuses requests from web pages.
+- Printer settings (bed size, nozzle, start and end G-code) are read-only to AI apps unless you
+  switch on **Allow changing printer settings**.
+- Values outside Cura's limits are refused, and values outside its usual range need the AI
+  to say it means it.
+- Out-of-date G-code is never sent, nor anything while the printer is busy.
+- Starting a print asks you first, unless you switch on **Start prints without asking**.
+  Uploading without starting never asks.
+- AI apps never see the printer's password or API key.
+
 ## Saving
 
 `Ctrl+S` (or `Cmd+S` on Mac) saves the design and its laser workspace, even with

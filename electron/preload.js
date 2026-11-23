@@ -52,6 +52,13 @@ contextBridge.exposeInMainWorld('dabbleNative', {
   aiWebFetch: call('ai:web-fetch'),
   onAiEvent: (fn) => { const h = (_e, ev) => fn(ev); ipcRenderer.on('ai:event', h); return () => ipcRenderer.removeListener('ai:event', h); },
   smokeShot: call('smoke:shot'),
+  // MCP server (AI apps): the main process serves it, the editor answers
+  mcpState: call('mcp:state'),
+  mcpEnable: call('mcp:enable'),
+  mcpNewToken: call('mcp:new-token'),
+  mcpHello: (hello) => ipcRenderer.send('mcp:hello', hello),
+  mcpRespond: (msg) => ipcRenderer.send('mcp:response', msg),
+  onMcpRequest: (fn) => ipcRenderer.on('mcp:request', (_e, msg) => fn(msg)),
   onSerialPorts: (fn) => ipcRenderer.on('serial:ports', (_e, ports) => fn(ports)),
   chooseSerialPort: (id) => ipcRenderer.send('serial:choose', id),
 });

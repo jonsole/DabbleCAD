@@ -18,7 +18,19 @@ const build = {
   date: new Date().toISOString(),
 };
 
+// The web version's MCP helper (Settings → AI connection) is the desktop app's server file, run on its own.
+const HELPER = 'dabblecad-mcp.cjs';
+const helperSource = () => fs.readFileSync(path.join(here, 'electron/mcpserver.js'), 'utf8');
+const mcpHelper = {
+  name: 'dabblecad-mcp-helper',
+  configureServer(server) {
+    server.middlewares.use('/' + HELPER, (_req, res) => { res.setHeader('Content-Type', 'application/javascript'); res.end(helperSource()); });
+  },
+  generateBundle() { this.emitFile({ type: 'asset', fileName: HELPER, source: helperSource() }); },
+};
+
 export default defineConfig({
+  plugins: [mcpHelper],
   root: path.join(here, 'src/renderer'),
   base: './',
   // the web version shows the same version number as the desktop app

@@ -82,6 +82,6 @@ export function gcodeSummary(gcode) {
 
 export function formatTime(s) {
   if (s == null) return '';
-  const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60);
+  const all = Math.round(s / 60), h = Math.floor(all / 60), m = all % 60;   // round first: 7175 s is 2 h 0 min, not 1 h 60 min
   return h ? `${h} h ${m} min` : `${m} min`;
 }

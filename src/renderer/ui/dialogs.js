@@ -9,6 +9,7 @@ import { printCheckDialog } from './printdialog.js';
 import * as drive from '../drive.js';
 import { driveAction } from './dashboard.js';
 import { aiSettingsGroup } from '../ai/settings.js';
+import { HELPER_FILE } from '../mcp/bridge.js';
 
 /** Settings › Google Drive (browser version only). */
 function driveGroup(app, m) {
@@ -43,6 +44,60 @@ function driveGroup(app, m) {
   return h('div', { class: 'set-group' }, h('h4', {}, 'Google Drive'), ...out);
 }
 
+const copyText = async (text, what) => {
+  try { await navigator.clipboard.writeText(text); toast(`${what} copied`); } catch { toast('Could not copy: select it and press Ctrl+C', 'warn'); }
+};
+
+/** Settings › AI connection: the MCP server AI apps (Claude Code, Claude Desktop, Cursor, …) connect to. */
+function aiGroup(app, m) {
+  const mcp = app.mcp;
+  const box = h('div', { class: 'set-group', id: 'set-ai' });
+  if (!mcp) return box;
+  const s = app.settings;
+  const render = () => {
+    const st = mcp.status;
+    clear(box);
+    box.append(h('h4', {}, 'AI connection'));
+    const intro = isDesktop
+      ? `Lets AI apps that speak MCP (Claude Code, Claude Desktop, Cursor and others) build in ${APP_NAME}, slice and print. Only apps on this computer that have the token can connect.`
+      : `Lets AI apps that speak MCP (Claude Code, Claude Desktop, Cursor and others) build in ${APP_NAME}, slice and print. A web page can't accept connections itself, so a small helper runs on your computer and passes them to this tab.`;
+    box.append(row('Let AI apps use ' + APP_NAME, intro, toggle(!!st.enabled, async (v) => { await mcp.setEnabled(v); render(); })));
+    if (!st.enabled) return;
+
+    if (!isDesktop) {
+      box.append(row('1. Get the helper', `Needs Node.js 18 or later. Run it with: node ${HELPER_FILE}`,
+        h('a', { class: 'btn btn-outline', href: './' + HELPER_FILE, download: HELPER_FILE }, 'Download')));
+      const state = st.connected ? `Connected to the helper.` : st.error ? st.error : `Looking for the helper on port ${mcp.port}… Start it and this connects by itself.`;
+      box.append(row('2. Connect', state, st.error && !st.connected
+        ? button({ label: 'Use this tab', cls: 'btn-outline', onClick: () => mcp.reconnect() })
+        : h('span', { class: st.connected ? 'gpu-ok' : 'gpu-warn' }, st.connected ? 'Connected' : 'Waiting')));
+    } else {
+      box.append(h('div', { class: st.error ? 'gpu-warn' : 'gpu-ok', style: { margin: '2px 0 8px' } }, st.error || (st.running ? `Running at ${st.url}` : 'Starting…')));
+    }
+
+    if (st.url && st.token) {
+      const tokenIn = h('input', { class: 'input set-mono', type: 'password', readOnly: true, value: st.token });
+      box.append(row('Address', null, h('div', { class: 'set-btns' }, h('code', { class: 'set-mono' }, st.url), button({ label: 'Copy', cls: 'btn-ghost', onClick: () => copyText(st.url, 'Address') }))));
+      box.append(row('Token', 'AI apps send this as "Authorization: Bearer <token>". Keep it private.', h('div', { class: 'set-btns' },
+        button({ label: 'Show', cls: 'btn-ghost', onClick: (e) => { tokenIn.type = tokenIn.type === 'password' ? 'text' : 'password'; e.currentTarget.textContent = tokenIn.type === 'password' ? 'Show' : 'Hide'; } }),
+        button({ label: 'Copy', cls: 'btn-ghost', onClick: () => copyText(st.token, 'Token') }),
+        isDesktop ? button({ label: 'New token', cls: 'btn-ghost', title: 'Apps using the old token stop working', onClick: async () => { await mcp.newToken(); render(); } }) : null)), tokenIn);
+      const cmd = `claude mcp add --transport http dabblecad ${st.url} --header "Authorization: Bearer ${st.token}"`;
+      box.append(row('Add to Claude Code', 'Paste this in a terminal. Other apps: add an HTTP MCP server with the address and token above.', button({ label: 'Copy command', cls: 'btn-outline', onClick: () => copyText(cmd, 'Command') })));
+      if (!isDesktop) box.append(h('small', { class: 'set-text' }, `New token: run the helper with --new-token. Another port: --port, and set it here as mcpPort.`));
+    }
+
+    box.append(row('Allow changing printer settings', 'Lets AI apps change the Printer preset (bed size, nozzle, start and end G-code). Filament and process settings can always be changed.',
+      toggle(!!s.mcpPrinterSettings, (v) => app.patchSettings({ mcpPrinterSettings: v }))));
+    box.append(row('Start prints without asking', 'Off: when an AI app wants to start a print, you are asked first. Uploading without starting never asks.',
+      toggle(!!s.mcpStartPrints, (v) => app.patchSettings({ mcpStartPrints: v }))));
+  };
+  render();
+  const off = mcp.onChange((st) => { if (!document.body.contains(box)) { off(); return; } if (!st.activity && !box.contains(document.activeElement)) render(); });
+  void m;
+  return box;
+}
+
 const toggle = (checked, onChange) => {
   const input = h('input', { type: 'checkbox', checked });
   input.addEventListener('change', () => onChange(input.checked));
@@ -50,7 +105,7 @@ const toggle = (checked, onChange) => {
 };
 const row = (title, hint, control) => h('div', { class: 'set-row' }, h('div', { class: 'set-text' }, title, hint ? h('small', {}, hint) : null), control);
 
-export async function settingsDialog(app) {
+export async function settingsDialog(app, { section } = {}) {
   const s = app.settings;
   const m = modal({ title: 'Settings', width: 620 });
   const gpu = await platform.gpuInfo();
@@ -112,6 +167,7 @@ export async function settingsDialog(app) {
       isDesktop ? row('Design library', `Where ${APP_NAME} keeps your designs.`, button({ label: 'Open folder', icon: 'folder', cls: 'btn-outline', onClick: () => platform.openDesignsFolder() })) : null),
     driveGroup(app, m),
     aiSettingsGroup(app),
+    aiGroup(app, m),
     isDesktop ? h('div', { class: 'set-group' }, h('h4', {}, '3D printing'),
       row('Slicer', s.slicerPath ? s.slicerPath : 'Not set: "Open in slicer" uses whatever app opens 3MF files on this computer.', h('div', { class: 'set-btns' },
         button({ label: 'Choose…', cls: 'btn-outline', onClick: async () => { const p = await platform.pickApp(); if (p) { app.patchSettings({ slicerPath: p }); toast('Slicer set'); m.close(); settingsDialog(app); } } }),
@@ -123,6 +179,7 @@ export async function settingsDialog(app) {
     h('div', { class: 'set-group' }, h('h4', {}, 'About'),
       row(`${APP_NAME} ${s.version || ''}`, 'jonsole\'s fork of DabbleCAD by DJMcNewgent · open source under the Apache License 2.0.', button({ label: 'About', icon: 'info', cls: 'btn-outline', onClick: () => aboutDialog(app) })))].filter(Boolean));
   void pendingRestart;
+  if (section === 'ai') { const el = m.body.querySelector('#set-ai'); if (el) el.scrollIntoView({ block: 'start' }); }
 }
 
 const BED_PRESETS = [
