@@ -2,14 +2,13 @@
 // Settings are split into Printer / Filament / Process, as in OrcaSlicer (see taxonomy.js).
 import './slicer.css';
 import * as THREE from 'three';
-import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { h, clear, button, icon, toast, popupMenu } from '../ui/dom.js';
 import { ViewCube } from '../view/viewcube.js';
 import { addResizer } from '../ui/resizer.js';
 import { makeDraggable } from '../ui/draggable.js';
 import { platform } from '../platform.js';
 import { CURAENGINE_URL } from '../config.js';
-import { exportModel, importFiles } from '../core/io.js';
+import { exportObjects, importFiles } from '../core/io.js';
 import { bakedWorldGeometry } from '../core/geometry.js';
 import { loadDefinitions } from './defs.js';
 import { SettingsStore } from './settings.js';
@@ -350,14 +349,13 @@ export class SlicerWorkspace {
     if (!this.scene) return;
     try {
       const ed = this.app.editor;
-      const out = await ed._busy(() => exportModel(ed, 'stl', { selectedOnly, fuse: true }));
-      const geo = new STLLoader().parse(out.data.buffer.slice(out.data.byteOffset, out.data.byteOffset + out.data.byteLength));
-      const m = new PlateModel(name || this.app._fileBase(), geo);
-      this.models.push(m);
-      this._place(m);
+      // each shape or group stays its own object on the plate (a group is one object)
+      const parts = await ed._busy(() => exportObjects(ed, { selectedOnly }));
+      const added = parts.map((p) => new PlateModel(parts.length === 1 && name ? name : p.name, p.geometry));
+      for (const m of added) { this.models.push(m); this._place(m); }
       this._afterModelsChanged();
-      this.select(m.id);
-      this.autoOrient([m], { added: true });   // so nobody forgets: new models start in their best printing orientation
+      this.select(added[added.length - 1].id);
+      this.autoOrient(added, { added: true });   // so nobody forgets: new models start in their best printing orientation
     } catch (err) {
       console.error('slicer addFromDesign', err); if (!quiet) toast(err.message || String(err), 'warn', 5000);
     }
