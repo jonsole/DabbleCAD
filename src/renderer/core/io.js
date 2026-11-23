@@ -1,6 +1,7 @@
 // Import (STL / OBJ / GLB / 3MF / PLY / SVG / images / .dabble) and export (STL / OBJ / GLB / 3MF / SVG).
 import * as THREE from 'three';
 import { fusedExportGeometry } from './printcheck.js';
+import { kindName } from './shapes.js';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
@@ -350,6 +351,13 @@ function writeSVG(geos, height = 0.01) {
 }
 
 /** Build export data. Returns { data, extension, filterName } or throws. */
+/** Each shape or group as its own solid in world space (for the Slicer's build plate): [{ name, geometry }]. */
+export function exportObjects(editor, { selectedOnly = false } = {}) {
+  const nodes = exportNodes(editor, selectedOnly);
+  if (!nodes.length) throw new Error(selectedOnly ? 'Select at least one solid shape to slice' : 'There is nothing to slice yet');
+  return nodes.map((n) => ({ name: n.name || kindName(n), geometry: bakedWorldGeometry(n, false) }));
+}
+
 export async function exportModel(editor, format, { selectedOnly = false, fuse = true } = {}) {
   const nodes = exportNodes(editor, selectedOnly);
   if (!nodes.length) throw new Error(selectedOnly ? 'Select at least one solid shape to export' : 'There is nothing to export yet');
