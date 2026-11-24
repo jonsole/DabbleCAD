@@ -12,6 +12,7 @@
     "electron/preload.js",
     "electron/updater.js",
     "electron/googleauth.js",
+    "electron/ai.js",
     "build/icon.png",
     "package.json",
     "LICENSE",

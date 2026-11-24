@@ -27,13 +27,18 @@ if (!fs.existsSync(executable)) throw new Error('Build the app first; executable
 const env = { ...process.env };
 delete env.ELECTRON_RUN_AS_NODE;
 const shots = fs.mkdtempSync(path.join(os.tmpdir(), 'dabblecad-test-shots-'));
-const suites = ['smoke3.js', 'smoke-laser.js', 'smoke-depth.js', 'smoke6.js', 'smoke-save.js', 'smoke-drive.js'];
+const suites = ['smoke3.js', 'smoke-laser.js', 'smoke-depth.js', 'smoke6.js', 'smoke-save.js', 'smoke-drive.js', 'smoke-ai.js'];
 // The Drive suite talks to a fake Google on 127.0.0.1 instead of running offline.
 const fakeFile = path.join(shots, 'fake-google.txt');
 const fake = spawn(process.execPath, [path.join(__dirname, 'fakegoogle.js'), fakeFile], { stdio: 'ignore' });
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 for (let i = 0; i < 100 && !fs.existsSync(fakeFile); i++) sleep(50);
 const fakeUrl = fs.existsSync(fakeFile) ? fs.readFileSync(fakeFile, 'utf8') : '';
+// The AI suite talks to a fake OpenAI-compatible server.
+const fakeAiFile = path.join(shots, 'fake-ai.txt');
+const fakeAi = spawn(process.execPath, [path.join(__dirname, 'fakeai.js'), fakeAiFile], { stdio: 'ignore' });
+for (let i = 0; i < 100 && !fs.existsSync(fakeAiFile); i++) sleep(50);
+const fakeAiUrl = fs.existsSync(fakeAiFile) ? fs.readFileSync(fakeAiFile, 'utf8') : '';
 // Windows and Linux test on software rendering (Linux needs a display, such as
 // xvfb-run on a headless machine). Macs have no software WebGL, so they
 // test on the GPU (hosted Apple Silicon runners have one; hosted Intel runners do not).
@@ -41,8 +46,8 @@ let modes = process.platform === 'darwin' ? [[]] : [['--software']];
 let failed = false;
 try {
   for (const suite of suites) {
-    const network = suite === 'smoke-drive.js' ? ['--fake-google=' + fakeUrl] : ['--offline'];
-    console.log('\n=== ' + suite + (packaged ? ' (packaged, ' : ' (') + (suite === 'smoke-drive.js' ? 'fake Google)' : 'offline)') + ' ===');
+    const network = suite === 'smoke-drive.js' ? ['--fake-google=' + fakeUrl] : suite === 'smoke-ai.js' ? ['--fake-ai=' + fakeAiUrl] : ['--offline'];
+    console.log('\n=== ' + suite + (packaged ? ' (packaged, ' : ' (') + (suite === 'smoke-drive.js' ? 'fake Google)' : suite === 'smoke-ai.js' ? 'fake AI server)' : 'offline)') + ' ===');
     let result, line;
     for (const mode of modes) {
       if (modes.length > 1) console.log('[render mode] ' + (mode.join(' ') || 'gpu'));
@@ -69,6 +74,7 @@ try {
   }
 } finally {
   fake.kill();
+  fakeAi.kill();
   fs.rmSync(shots, { recursive: true, force: true });
 }
 process.exitCode = failed ? 1 : 0;

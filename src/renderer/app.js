@@ -27,6 +27,7 @@ import { kindName } from './core/shapes.js';
 import { importFiles, exportModel, IMPORT_FILTERS, extrusionNode, dataUrlToBytes } from './core/io.js';
 import { LaserWorkspace } from './laser/workspace.js';
 import { SlicerWorkspace } from './slicer/workspace.js';
+import { AiWindow } from './ai/window.js';
 
 const SNAPS = [0, 0.1, 0.25, 0.5, 1, 2, 5];
 // DabbleCAD's own mark: a "D" with a splash dot.
@@ -89,7 +90,7 @@ export class App {
       this.modeSeg, h('span', { class: 'sep' }),
       button({ label: 'Import', icon: 'import', title: 'Import STL, OBJ, GLB, 3MF, SVG, images (Ctrl+O opens a design file)', onClick: () => this.importDialog() }),
       button({ label: 'Export', icon: 'export', title: 'Download for 3D printing or sharing (Ctrl+E)', onClick: () => exportDialog(this) }),
-      h('span', { class: 'sep' }), this.themeBtn,
+      h('span', { class: 'sep' }), this.aiBtn = button({ icon: 'sparkle', label: 'AI', title: 'AI assistant: ask about your design or have it build things', cls: 'ai-btn', onClick: () => this.ai.toggle() }), this.themeBtn,
       button({ icon: 'help', title: 'Help: shortcuts and getting started (?)', onClick: () => shortcutsDialog(this) }),
       button({ icon: 'info', title: `About ${APP_NAME}`, onClick: () => aboutDialog(this) }),
       button({ icon: 'settings', title: 'Settings', onClick: () => settingsDialog(this) }));
@@ -179,6 +180,8 @@ export class App {
     this.laser = new LaserWorkspace(this, this.laserRoot);
     this.slicer = new SlicerWorkspace(this, this.slicerRoot);
     this.modeSeg.before(this.slicer.modeSeg);
+    this.ai = new AiWindow(this);
+    this.ai.sync();
     this._syncThemeButton();
     this._syncProjection();
   }
@@ -545,6 +548,13 @@ export class App {
     if (name != null) { this.editor.rename(node.id, name.trim()); this.editor.emit('selection'); }
   }
 
+  /** Settings, scrolled to the AI section. */
+  async openAiSettings() {
+    await settingsDialog(this);
+    const sec = document.querySelector('.set-group[data-sec="ai"]');
+    if (sec) sec.scrollIntoView({ block: 'start' });
+  }
+
   // ---------------------------------------------------------------- settings / theme / view
   patchSettings(patch) {
     Object.assign(this.settings, patch);
@@ -642,6 +652,7 @@ export class App {
     document.getElementById('app').classList.toggle('slicer-mode', slicer);
     this.laser.setActive(mode === 'laser');
     this.slicer.setActive(slicer);
+    if (this.ai) this.ai.sync();
     if (!laser) this.viewport.resize();
     if (voxel || laser) { this.editor.setTool('select'); if (!slicer) this.editor.clearSelection(); }  // the Slicer's "Selected" button needs the selection
     this.viewEl.classList.toggle('voxel-mode', voxel);
@@ -716,6 +727,10 @@ export class App {
     const set = (id, enabled) => this.btn[id].classList.toggle('disabled', !enabled);
     set('copy', n > 0); set('paste', !!ed.clipboard); set('duplicate', n > 0); set('delete', movable > 0);
     set('undo', ed.history.canUndo); set('redo', ed.history.canRedo);
+    // say what Undo / Redo would take back when the step has a name (the AI's steps do)
+    const ul = ed.history.undoLabel, rl = ed.history.redoLabel;
+    this.btn.undo.title = ul ? `Undo ${ul} (Ctrl+Z)` : 'Undo (Ctrl+Z)';
+    this.btn.redo.title = rl ? `Redo ${rl} (Ctrl+Y)` : 'Redo (Ctrl+Y)';
     set('group', movable > 1); set('intersect', movable > 1); set('bundle', movable > 1);
     set('ungroup', ed.movableNodes().some((x) => x.type === 'group'));
     set('align', movable > 0); set('mirror', movable > 0); set('split', movable > 0 || ed.tool === 'split'); set('drop', movable > 0); set('pattern', n > 0);

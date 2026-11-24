@@ -43,6 +43,13 @@ contextBridge.exposeInMainWorld('dabbleNative', {
   closeReady: () => ipcRenderer.send('app:close-ready'),
   closeHold: () => ipcRenderer.send('app:close-hold'),
   closeCancel: () => ipcRenderer.send('app:close-cancel'),
+  // AI chat: keys stay in the main process; provider requests are made there
+  aiSetKey: call('ai:set-key'),
+  aiHasKey: call('ai:has-key'),
+  aiClearKey: call('ai:clear-key'),
+  aiFetch: call('ai:fetch'),
+  aiCancel: call('ai:cancel'),
+  onAiEvent: (fn) => { const h = (_e, ev) => fn(ev); ipcRenderer.on('ai:event', h); return () => ipcRenderer.removeListener('ai:event', h); },
   smokeShot: call('smoke:shot'),
   onSerialPorts: (fn) => ipcRenderer.on('serial:ports', (_e, ports) => fn(ports)),
   chooseSerialPort: (id) => ipcRenderer.send('serial:choose', id),

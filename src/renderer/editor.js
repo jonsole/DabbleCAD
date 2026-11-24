@@ -154,10 +154,31 @@ export class Editor extends Emitter {
     this.emit('history');
   }
 
-  commit() {
-    this.history.push(this._snapshot());
+  commit(label = null) {
+    if (this._batch) { this._batch.dirty = true; if (label) this._batch.label = label; return; }
+    this.history.push(this._snapshot(), label);
     this.emit('doc', {});
     this.emit('history');
+  }
+
+  /**
+   * Run several commands as one undo step labelled `label`. If fn throws, the design goes back
+   * to how it was before and the error is passed on. Returns fn's result.
+   */
+  async transaction(label, fn) {
+    if (this._batch) return fn();           // already inside one
+    this._batch = { dirty: false, label };
+    const before = this.history.stack[this.history.index];
+    try {
+      const out = await fn();
+      const b = this._batch; this._batch = null;
+      if (b.dirty) this.commit(label);
+      return out;
+    } catch (e) {
+      const b = this._batch; this._batch = null;
+      if (b && b.dirty && before) { this._restore(before); }
+      throw e;
+    }
   }
 
   undo() { const s = this.history.undo(); if (s) this._restore(s); }
