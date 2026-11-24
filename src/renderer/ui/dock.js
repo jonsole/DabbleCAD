@@ -51,7 +51,7 @@ export class DockManager {
    * Make el dockable. handle: selector of its header (drag here). dock: where it starts
    * ('float' | 'left' | 'right') until the user moves it. isOpen(): whether it is showing (a closed
    * docked panel takes no room). grow: fill spare height when docked. collapsed: start collapsed.
-   * oldKey: a makeDraggable key to take the floating position from.
+   * oldKey: where the old (pre-docking) floating card kept its position, to start from there.
    */
   add(el, { key, handle, dock = 'float', order = this.panels.size * 2, isOpen = null, grow = false, collapsed = false, oldKey = null }) {
     let state = this._load(key);

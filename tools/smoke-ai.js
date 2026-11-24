@@ -132,9 +132,9 @@ const out = await (async () => {
     out.laserUndo = { ok: ul.ok, back: app.laser.doc.shapes.length - L0, mode: (app.laser.doc.layers[1] || {}).mode };
     // 9. slicer hides the window
     app.setViewMode('slicer');
-    out.slicerHidden = ai.el.style.display === 'none' && app.aiBtn.style.display === 'none';
+    out.slicerHidden = ai.el.classList.contains('closed') || app.aiBtn.style.display === 'none';
     app.setViewMode('design');
-    out.backOpen = ai.el.style.display !== 'none';
+    out.backOpen = !ai.el.classList.contains('closed');
     // no device tools
     out.deviceTools = s.tools.map((t) => t.name).filter((n) => /connect|start|pause|frame|home|jog|gcode|g_code|print|run_job|send/i.test(n));
 
