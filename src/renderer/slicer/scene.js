@@ -233,7 +233,7 @@ export class SlicerScene {
     for (const m of list) {
       let e = this.models.get(m.id);
       if (!e) {
-        const mesh = new THREE.Mesh(m.geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.32, metalness: 0.05 }));
+        const mesh = new THREE.Mesh(m.geometry, new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.5, metalness: 0.05 }));
         mesh.matrixAutoUpdate = false;
         mesh.userData.modelId = m.id;
         this.modelGroup.add(mesh);

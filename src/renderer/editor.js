@@ -192,7 +192,7 @@ export class Editor extends Emitter {
     const geo = getGeometry(node);
     let mesh = this.meshes.get(node.id);
     if (!mesh) {
-      mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ roughness: 0.32, metalness: 0.03 }));
+      mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ roughness: 0.5, metalness: 0.03 }));
       mesh.matrixAutoUpdate = false;
       mesh.userData.id = node.id;
       mesh.userData.solidMaterial = mesh.material;
