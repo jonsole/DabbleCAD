@@ -85,7 +85,11 @@ export async function settingsDialog(app) {
     return input;
   };
 
+  const ws = (id) => toggle(app.workspaceOn(id), (v) => app.setWorkspace(id, v));
   m.body.append(
+    h('div', { class: 'set-group' }, h('h4', {}, 'Workspaces'),
+      row('Slicer', 'Slice designs to G-code and send them to a 3D printer.', ws('slicer')),
+      row('Laser', 'Draw, set up cuts and engraves, and run a laser.', ws('laser'))),
     h('div', { class: 'set-group' }, h('h4', {}, 'Appearance'),
       row('Theme', `${APP_NAME} starts in dark mode; switch to light any time.`, themeSeg),
       row('Shadows', 'Soft shadows on the workplane.', toggle(s.shadows !== false, (v) => app.patchSettings({ shadows: v }))),
