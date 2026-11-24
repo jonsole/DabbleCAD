@@ -76,6 +76,9 @@ const P = {
   close: 'M6 6l12 12M18 6 6 18',
   clip: 'M16.5 6.5 8.4 14.6a2 2 0 0 0 2.8 2.8l8.1-8.1a4 4 0 0 0-5.7-5.7L5.5 11.7a6 6 0 0 0 8.5 8.5l6.5-6.5',
   parts: 'M4 4h7v7H4zM15.5 4a3.5 3.5 0 1 1 0 7 3.5 3.5 0 0 1 0-7zM7.5 13l4 7h-8zM14 14h6v6h-6z',
+  layers: 'M12 3 3 8l9 5 9-5zM3 12l9 5 9-5M3 16l9 5 9-5',
+  terminal: 'M4 5h16v14H4zM7 9l3 3-3 3M12 15h5',
+  panels: 'M3 4h18v16H3zM9 4v16M15 4v16',
   sparkle: 'M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9zM18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8zM5.5 2.5l.6 1.6 1.6.6-1.6.6-.6 1.6-.6-1.6-1.6-.6 1.6-.6z',
   send: 'M4 12 20 4l-6 16-3-7zM11 13l9-9',
   attach: 'M4 8h4l1.500-2.500h5L16 8h4v11H4zM12 11a3 3 0 1 0 0 6 3 3 0 0 0 0-6z',
@@ -284,4 +287,17 @@ export function popupMenu(items, at) {
     document.addEventListener('keydown', esc, true);
   }, 0);
   return close;
+}
+
+/**
+ * The title bar every panel uses, floating or docked: icon, title, any extra buttons, then the close
+ * X. Drag panels by it. title can be a string or an element.
+ */
+export function panelHead({ icon: ic, title, titleTip, onTitleDblclick, extra = [], onClose, closeTitle = 'Close' }) {
+  const t = h('div', { class: 'panel-title', title: titleTip || (typeof title === 'string' ? title : '') }, title);
+  if (onTitleDblclick) t.addEventListener('dblclick', onTitleDblclick);
+  return h('div', { class: 'panel-head' },
+    ic ? h('span', { class: 'panel-icon' }, icon(ic, 16)) : null, t,
+    ...extra.filter(Boolean).map((b) => { if (b.tagName === 'BUTTON' || b.tagName === 'A') b.classList.add('panel-btn'); return b; }),
+    onClose ? button({ icon: 'close', title: closeTitle, cls: 'panel-btn panel-close', onClick: onClose }) : null);
 }

@@ -1,7 +1,7 @@
 // The Parts panel: a floating shape library (categories, search, drag-or-click placement, saved
 // creations), opened from the toolbar's Parts button. Drag it by its header; it remembers where it
 // was, its height, and whether it was open.
-import { h, clear, icon, button, toast } from './dom.js';
+import { h, clear, icon, button, toast, panelHead } from './dom.js';
 import { CATALOG, CATEGORIES, nodeFromCatalog } from '../core/shapes.js';
 import { serializeDoc, deserializeDoc, makeGroup, cloneNode, uid } from '../core/doc.js';
 import { thumbnail, dropThumbnail } from '../view/thumbs.js';
@@ -36,8 +36,7 @@ export class ShapesPanel {
     this.search.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') { this.search.value = ''; this.query = ''; this.search.blur(); this.render(); } });
     this.grid = h('div', { class: 'shape-grid' });
     host.append(
-      h('div', { class: 'insp-head parts-head' }, icon('parts', 16), h('div', { class: 'insp-title' }, 'Parts'),
-        button({ icon: 'close', title: 'Close (P)', size: 16, onClick: () => app.toggleParts(false) })),
+      panelHead({ icon: 'parts', title: 'Parts', onClose: () => app.toggleParts(false), closeTitle: 'Close (P)' }),
       h('div', { class: 'side-filter' }, this.select),
       h('div', { class: 'side-search' }, icon('search', 15), this.search),
       this.grid,

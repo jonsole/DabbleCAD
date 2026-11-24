@@ -218,11 +218,7 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 /* the Parts panel floats over the 3D view (toolbar: Parts, or P) */
 .parts-panel { position: absolute; right: 14px; top: 14px; width: 282px; height: min(640px, calc(100% - 96px)); z-index: 11; display: none; border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); overflow: hidden; resize: both; min-width: 220px; min-height: 240px; max-width: 640px; }
 .parts-panel.open { display: flex; }
-.parts-head { cursor: grab; }
-.parts-head .insp-title { flex: 1; font-weight: 600; }
-.parts-head .icon { color: var(--accent); }
-.parts-panel.dragging .parts-head { cursor: grabbing; }
-.parts-panel.dragging { user-select: none; -webkit-user-select: none; }
+.parts-panel.dragging .parts-panel.dragging { user-select: none; -webkit-user-select: none; }
 .parts-panel .shape-grid { grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); }
 /* with Parts open, the selection card starts to its left (until the user moves it) */
 .viewport:has(> .parts-panel.open) > .inspector { right: 310px; }
@@ -554,11 +550,6 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
 .ai-win.closed { display: none !important; }
 .ai-win:not(.docked) { position: absolute; z-index: 12; right: 14px; top: 14px; width: 380px; height: min(560px, calc(100% - 28px)); min-width: 300px; min-height: 320px; border-radius: 12px; }
 .dock > .ai-win.docked.dock-grow { min-height: 300px; }
-.ai-head { display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 10px; border-bottom: 1px solid var(--border); cursor: grab; user-select: none; background: var(--panel-2); }
-.ai-head .icon { color: var(--accent); }
-.ai-head .spacer { flex: 1; }
-.ai-head .btn { height: 28px; min-width: 28px; padding: 0 4px; }
-.ai-title { font-weight: 600; }
 .ai-model { color: var(--muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; }
 .ai-ask { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); cursor: pointer; white-space: nowrap; }
 .ai-list { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 10px; }
@@ -644,28 +635,33 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
 .dock > .docked { position: static !important; width: auto !important; height: auto !important; max-height: none !important; border: none; border-radius: 0; box-shadow: none; resize: none; flex: 0 1 auto; min-height: 0; overflow: auto; }
 .dock > .docked.dock-grow { flex: 1 1 0; min-height: 160px; display: flex; flex-direction: column; overflow: hidden; }
 .dock > .docked + .docked { border-top: 1px solid var(--border); }
-.dock > .docked.collapsed { flex: none !important; min-height: 0; }
-.dockable.collapsed { resize: none; height: auto !important; min-height: 0; }
-.dockable.collapsed > :not(.insp-head):not(.outliner-head):not(.ai-head) { display: none !important; }
 .dock > .inspector.docked { max-height: 60% !important; }
-.dock > .inspector.docked:empty, .dock > .inspector.docked[hidden] { display: block; }
-.dock > .inspector.docked:empty::before { content: 'Select something to see its settings here. Drag a panel by its header to move it.'; display: block; padding: 16px 14px; color: var(--muted); font-size: 12.5px; }
-.dockable .insp-head, .dockable .outliner-head { cursor: grab; }
+.dock > .inspector.docked[hidden] { display: block; }
+.dockable .panel-head { cursor: grab; }
 .dockable.dragging { opacity: .92; z-index: 30; user-select: none; -webkit-user-select: none; }
-.dockable.dragging .insp-head, .dockable.dragging .outliner-head { cursor: grabbing; }
+.dockable.dragging .panel-head { cursor: grabbing; }
 .dock-hint { position: absolute; top: 0; bottom: 0; width: 0; z-index: 29; pointer-events: none; background: var(--accent-soft); border: 2px dashed var(--accent); opacity: 0; transition: opacity .12s; }
 .dock-hint.on { opacity: 1; width: 260px; }
 .dock-hint.left { left: 0; border-radius: 0 10px 10px 0; }
 .dock-hint.right { right: 0; border-radius: 10px 0 0 10px; }
 .outliner.dockable:not(.open) { display: none !important; }
-.collapse-btn .icon { transition: transform .12s; }
-.dockable.collapsed .collapse-btn .icon { transform: rotate(-90deg); }
 .parts-panel.dockable:not(.open) { display: none !important; }
 .main:has(> .voxel-mode) > .dock, .main:has(> .voxel-mode) > .splitter { display: none !important; }
-.laser-panel-head { padding: 4px 8px 4px 4px; gap: 2px; }
-.laser-panel-head .insp-title { font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
-.laser-panel-head .btn { height: 26px; min-width: 26px; padding: 0; }
 .laser-panel-body { padding: 8px 10px 10px; overflow: auto; flex: 1; min-height: 0; }
 .dock > .laser-panel.docked { overflow: hidden; display: flex; flex-direction: column; }
 .laser-panel:not(.docked) { display: flex; flex-direction: column; }
-.sl-settings-head .icon { color: var(--accent); }
+
+/* ---------------------------------------------------------------- panel title bars: the same everywhere */
+.panel-head { flex: none; display: flex; align-items: center; gap: 2px; height: 38px; padding: 0 5px 0 11px; border-bottom: 1px solid var(--border); background: var(--panel-2); user-select: none; -webkit-user-select: none; }
+.panel-icon { display: flex; color: var(--accent); margin-right: 6px; flex: none; }
+.panel-icon .icon { width: 16px; height: 16px; }
+.panel-title { flex: 1; min-width: 0; font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.panel-head .panel-btn { height: 28px; min-width: 28px; padding: 0 4px; border: 0; background: none; color: var(--muted); }
+.panel-head .panel-btn:hover { background: var(--panel-3); color: var(--text); }
+.panel-head .panel-btn.active { color: var(--accent); }
+.panel-head .panel-btn .icon { width: 16px; height: 16px; }
+.panel-head .panel-close { margin-left: 2px; }
+.panel-head .ai-model { margin-left: 4px; font-weight: 400; }
+.panel-head .ai-ask { margin: 0 4px; }
+.panel-head .sl-mon-state { font-size: 11.5px; margin: 0 4px; white-space: nowrap; }
+.panel-closed { display: none !important; }

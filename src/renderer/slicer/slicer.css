@@ -162,8 +162,6 @@
 .sl-monitor { font-size: 13px; }
 .sl-mon-body { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px 12px; }
 .sl-monitor[hidden] { display: none; }
-.sl-mon-head { justify-content: space-between; }
-.sl-mon-head .insp-title { flex: 1; }
 .sl-mon-state { padding: 2px 9px; border-radius: 999px; font-size: 12px; background: var(--panel-2); border: 1px solid var(--border); }
 .sl-mon-state[data-s=printing] { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 .sl-mon-state[data-s=done] { background: #43a047; color: #fff; border-color: #43a047; }

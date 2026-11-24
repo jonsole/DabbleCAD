@@ -11,6 +11,7 @@ import { platform } from './platform.js';
 import { Viewport, HOME_VIEW } from './view/viewport.js';
 import { ViewCube } from './view/viewcube.js';
 import { DockManager } from './ui/dock.js';
+import { panelHead } from './ui/dom.js';
 import { Gizmo, formatLength, parseLength } from './view/gizmo.js';
 import { buildVoxels, disposeVoxels } from './view/voxels.js';
 import { Editor } from './editor.js';
@@ -135,7 +136,9 @@ export class App {
       tb('align', 'align', 'Align (L)', () => this.editor.setTool('align'), 'Align'),
       tb('mirror', 'mirror', 'Mirror (M)', () => this.editor.setTool('mirror'), 'Mirror'),
       tb('split', 'split', 'Split: cut the selection in two with a plane (K)', () => this.editor.setTool('split'), 'Split'),
-      tb('cruise', 'cruise', 'Cruise: drag shapes onto other shapes (C)', () => this.editor.toggleCruise(), 'Cruise'));
+      tb('cruise', 'cruise', 'Cruise: drag shapes onto other shapes (C)', () => this.editor.toggleCruise(), 'Cruise'),
+      h('span', { class: 'sep' }),
+      tb('panels', 'panels', 'Panels: show or hide panels, or reset their layout', (e) => this.dock.menu(e.currentTarget)));
 
     this.outliner = h('div', { class: 'outliner' });
     this.viewEl = h('div', { class: 'viewport' });
@@ -179,9 +182,10 @@ export class App {
     this.shapes = new ShapesPanel(this.editor, this.side, this);
     // Parts and the selection card float, or dock at the left / right edge of the view
     this.dock = new DockManager(this.viewEl, { key: '3d-dock' });
-    this.dock.add(this.outliner, { key: '3d-objects', handle: '.outliner-head', dock: 'left', grow: true, isOpen: () => this.outliner.classList.contains('open') });
-    this.dock.add(this.side, { key: '3d-parts', handle: '.parts-head', oldKey: '3d-parts', grow: true, isOpen: () => this.side.classList.contains('open') });
-    this.dock.add(this.inspectorEl, { key: '3d-inspector', handle: '.insp-head', oldKey: '3d-inspector', isOpen: () => true });
+    this.dock.add(this.outliner, { key: '3d-objects', title: 'Objects', icon: 'list', dock: 'left', grow: true, isOpen: () => this.outliner.classList.contains('open'), setOpen: (on) => { if (this.outliner.classList.contains('open') !== on) this.toggleOutliner(); } });
+    this.dock.add(this.side, { key: '3d-parts', title: 'Parts', icon: 'parts', oldKey: '3d-parts', grow: true, isOpen: () => this.side.classList.contains('open'), setOpen: (on) => this.toggleParts(on) });
+    this.dock.add(this.inspectorEl, { key: '3d-inspector', title: 'Selection', icon: 'select', oldKey: '3d-inspector', isOpen: () => true, inMenu: false });
+    this.inspectorEl.addEventListener('dockchange', () => this.inspector.render());
     this.btn.parts.classList.add('keep-label');
     this.toggleParts(this.settings.partsOpen !== false);   // open until the user closes it
     this.editor.on('tool', () => { for (const id of ['workplane', 'ruler', 'note']) this.btn[id].classList.toggle('active', this.editor.tool === id); });
@@ -736,7 +740,7 @@ export class App {
       list.append(row);
     }
     if (!rows.length) list.append(h('div', { class: 'side-empty' }, 'No objects yet. Drag a shape onto the workplane.'));
-    this.outliner.append(h('div', { class: 'outliner-head' }, h('span', { style: { flex: 1 } }, `Objects (${rows.length})`), button({ icon: 'close', cls: 'btn-ghost', title: 'Close', onClick: () => this.toggleOutliner() })), list);
+    this.outliner.append(panelHead({ icon: 'list', title: `Objects (${rows.length})`, onClose: () => this.toggleOutliner() }), list);
   }
 
   // ---------------------------------------------------------------- state reflection

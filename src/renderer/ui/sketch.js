@@ -2,7 +2,7 @@
 // into a 3D shape. Shapes are edited the way 3D shapes are in the main view: drag to move,
 // handles to resize and rotate, dimensions shown on the shape, and an inspector-style panel.
 // Items can add material (Solid) or cut it away (Hole).
-import { h, modal, button, toast, clear, icon } from './dom.js';
+import { h, modal, button, toast, clear, icon, panelHead } from './dom.js';
 import { regionPolys } from '../core/solid.js';
 
 const W = 760, H = 460;
@@ -1132,11 +1132,11 @@ export function sketchDialog(existing) {
       fields = [];
       const it = sel();
       if (!it) {
-        side.append(h('div', { class: 'insp-head' }, h('div', { class: 'insp-title' }, 'Sketch')));
+        side.append(panelHead({ icon: 'pencil', title: 'Sketch' }));
       } else {
-        side.append(h('div', { class: 'insp-head' }, h('div', { class: 'insp-title' }, kindName(it)),
+        side.append(panelHead({ icon: 'pencil', title: kindName(it), extra: [
           button({ icon: 'duplicate', title: 'Duplicate (Ctrl+D)', onClick: duplicate }),
-          button({ icon: 'trash', title: 'Delete (Del)', onClick: removeSelected })));
+          button({ icon: 'trash', title: 'Delete (Del)', onClick: removeSelected })] }));
         const kind = (cut, labelText, swatchCls) => {
           const b = h('button', { class: 'kind-btn' + (!!it.cut === cut ? ' active' : ''), type: 'button', title: cut ? 'Hole: cuts this shape out' : 'Solid: adds material' },
             h('span', { class: 'swatch ' + swatchCls }), labelText);

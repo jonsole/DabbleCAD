@@ -1,13 +1,16 @@
-// Dockable panels, the same in every workspace. A panel floats over the view (drag it by its header,
-// resize it from its corner), or is docked in a column at the left or right edge of the view: drag
-// it to an edge and drop it on the highlighted strip. Docked panels stack top to bottom; drag one
-// by its header to float it again. Where each panel is, its floating position and size, and whether
-// it is collapsed are remembered in this browser; the columns can be resized and hide when empty.
+// Dockable panels, the same in every workspace. A panel floats over the view (drag it by its title
+// bar, resize it from its corner), or is docked in a column at the left or right edge of the view:
+// drag it to an edge and drop it on the highlighted strip. Docked panels stack top to bottom; drag
+// one by its title bar to float it again. Every panel has the same title bar (panelHead in dom.js):
+// icon, title, close X; the toolbar's Panels menu opens closed panels again. Where each panel is,
+// its floating position and size, and whether it is open are remembered in this browser; columns
+// can be resized and hide when nothing in them is open.
 
-import { h } from './dom.js';
+import { h, popupMenu } from './dom.js';
 import { addResizer } from './resizer.js';
 
 const EDGE = 56;   // px from the view's edge that counts as "dock here"
+let topZ = 12;     // the floating panel used last sits on top
 
 export class DockManager {
   /** view: the element panels float over (its parent row gets a column on each side). */
@@ -36,7 +39,39 @@ export class DockManager {
   _load(key) { try { return JSON.parse(localStorage.getItem(`dabblecad.dock.${key}`) || 'null'); } catch { return null; } }
   _save(p) { try { localStorage.setItem(`dabblecad.dock.${p.key}`, JSON.stringify(p.state)); } catch { /* ignore */ } }
 
-  _open(p) { return p.isOpen ? p.isOpen() : !p.el.hidden; }
+  _open(p) { return p.isOpen ? p.isOpen() : !p.state.closed && !p.el.hidden; }
+
+  /** Open or close a panel (its own way, if it has one). */
+  setOpen(key, on) {
+    const p = this.panels.get(key);
+    if (!p) return;
+    if (p.setOpen) p.setOpen(on);
+    else { p.state.closed = !on; p.el.classList.toggle('panel-closed', !on); this._save(p); }
+    this._refresh();
+  }
+
+  isOpen(key) { const p = this.panels.get(key); return !!p && this._open(p); }
+
+  /** The toolbar's Panels menu: every panel (tick = open), and a way back to the starting layout. */
+  menu(at) {
+    const items = [...this.panels.values()].filter((p) => p.inMenu && p.el._dock === this).map((p) => ({
+      label: p.title || p.key, checked: this._open(p), icon: p.icon, onClick: () => this.setOpen(p.key, !this._open(p)),
+    }));
+    popupMenu([...items, 'sep', { label: 'Reset panel layout', icon: 'panels', onClick: () => this.resetLayout() }], at);
+  }
+
+  /** Every panel back where it started (open, docked or floating as first set up). */
+  resetLayout() {
+    for (const p of this.panels.values()) {
+      if (p.el._dock !== this) continue;
+      try { localStorage.removeItem(`dabblecad.dock.${p.key}`); } catch { /* ignore */ }
+      p.state = { dock: p.defaults.dock, order: p.defaults.order };
+      p.el.style.width = p.el.style.height = '';
+      p.el.classList.remove('panel-closed');
+      this._place(p);
+      if (!this._open(p)) this.setOpen(p.key, true);
+    }
+  }
 
   _refresh() {
     for (const side of ['left', 'right']) {
@@ -48,27 +83,32 @@ export class DockManager {
   }
 
   /**
-   * Make el dockable. handle: selector of its header (drag here). dock: where it starts
-   * ('float' | 'left' | 'right') until the user moves it. isOpen(): whether it is showing (a closed
-   * docked panel takes no room). grow: fill spare height when docked. collapsed: start collapsed.
+   * Make el dockable. title / icon: for the Panels menu. dock: where it starts ('float' | 'left' |
+   * 'right') until the user moves it. isOpen() / setOpen(on): for panels that open and close
+   * themselves (otherwise the dock does it, and remembers it). grow: fill spare height when docked.
    * oldKey: where the old (pre-docking) floating card kept its position, to start from there.
    */
-  add(el, { key, handle, dock = 'float', order = this.panels.size * 2, isOpen = null, grow = false, collapsed = false, oldKey = null }) {
+  add(el, { key, title, icon, handle = '.panel-head', dock = 'float', order = this.panels.size * 2, isOpen = null, setOpen = null, grow = false, oldKey = null, inMenu = true }) {
     let state = this._load(key);
     if (!state) {
-      state = { dock, order, collapsed };
+      state = { dock, order };
       if (oldKey) { try { const old = JSON.parse(localStorage.getItem('dabblecad.card.' + oldKey) || 'null'); if (old) Object.assign(state, old); } catch { /* ignore */ } }
     }
-    const p = { el, key, handle, state, isOpen, grow };
+    delete state.collapsed;   // (panels used to fold; now they close)
+    const p = { el, key, title, icon, handle, state, isOpen, setOpen, grow, inMenu };
+    el.classList.toggle('panel-closed', !isOpen && !!state.closed);
+    p.defaults = { dock, order };
     this.panels.set(key, p);
     el._dockPanel = p;
     el.classList.add('dockable');
     el.classList.toggle('dock-grow', !!grow);
-    el.classList.toggle('collapsed', !!state.collapsed);
     if (!el._dockWired) {
       // one listener, whichever workspace's dock the panel is in now (the AI chat moves between them)
       el._dockWired = true;
-      el.addEventListener('pointerdown', (e) => { if (el._dock) el._dock._down(el._dockPanel, e); });
+      el.addEventListener('pointerdown', (e) => {
+        if (!el.classList.contains('docked')) el.style.zIndex = String(++topZ);
+        if (el._dock) el._dock._down(el._dockPanel, e);
+      });
     }
     el._dock = this;
     if (state.w && state.dock === 'float') { el.style.width = `${state.w}px`; if (state.h) el.style.height = `${state.h}px`; }
@@ -90,20 +130,12 @@ export class DockManager {
     return p;
   }
 
-  /** Fold a panel down to its header, or open it again (remembered). */
-  toggleCollapse(key, on) {
-    const p = this.panels.get(key);
-    if (!p) return;
-    p.state.collapsed = on === undefined ? !p.state.collapsed : on;
-    p.el.classList.toggle('collapsed', p.state.collapsed);
-    this._save(p);
-  }
-
   /** Move a panel to where its state says. */
   _place(p) {
     const { el, state } = p;
     if (state.dock === 'left' || state.dock === 'right') {
       el.classList.add('docked');
+      el.style.zIndex = '';
       el.style.left = el.style.top = el.style.right = el.style.maxHeight = '';
       const col = this.cols[state.dock];
       const after = [...col.children].find((c) => c !== el && c._dockPanel && c._dockPanel.state.order > state.order);
@@ -114,6 +146,7 @@ export class DockManager {
       this._applyFloat(p);
     }
     this._refresh();
+    el.dispatchEvent(new CustomEvent('dockchange', { detail: { dock: state.dock } }));
   }
 
   _applyFloat(p) {

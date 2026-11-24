@@ -1,7 +1,7 @@
 // The floating AI chat window: drag it by its header, resize it from the corner; where it is,
 // its size and whether it's open are remembered. Available in 3D Design and Laser.
 
-import { h, button, icon, clear, toast, confirmDialog } from '../ui/dom.js';
+import { h, button, icon, clear, toast, confirmDialog, panelHead } from '../ui/dom.js';
 import { ChatSession, scopeFor } from './chat.js';
 import { currentProvider, aiSettings, hasKey } from './config.js';
 import { providerInfo } from './providers.js';
@@ -88,9 +88,8 @@ export class AiWindow {
     this.askBox = h('input', { type: 'checkbox', checked: !!s.ask });
     this.askBox.addEventListener('change', () => this.save({ ask: this.askBox.checked }));
     const ask = h('label', { class: 'ai-ask', title: 'Ask before edits: the AI\'s changes wait for you to apply or skip them' }, this.askBox, 'Ask before edits');
-    this.head = h('div', { class: 'ai-head' }, icon('sparkle', 16), h('span', { class: 'ai-title' }, 'AI'), this.modelLabel, h('span', { class: 'spacer' }), ask,
-      button({ icon: 'newchat', title: 'New chat', size: 16, onClick: () => this.newChat() }),
-      button({ icon: 'close', title: 'Close', size: 16, onClick: () => this.toggle(false) }));
+    this.head = panelHead({ icon: 'sparkle', title: h('span', {}, 'AI ', this.modelLabel), extra: [ask,
+      button({ icon: 'newchat', title: 'New chat', onClick: () => this.newChat() })], onClose: () => this.toggle(false) });
     this.list = h('div', { class: 'ai-list', role: 'log', 'aria-live': 'polite' });
     this.input = h('textarea', { class: 'ai-input', rows: 2, placeholder: 'Ask about your design, or describe what to make…', 'aria-label': 'Message to the AI' });
     this.input.addEventListener('keydown', (e) => {
@@ -160,7 +159,7 @@ export class AiWindow {
     const a = this.app;
     const mgr = a.viewMode === 'laser' ? a.laser && a.laser.dock : a.viewMode === 'slicer' ? a.slicer && a.slicer.dock : a.dock;
     if (!mgr) { if (!this.el.parentElement) document.body.append(this.el); return; }
-    if (this.el._dock !== mgr) mgr.add(this.el, { key: 'ai-chat', handle: '.ai-head', grow: true, isOpen: () => this.open });
+    if (this.el._dock !== mgr) mgr.add(this.el, { key: 'ai-chat', title: 'AI chat', icon: 'sparkle', dock: 'right', grow: true, isOpen: () => this.open, setOpen: (on) => this.toggle(on) });
   }
 
   setAttach(on) {

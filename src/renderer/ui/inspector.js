@@ -1,5 +1,5 @@
 // Shape inspector: Solid / Hole, colour, shape parameters, numeric position / size / rotation.
-import { h, clear, button, icon, toast } from './dom.js';
+import { h, clear, button, icon, toast, panelHead } from './dom.js';
 import { stats as geoStats } from '../core/geometry.js';
 import { KINDS, kindName } from '../core/shapes.js';
 import { PALETTE } from '../core/doc.js';
@@ -29,19 +29,26 @@ export class Inspector {
     this.numberFields = [];
     if (ed.edgeMode) return this._renderEdgePanel();
     if (ed.parts.active) return this._renderPartPanel();
-    if (!nodes.length || ed.placing) return;
+    if (!nodes.length || ed.placing) {
+      // docked, the card keeps its place: say what will appear here
+      if (this.host.classList.contains('docked')) this.host.append(panelHead({ icon: 'select', title: 'Selection' }), h('div', { class: 'insp-section' }, h('div', { class: 'insp-note' }, 'Select something to see its settings here.')));
+      return;
+    }
     const first = nodes[0];
     const allLocked = nodes.every((n) => n.locked);
     const title = nodes.length === 1 ? (first.name || kindName(first)) : `${nodes.length} shapes`;
     const anyHole = nodes.some((n) => n.hole), allHole = nodes.every((n) => n.hole);
     const multi = nodes.every((n) => n.type === 'group' && n.multicolor);
 
-    this.host.append(h('div', { class: 'insp-head' },
-      h('div', { class: 'insp-title', title: 'Double-click to rename', onDblclick: () => this.app.renameNode(first) }, title),
-      button({ icon: allLocked ? 'lock' : 'unlock', title: allLocked ? 'Unlock (Ctrl+L)' : 'Lock (Ctrl+L)', cls: allLocked ? 'active' : '', onClick: () => ed.toggleLock() }),
-      button({ icon: 'bulb', title: 'Hide (Ctrl+H)', onClick: () => ed.hideSelection() }),
-      button({ icon: 'duplicate', title: 'Duplicate (Ctrl+D)', onClick: () => ed.duplicate() }),
-      button({ icon: 'trash', title: 'Delete (Del)', onClick: () => ed.deleteSelection() })));
+    this.host.append(panelHead({
+      icon: nodes.length > 1 || first.type === 'group' ? 'group' : 'cube', title, titleTip: 'Double-click to rename', onTitleDblclick: () => this.app.renameNode(first),
+      extra: [
+        button({ icon: allLocked ? 'lock' : 'unlock', title: allLocked ? 'Unlock (Ctrl+L)' : 'Lock (Ctrl+L)', cls: allLocked ? 'active' : '', onClick: () => ed.toggleLock() }),
+        button({ icon: 'bulb', title: 'Hide (Ctrl+H)', onClick: () => ed.hideSelection() }),
+        button({ icon: 'duplicate', title: 'Duplicate (Ctrl+D)', onClick: () => ed.duplicate() }),
+        button({ icon: 'trash', title: 'Delete (Del)', onClick: () => ed.deleteSelection() })],
+      onClose: () => ed.clearSelection(), closeTitle: 'Close: deselect (Esc)',
+    }));
 
     if (allLocked) {
       this.host.append(h('div', { class: 'insp-section' }, h('div', { class: 'insp-note' }, 'This selection is locked. Unlock it to make changes.')));
@@ -142,8 +149,7 @@ export class Inspector {
     const ed = this.editor;
     const info = ed.edgeInfo();
     const node = info.node;
-    const done = button({ icon: 'close', title: 'Done (Esc)', onClick: () => ed.exitEdgeMode() });
-    this.host.append(h('div', { class: 'insp-head' }, h('div', { class: 'insp-title' }, node ? node.name || kindName(node) : 'Edges'), done));
+    this.host.append(panelHead({ icon: 'edges', title: node ? node.name || kindName(node) : 'Edges', onClose: () => ed.exitEdgeMode(), closeTitle: 'Done (Esc)' }));
     if (!node) return;
     const applyBtn = () => button({ label: 'Apply Edges', cls: 'btn-outline', title: 'Make the rounded and chamfered edges a permanent part of the shape (Ctrl+Z to undo)', onClick: () => ed.applyEdges(node) });
     const canApply = ed.hasShapedEdges(node) && !node.locked;
@@ -198,8 +204,7 @@ export class Inspector {
     const ed = this.editor, parts = ed.parts;
     const node = parts.node();
     const word = parts.mode === 'face' ? 'face' : 'corner';
-    const done = button({ icon: 'close', title: 'Done (Esc)', onClick: () => ed.setTool('select') });
-    this.host.append(h('div', { class: 'insp-head' }, h('div', { class: 'insp-title' }, node ? node.name || kindName(node) : word === 'face' ? 'Faces' : 'Corners'), done));
+    this.host.append(panelHead({ icon: 'cube', title: node ? node.name || kindName(node) : word === 'face' ? 'Faces' : 'Corners', onClose: () => ed.setTool('select'), closeTitle: 'Done (Esc)' }));
     if (!node) return;
     if (node.locked) { this.host.append(h('div', { class: 'insp-section' }, h('div', { class: 'insp-note' }, 'Locked'))); return; }
     const t = parts.target();
