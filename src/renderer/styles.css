@@ -616,11 +616,13 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
 .ai-host { color: var(--muted); font-size: 10.5px; }
 .ai-sources { width: 100%; border-top: 1px solid var(--border); padding-top: 4px; }
 .ai-chip.web summary { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-/* toolbar: buttons never squash into each other; on narrower windows the labelled tools go icon-only */
+/* toolbar: buttons never squash into each other */
 .toolbar .btn, .toolbar .mode-group { flex-shrink: 0; }
 .toolbar { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 .toolbar::-webkit-scrollbar { display: none; }
-@media (max-width: 1500px) { .toolbar .btn:not(.keep-label) .btn-label { display: none; } .toolbar .btn:not(.keep-label) { padding: 0 6px; } }
+/* workspace toolbars are icons only, like the panel toggles; the tooltip names each tool */
+.toolbar .btn .btn-label { display: none; }
+.toolbar .btn { padding: 0 6px; }
 
 /* ---------------------------------------------------------------- dockable panels (every workspace) */
 .dock { flex: none; width: 290px; display: flex; flex-direction: column; background: var(--panel); overflow-x: hidden; overflow-y: auto; position: relative; min-width: 0; }
