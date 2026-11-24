@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('dabbleNative', {
   aiClearKey: call('ai:clear-key'),
   aiFetch: call('ai:fetch'),
   aiCancel: call('ai:cancel'),
+  aiWebFetch: call('ai:web-fetch'),
   onAiEvent: (fn) => { const h = (_e, ev) => fn(ev); ipcRenderer.on('ai:event', h); return () => ipcRenderer.removeListener('ai:event', h); },
   smokeShot: call('smoke:shot'),
   onSerialPorts: (fn) => ipcRenderer.on('serial:ports', (_e, ports) => fn(ports)),

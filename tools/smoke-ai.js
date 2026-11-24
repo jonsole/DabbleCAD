@@ -153,5 +153,69 @@ ok('laser tools: one undo step each, undo reply', out.laser.added === 1 && out.l
 ok('hidden in the Slicer', out.slicerHidden && out.backOpen);
 ok('no printer or laser control tools', out.deviceTools.length === 0);
 
+// ---- the extra 3D tools (edges, split, parts, workplane, flags, notes, import)
+{
+  const { scopeFor } = window.dabbleAi;
+  const sc = scopeFor(app, app.ai.session);
+  const run = (n, i) => window.dabbleAi.runTool(sc.ctx, n, i, sc.tools);
+  app.setViewMode('design');
+  await run('add_shape', { catalogId: 'box', name: 'T', size: { x: 40, y: 30, z: 20 } });
+  const id = app.editor.selectedNodes()[0].id;
+  const e = await run('set_edges', { id, set: 'top', style: 'round', size: 3 });
+  check('tools: round top edges', e.ok && e.result.edges.length === 4 && app.editor.history.undoLabel === 'AI: round top edges');
+  const faces = (await run('list_parts', { id, kind: 'faces' })).result.faces;
+  const top = faces.find((f) => f.outward.z > 0.9);
+  check('tools: move a face', (await run('move_parts', { id, kind: 'faces', parts: [top.face], by: 5 })).ok && Math.abs(app.editor.bounds([app.editor.node(id)]).max.z - 25) < 0.01);
+  const sp = await run('split', { ids: [id], axis: 'z', at: 8 });
+  check('tools: split', sp.ok && sp.result.pieces.length === 2);
+  check('tools: workplane on top and back', (await run('set_workplane', { to: 'on_top', ids: [sp.result.pieces[0].id] })).ok && app.editor.hasFrame && (await run('set_workplane', { to: 'main' })).ok && !app.editor.hasFrame);
+  check('tools: lock, no unlock', (await run('set_flags', { ids: [sp.result.pieces[0].id], locked: true })).ok && !(await run('set_flags', { ids: [sp.result.pieces[0].id], locked: false })).ok);
+  check('tools: note', (await run('note', { action: 'add', text: 'hi', at: { x: 0, y: 0, z: 30 } })).ok && app.editor.doc.notes.length >= 1);
+  const stl = 'solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 10 0 0\nvertex 0 10 0\nendloop\nendfacet\nendsolid t\n';
+  app.ai.session.attachments = [{ name: 'tri.stl', data: new TextEncoder().encode(stl).buffer }];
+  const im = await run('import_file', { name: 'tri.stl', largest_side: 30 });
+  check('tools: import an attachment', im.ok && im.result.imported.length === 1);
+}
+
+// ---- web tools: a paused search is sent back, chips and sources are shown
+{
+  const s = app.ai.session;
+  app.setViewMode('design');
+  let calls = 0;
+  s.getProvider = async () => ({ async stream({ messages, onToolStart, onText }) {
+    calls++;
+    if (calls === 1) {
+      onToolStart('web_search', 'srv1', { server: true });
+      return { content: [], stopReason: 'pause', server: [{ id: 'srv1', name: 'web_search', input: { query: 'M3 nut' }, results: [{ title: 'M3 nuts', url: 'https://example.com/m3' }] }], sources: [], raw: { anthropic: [{ type: 'server_tool_use', id: 'srv1', name: 'web_search', input: { query: 'M3 nut' } }] } };
+    }
+    const last = messages[messages.length - 1];
+    onText('An M3 nut is 5.5 mm across.');
+    return { content: [{ type: 'text', text: 'An M3 nut is 5.5 mm across.' }], stopReason: 'end', server: [], sources: [{ title: 'M3 nuts', url: 'https://example.com/m3' }], raw: { anthropic: [], lastRole: last.role } };
+  } });
+  const r = await s.send('how big is an M3 nut?');
+  check('web: paused search carried on', calls === 2 && !r.error && r.text.includes('5.5'));
+  check('web: chip and sources', r.chips.length === 1 && r.chips[0].web && r.chips[0].status === 'ok' && r.sources.length === 1 && !!document.querySelector('.ai-sources a[href="https://example.com/m3"]'));
+}
+
+// ---- fetch_page (desktop): reads public pages, never the local network
+{
+  const { FETCH_PAGE } = window.dabbleAi;
+  const run = (i) => window.dabbleAi.runTool({ editor: app.editor }, 'fetch_page', i, [FETCH_PAGE]);
+  const ok = await run({ url: fakeUrl + '/page', links: true });
+  check('fetch_page: reads a page as text', ok.ok && ok.result.title === 'Pi 4 drawing' && /# Raspberry Pi 4/.test(ok.result.text) && /58 x 49 mm/.test(ok.result.text) && /Hole \| 2.7 mm|Hole \|  2.7 mm|\| Hole \| 2.7 mm/.test(ok.result.text) && !/var x|menu/.test(ok.result.text) && ok.result.links.length === 1);
+  for (const u of ['http://192.168.88.210/rr_status', 'http://localhost:5183/', 'http://127.0.0.1:1/', 'http://printer.local/', 'file:///etc/passwd', fakeUrl + '/moved']) {
+    const r = await run({ url: u });
+    check('fetch_page: refuses ' + u, !r.ok);
+  }
+  app.patchSettings({ ai: { provider: 'local', baseURL: fakeUrl + '/v1', model: 'fake-model' } });
+  const s = app.ai.session;
+  s.getProvider = async () => ({ web: false, async stream() { return { content: [{ type: 'text', text: 'ok' }], stopReason: 'end' }; } });
+  await s.send('hi');
+  check('fetch_page offered to models without web tools', s.tools.some((t) => t.name === 'fetch_page'));
+  s.getProvider = async () => ({ web: true, async stream() { return { content: [{ type: 'text', text: 'ok' }], stopReason: 'end' }; } });
+  await s.send('hi');
+  check('fetch_page not offered with Anthropic web access', !s.tools.some((t) => t.name === 'fetch_page'));
+}
+
 if (fails.length) throw new Error(fails.join('\n'));
 return { checks, fails };

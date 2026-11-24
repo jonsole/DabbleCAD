@@ -15,6 +15,9 @@ import * as laserDepth from './laser/depthmap.js';
 import * as laserBox from './laser/boxmaker.js';
 import { platform } from './platform.js';
 import * as drive from './drive.js';
+import { scopeFor } from './ai/chat.js';
+import { runTool } from './ai/tools.js';
+import { FETCH_PAGE } from './ai/webtool.js';
 
 // The app has its own right-click menus, so the browser's never shows, wherever the click
 // lands: the app opens its menu as the button comes up, and on Windows the browser's
@@ -31,6 +34,8 @@ document.addEventListener('contextmenu', (e) => {
 const app = new App();
 // Handy for debugging and automated checks from DevTools (F12).
 window.dabble = app;
+// the AI chat's tools, for the smoke tests
+window.dabbleAi = { scopeFor, runTool, FETCH_PAGE };
 window.dabbleLib = { platform, drive, shapes, doc, geometry, io, solid, dialogs, laser: { model: laserModel, gcode: laserGcode, ops: laserOps, io: laserIo, tools: laserTools, depthmap: laserDepth, boxmaker: laserBox } };
 app.init().catch((err) => {
   console.error(err);

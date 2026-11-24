@@ -5,6 +5,7 @@ import { h, button, icon, clear, toast, confirmDialog } from '../ui/dom.js';
 import { ChatSession, scopeFor } from './chat.js';
 import { currentProvider, aiSettings, hasKey } from './config.js';
 import { providerInfo } from './providers.js';
+import { IMPORT_FILTERS } from '../core/io.js';
 
 const LONG_SIDE = 1024;
 
@@ -57,14 +58,23 @@ export function renderMarkdown(text) {
   return root;
 }
 
+/** A link to a web page; it opens in the user's browser. */
+function link({ url, title }) {
+  let host = '';
+  try { host = new URL(url).hostname.replace(/^www\./, ''); } catch { return h('span', {}, title || url); }
+  if (!/^https?:/i.test(url)) return h('span', {}, title || url);
+  return h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', title: url }, title || host, h('span', { class: 'ai-host' }, ` ${host}`));
+}
+
 const pretty = (v) => { try { return typeof v === 'string' ? (() => { try { return JSON.stringify(JSON.parse(v), null, 2); } catch { return v; } })() : JSON.stringify(v, null, 2); } catch { return String(v); } };
 
 export class AiWindow {
   constructor(app) {
     this.app = app;
-    this.session = new ChatSession(() => scopeFor(app), () => currentProvider(app), { askBeforeEdits: () => !!this.st().ask });
+    this.session = new ChatSession(() => scopeFor(app, this.session), () => currentProvider(app), { askBeforeEdits: () => !!this.st().ask });
     this.replyEls = new Map();
     this.attach = false;
+    this.files = [];   // attached for the next message: { name, data }
     this._build();
     this.session.on((ev) => this._event(ev));
   }
@@ -89,6 +99,10 @@ export class AiWindow {
     });
     this.input.addEventListener('keyup', (e) => e.stopPropagation());
     this.attachBtn = button({ icon: 'attach', title: 'Attach a picture of the view to the next message', size: 16, cls: 'ai-attach', onClick: () => this.setAttach(!this.attach) });
+    this.fileIn = h('input', { type: 'file', multiple: true, accept: IMPORT_FILTERS[0].extensions.map((e) => '.' + e).join(','), style: { display: 'none' } });
+    this.fileIn.addEventListener('change', () => { this.addFiles([...this.fileIn.files]); this.fileIn.value = ''; });
+    this.clipBtn = button({ icon: 'clip', title: 'Attach a file for the AI to import (STL, OBJ, 3MF, SVG, images, .dabble)', size: 16, onClick: () => this.fileIn.click() });
+    this.fileChips = h('div', { class: 'ai-files' });
     this.sendBtn = button({ icon: 'send', title: 'Send (Enter)', size: 16, cls: 'btn-primary ai-send', onClick: () => this.sendFromInput() });
     this.stopBtn = button({ icon: 'stop', label: 'Stop', size: 14, cls: 'btn-outline ai-stop', onClick: () => this.session.stop() });
     this.stopBtn.style.display = 'none';
@@ -96,7 +110,8 @@ export class AiWindow {
     const grip = h('div', { class: 'ai-grip', title: 'Resize' });
     this.el = h('div', { class: 'ai-win', role: 'dialog', 'aria-label': 'AI chat' },
       this.head, this.list,
-      h('div', { class: 'ai-compose' }, this.input, h('div', { class: 'ai-compose-btns' }, this.attachBtn, this.stopBtn, this.sendBtn)),
+      this.fileChips,
+      h('div', { class: 'ai-compose' }, this.input, h('div', { class: 'ai-compose-btns' }, this.clipBtn, this.attachBtn, this.stopBtn, this.sendBtn), this.fileIn),
       this.footer, grip);
     this.el.style.display = 'none';
     document.body.append(this.el);
@@ -104,6 +119,9 @@ export class AiWindow {
     this._dragging(this.head, (dx, dy, start) => this._setRect({ x: start.x + dx, y: start.y + dy }));
     this._dragging(grip, (dx, dy, start) => this._setRect({ w: Math.max(300, start.w + dx), h: Math.max(320, start.h + dy) }));
     window.addEventListener('resize', () => this._place());
+    // files dropped on the chat are attached, not imported straight away
+    this.el.addEventListener('dragover', (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); e.stopPropagation(); } });
+    this.el.addEventListener('drop', (e) => { if (!e.dataTransfer || !e.dataTransfer.files.length) return; e.preventDefault(); e.stopPropagation(); this.addFiles([...e.dataTransfer.files]); });
   }
 
   _rect() {
@@ -189,18 +207,51 @@ export class AiWindow {
     return { mediaType: 'image/png', data: c.toDataURL('image/png').split(',')[1], url: c.toDataURL('image/png') };
   }
 
+  async addFiles(list) {
+    const ok = new Set(IMPORT_FILTERS[0].extensions);
+    for (const f of list) {
+      const ext = (f.name.split('.').pop() || '').toLowerCase();
+      if (!ok.has(ext)) { toast(`${f.name}: not a file the design can import`, 'warn'); continue; }
+      if (f.size > 100 * 1024 * 1024) { toast(`${f.name} is too big (over 100 MB)`, 'warn'); continue; }
+      this.files = this.files.filter((x) => x.name !== f.name);
+      this.files.push({ name: f.name, data: await f.arrayBuffer() });
+    }
+    this._showFiles();
+    this.input.focus();
+  }
+
+  _showFiles() {
+    clear(this.fileChips);
+    for (const f of this.files) {
+      this.fileChips.append(h('span', { class: 'ai-file' }, icon('clip', 12), f.name,
+        button({ icon: 'close', size: 12, title: 'Remove', onClick: () => { this.files = this.files.filter((x) => x !== f); this._showFiles(); } })));
+    }
+  }
+
   newChat() {
     this.session.reset();
     clear(this.list);
     this.replyEls.clear();
     this.setAttach(false);
+    this.files = [];
+    this._showFiles();
     this.sync();
     this.input.focus();
   }
 
   async sendFromInput() {
-    const text = this.input.value.trim();
-    if (!text || this.session.busy) return;
+    let text = this.input.value.trim();
+    if ((!text && !this.files.length) || this.session.busy) return;
+    if (this.files.length) {
+      for (const f of this.files) {
+        this.session.attachments = this.session.attachments.filter((x) => x.name !== f.name);
+        this.session.attachments.push(f);
+      }
+      const names = this.files.map((f) => f.name).join(', ');
+      text = `${text || 'Import this.'}\n\n(Attached for import: ${names})`;
+      this.files = [];
+      this._showFiles();
+    }
     this.input.value = '';
     let image = null;
     if (this.attach) { try { image = this.snapshot(); } catch (e) { toast(`Couldn't capture the view: ${e.message}`, 'error'); } }
@@ -246,17 +297,20 @@ export class AiWindow {
   _chip(v, c) {
     let el = v.chipEls.get(c.id);
     const mark = { running: '…', ok: '✓', error: '!', skipped: '–', waiting: '?' }[c.status] || '';
-    const label = `${mark} ${c.name.replace(/_/g, ' ')}`;
+    const what = c.web && c.input && (c.input.query || c.input.url) ? `: ${String(c.input.query || c.input.url).slice(0, 48)}` : '';
+    const label = `${mark} ${c.name.replace(/_/g, ' ')}${what}`;
     if (!el) {
       el = h('details', { class: 'ai-chip' }, h('summary', {}), h('div', { class: 'ai-chip-io' }));
       v.chipEls.set(c.id, el);
       v.chips.append(el);
     }
-    el.className = `ai-chip ${c.status}`;
+    el.className = `ai-chip ${c.status}${c.web ? " web" : ""}`;
     el.querySelector('summary').textContent = label;
     const io = clear(el.querySelector('.ai-chip-io'));
     io.append(h('div', { class: 'ai-io-h' }, 'Input'), h('pre', {}, pretty(c.input || {})));
-    if (c.result != null) io.append(h('div', { class: 'ai-io-h' }, c.status === 'error' ? 'Error' : 'Result'), h('pre', {}, pretty(c.result)));
+    if (c.web && Array.isArray(c.result)) {
+      io.append(h('div', { class: 'ai-io-h' }, `Found (${c.result.length})`), h('ul', { class: 'ai-links' }, c.result.slice(0, 10).map((r) => h('li', {}, link(r)))));
+    } else if (c.result != null) io.append(h('div', { class: 'ai-io-h' }, c.status === 'error' ? 'Error' : 'Result'), h('pre', {}, pretty(c.result)));
   }
 
   _card(v, card) {
@@ -281,10 +335,15 @@ export class AiWindow {
     if (typing) typing.remove();
     clear(v.tail);
     if (!r.text && !r.error && !r.refusal && !r.chips.length) v.body.append(h('p', { class: 'ai-dim' }, '(No reply.)'));
+    if (r.sources && r.sources.length) {
+      v.tail.append(h('div', { class: 'ai-sources' }, h('span', { class: 'ai-io-h' }, 'Sources'), h('ul', { class: 'ai-links' }, r.sources.slice(0, 12).map((x) => h('li', {}, link(x))))));
+    }
     if (r.refusal) v.tail.append(h('div', { class: 'ai-refusal' }, r.refusal));
     if (r.error) {
       const cancelled = r.error.kind === 'cancelled';
-      v.tail.append(h('div', { class: cancelled ? 'ai-dim' : 'ai-error' }, cancelled ? 'Stopped.' : r.error.message,
+      const webOff = /web (search|fetch)[^.]*not enabled|not enabled[^.]*web (search|fetch)/i.test(r.error.message || '');
+      const msg = webOff ? 'Web search isn\'t turned on for your Anthropic account. An admin can turn it on in the Claude Console (Settings → Capabilities), or switch off Web access in Settings → AI.' : r.error.message;
+      v.tail.append(h('div', { class: cancelled ? 'ai-dim' : 'ai-error' }, cancelled ? 'Stopped.' : msg,
         cancelled ? null : button({ label: 'Retry', cls: 'btn-outline', onClick: () => this.retry(r) }),
         r.error.kind === 'auth' ? button({ label: 'Settings', cls: 'btn-ghost', onClick: () => this.app.openAiSettings() }) : null));
     }

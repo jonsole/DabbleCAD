@@ -49,7 +49,8 @@ function authFor(provider, url) {
   return { refuse: 'Unknown AI provider.' };
 }
 
-function registerAi(ipcMain, getWin) {
+function registerAi(ipcMain, getWin, { testAllow = null } = {}) {
+  allowForTest = testAllow ? new URL(testAllow).origin : null;
   const running = new Map();   // request id -> AbortController
 
   ipcMain.handle('ai:set-key', (_e, provider, key, baseURL) => {
@@ -105,6 +106,8 @@ function registerAi(ipcMain, getWin) {
     return { status: res.status, statusText: res.statusText, headers: Object.fromEntries(res.headers.entries()) };
   });
 
+  registerWebFetch(ipcMain);
+
   ipcMain.handle('ai:cancel', (_e, id) => {
     const ac = running.get(id);
     if (ac) ac.abort();
@@ -113,3 +116,97 @@ function registerAi(ipcMain, getWin) {
 }
 
 module.exports = { registerAi };
+
+// ------------------------------------------------------------------ fetch_page (desktop only)
+// Lets the AI read a public web page. Only public internet addresses: anything on this computer
+// or the local network (printers, lasers, routers) is refused, checked when connecting (so a
+// name that resolves to a local address, or a redirect to one, is refused too). GET only.
+const http = require('node:http');
+const https = require('node:https');
+const dns = require('node:dns');
+const zlib = require('node:zlib');
+const net2 = require('node:net');
+
+const MAX_BYTES = 3 * 1024 * 1024;
+let allowForTest = null;   // smoke tests only: the fake server's own address
+
+function privateIp(ip) {
+  if (net2.isIPv4(ip)) {
+    const [a, b] = ip.split('.').map(Number);
+    return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254)
+      || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 192 && b === 0) || (a === 198 && (b === 18 || b === 19)) || a >= 224;
+  }
+  const v = ip.toLowerCase();
+  if (v.startsWith('::ffff:')) return privateIp(v.slice(7));
+  return v === '::' || v === '::1' || v.startsWith('fc') || v.startsWith('fd') || v.startsWith('fe8') || v.startsWith('fe9') || v.startsWith('fea') || v.startsWith('feb') || v.startsWith('ff');
+}
+
+function safeLookup(host, opts, cb) {
+  dns.lookup(host, { all: true }, (err, addrs) => {
+    if (err) return cb(err);
+    const bad = addrs.find((a) => privateIp(a.address));
+    if (bad || !addrs.length) return cb(Object.assign(new Error('That address is on this computer or the local network, which the AI may not reach.'), { code: 'LOCAL' }));
+    if (opts && opts.all) return cb(null, addrs);
+    cb(null, addrs[0].address, addrs[0].family);
+  });
+}
+
+function getOnce(url, signal) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    if (!/^https?:$/.test(u.protocol)) return reject(new Error('Only http and https pages can be fetched.'));
+    const testing = allowForTest && u.origin === allowForTest;
+    if (!testing && net2.isIP(u.hostname.replace(/^\[|\]$/g, '')) && privateIp(u.hostname.replace(/^\[|\]$/g, ''))) return reject(new Error('That address is on this computer or the local network, which the AI may not reach.'));
+    if (!testing && /^(localhost|.*\.local|.*\.localhost|.*\.internal|.*\.lan|.*\.home)$/i.test(u.hostname)) return reject(new Error('That address is on this computer or the local network, which the AI may not reach.'));
+    const mod = u.protocol === 'https:' ? https : http;
+    const req = mod.get(u, {
+      ...(testing ? {} : { lookup: safeLookup }), signal, timeout: 15000,
+      headers: { 'user-agent': 'Mozilla/5.0 (DabbleCAD Plus AI page reader)', accept: 'text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.5', 'accept-encoding': 'gzip, deflate, br' },
+    }, (res) => {
+      if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
+        res.resume();
+        return resolve({ redirect: new URL(res.headers.location, u).toString() });
+      }
+      const enc = (res.headers['content-encoding'] || '').toLowerCase();
+      const stream = enc === 'gzip' ? res.pipe(zlib.createGunzip()) : enc === 'deflate' ? res.pipe(zlib.createInflate()) : enc === 'br' ? res.pipe(zlib.createBrotliDecompress()) : res;
+      const chunks = [];
+      let size = 0, cut = false;
+      stream.on('data', (c) => {
+        if (cut) return;
+        size += c.length;
+        if (size > MAX_BYTES) { cut = true; chunks.push(c.subarray(0, c.length - (size - MAX_BYTES))); req.destroy(); stream.emit('end'); return; }
+        chunks.push(c);
+      });
+      stream.on('end', () => resolve({ status: res.statusCode, contentType: res.headers['content-type'] || '', body: Buffer.concat(chunks).toString('utf8'), truncated: cut, url: u.toString() }));
+      stream.on('error', (e) => { if (!cut) reject(e); });
+    });
+    req.on('timeout', () => req.destroy(new Error('The page took too long to answer.')));
+    req.on('error', reject);
+  });
+}
+
+async function fetchPage(url, signal) {
+  let at = url;
+  for (let hop = 0; hop < 6; hop++) {
+    const r = await getOnce(at, signal);
+    if (!r.redirect) return r;
+    at = r.redirect;
+  }
+  throw new Error('Too many redirects.');
+}
+
+function registerWebFetch(ipcMain) {
+  ipcMain.handle('ai:web-fetch', async (_e, url) => {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 30000);
+    try {
+      const r = await fetchPage(String(url), ac.signal);
+      return r;
+    } catch (err) {
+      return { error: (err && err.message) || String(err) };
+    } finally { clearTimeout(t); }
+  });
+}
+
+module.exports.registerWebFetch = registerWebFetch;
+module.exports.privateIp = privateIp;

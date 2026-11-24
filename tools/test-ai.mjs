@@ -95,6 +95,33 @@ await test('anthropic: cancel gives a cancelled error', async () => {
   await assert.rejects(p.stream({ system: 'S', tools, messages: msgs, signal: ac.signal }), (e) => e.kind === 'cancelled');
 });
 
+await test('anthropic: web search results, citations and pause_turn', async () => {
+  const f = fakeFetch(() => ({ body: sse([msgStart,
+    ['content_block_start', { index: 0, content_block: { type: 'server_tool_use', id: 'srv1', name: 'web_search', input: {} } }],
+    ['content_block_delta', { index: 0, delta: { type: 'input_json_delta', partial_json: '{"query":"M3 nut size"}' } }],
+    ['content_block_stop', { index: 0 }],
+    ['content_block_start', { index: 1, content_block: { type: 'web_search_tool_result', tool_use_id: 'srv1', content: [{ type: 'web_search_result', url: 'https://example.com/m3', title: 'M3 nuts', encrypted_content: 'x', page_age: null }] } }],
+    ['content_block_stop', { index: 1 }],
+    ['content_block_start', { index: 2, content_block: { type: 'text', text: '', citations: [] } }],
+    ['content_block_delta', { index: 2, delta: { type: 'citations_delta', citation: { type: 'web_search_result_location', url: 'https://example.com/m3', title: 'M3 nuts', encrypted_index: 'e', cited_text: '5.5 mm' } } }],
+    ['content_block_delta', { index: 2, delta: { type: 'text_delta', text: 'An M3 nut is 5.5 mm across.' } }],
+    ['content_block_stop', { index: 2 }],
+    ...msgEnd('pause_turn')]) }));
+  const p = await anthropicProvider({ apiKey: 'k', fetch: f, web: true });
+  const started = [];
+  const r = await p.stream({ system: 'S', tools, messages: msgs, onToolStart: (n, id, info) => started.push([n, id, !!(info && info.server)]) });
+  assert.deepEqual(started, [['web_search', 'srv1', true]]);
+  assert.equal(r.stopReason, 'pause');
+  assert.deepEqual(r.server, [{ id: 'srv1', name: 'web_search', input: { query: 'M3 nut size' }, results: [{ title: 'M3 nuts', url: 'https://example.com/m3' }] }]);
+  assert.deepEqual(r.sources, [{ url: 'https://example.com/m3', title: 'M3 nuts' }]);
+  assert.equal(r.raw.anthropic.length, 3, 'all blocks kept to send back unchanged');
+  const t = f.calls[0].body.tools;
+  assert.ok(t.some((x) => x.type === 'web_search_20260318') && t.some((x) => x.type === 'web_fetch_20260318'));
+  const off = fakeFetch(() => ({ body: sse([msgStart, ...msgEnd('end_turn')]) }));
+  await (await anthropicProvider({ apiKey: 'k', fetch: off })).stream({ system: 'S', tools, messages: msgs });
+  assert.ok(!off.calls[0].body.tools.some((x) => x.type), 'no web tools unless asked');
+});
+
 await test('local (OpenAI-compatible): streamed tool call deltas', async () => {
   const base = { id: 'c1', object: 'chat.completion.chunk', created: 1, model: 'llama' };
   const f = fakeFetch(() => ({ body: chunks([

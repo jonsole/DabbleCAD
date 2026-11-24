@@ -12,6 +12,8 @@ const server = http.createServer((req, res) => {
   let raw = '';
   req.on('data', (d) => { raw += d; });
   req.on('end', () => {
+    if (req.url === '/page') { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<html><head><title>Pi 4 drawing</title><script>var x=1</script></head><body><nav>menu</nav><main><h1>Raspberry Pi 4</h1><p>Mounting holes are <b>58 x 49 mm</b> apart.</p><table><tr><td>Hole</td><td>2.7 mm</td></tr></table><a href="/more">More</a></main></body></html>'); return; }
+    if (req.url === '/moved') { res.writeHead(302, { Location: 'http://192.168.88.210/rr_status' }); res.end(); return; }
     if (req.url === '/seen') { res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' }); res.end(JSON.stringify({ ...seen, calls })); return; }
     seen = { authorization: req.headers.authorization || null, path: req.url };
     const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*' };

@@ -471,8 +471,10 @@ export class App {
         filters: [{ name: out.filterName, extensions: [out.extension] }], data: out.data,
       });
       if (path) toast('Exported to ' + path);
+      return path || null;
     } catch (err) {
       toast(err.message || String(err), 'warn', 5000);
+      return null;
     }
   }
 

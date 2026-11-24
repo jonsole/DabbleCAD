@@ -10,6 +10,10 @@
 
 import { TOOLS, runTool, designSummary, toolByName } from './tools.js';
 import { LASER_TOOLS, laserSummary, laserContext } from './lasertools.js';
+import { MORE_TOOLS } from './moretools.js';
+import { FETCH_PAGE, pageFetchAvailable } from './webtool.js';
+
+export const DESIGN_TOOLS = [...TOOLS, ...MORE_TOOLS];
 import { AiError } from './providers.js';
 
 export const SYSTEM_PROMPT = `You are the design assistant inside DabbleCAD Plus, a 3D design app for making things to 3D print, in the style of Tinkercad. You help the user by answering questions about their design and by building or changing it with the tools you have.
@@ -21,6 +25,8 @@ How DabbleCAD works:
 - Groups: union combines shapes (holes cut), intersect keeps only the overlap, bundle keeps shapes together without combining. Grouping makes a new id; ungrouping gives the parts new ids.
 - The shape catalog (list_shape_catalog) has boxes, cylinders, spheres, cones, text, and many more, each with its own settings (for example a box's corner radius, a cylinder's sides). Use add_shape with a size to make one exactly as big as needed.
 - Locked shapes belong to the user: never try to move or change them.
+- Edges can be rounded or chamfered (list_edges, set_edges), shapes cut with a plane (split), and single shapes reshaped by moving their faces, edges or corners (list_parts, move_parts), as in the Edge, Face and Corner modes.
+- You can move the workplane onto a shape or a face (set_workplane) to build on it, change the view so the user can see your work (set_view), lock / hide / show shapes (set_flags), change a group's mode, pin notes, import files the user attached to the chat (list_attachments, import_file) and export the design (export_design).
 
 How to work:
 - Read before you edit: the design summary in each message lists every shape with its id and bounding box; use get_node, measure or list_shape_catalog when you need more.
@@ -28,6 +34,7 @@ How to work:
 - Every edit you make is one undo step the user can take back, so make reasonable choices instead of asking about details; ask only when the request is genuinely unclear.
 - After building something, make sure the result is selected (add_shape and group leave their result selected; use select otherwise), and say briefly what you made, with its main sizes.
 - Keep replies short and plain. Don't repeat the design summary back.
+- If you have web tools (web_search and web_fetch, or fetch_page), use them for facts you need for the design, such as standard sizes (screw and nut sizes, a board's mounting holes, a part's datasheet dimensions). Say where the numbers came from.
 - You cannot control printers or lasers, start jobs, or send G-code, and you have no tools for it: if asked, say the user has to do that themselves.`;
 
 const MAX_STEPS = 30;
@@ -45,13 +52,13 @@ export function editorHistory(ed) {
 }
 
 /** What the AI works on: the 3D design, or the laser drawing in the Laser workspace. */
-export function scopeFor(app) {
+export function scopeFor(app, session = null) {
   if (app.viewMode === 'laser') {
     const ctx = laserContext(app);
     return { id: 'laser', ctx, tools: LASER_TOOLS, summary: () => laserSummary(ctx), history: ctx.history };
   }
-  const ctx = { editor: app.editor, workspace: () => '3d' };
-  return { id: '3d', ctx, tools: TOOLS, summary: () => designSummary(ctx), history: editorHistory(app.editor) };
+  const ctx = { editor: app.editor, app, workspace: () => '3d', attachments: () => (session ? session.attachments : []) };
+  return { id: '3d', ctx, tools: DESIGN_TOOLS, summary: () => designSummary(ctx), history: editorHistory(app.editor) };
 }
 
 export const LASER_PROMPT = `
@@ -68,7 +75,8 @@ export class ChatSession {
     this.askBeforeEdits = askBeforeEdits;
     // every tool is always offered (so the tool list, and the prompt cache, stay the same);
     // the ones for the other workspace say so when called
-    this.tools = [...TOOLS, ...LASER_TOOLS];
+    this.tools = [...DESIGN_TOOLS, ...LASER_TOOLS];
+    this.attachments = [];   // files the user attached for import: { name, data: ArrayBuffer }
     this.messages = [];     // the conversation sent to the provider
     this.listeners = new Set();
     this.busy = false;
@@ -81,6 +89,7 @@ export class ChatSession {
   reset() {
     this.stop();
     this.messages = [];
+    this.attachments = [];
   }
 
   stop() {
@@ -102,7 +111,7 @@ export class ChatSession {
 
     const reply = {
       id: Math.random().toString(36).slice(2),
-      text: '', chips: [], cards: [], error: null, refusal: null, done: false,
+      text: '', chips: [], cards: [], sources: [], error: null, refusal: null, done: false,
       scope: scope.id, history: scope.history, before: scope.history.current(), after: null, edits: 0,
     };
     this.emit({ type: 'reply', reply });
@@ -112,6 +121,9 @@ export class ChatSession {
     this.abort = new AbortController();
     try {
       const provider = await this.getProvider();
+      // fetch_page for models without their own web tools (desktop only)
+      this.extra = pageFetchAvailable && !provider.web ? [FETCH_PAGE] : [];
+      this.tools = [...DESIGN_TOOLS, ...LASER_TOOLS, ...this.extra];
       for (let step = 0; step < MAX_STEPS; step++) {
         if (this.abort.signal.aborted) throw new AiError('cancelled', 'Stopped.');
         const res = await provider.stream({
@@ -120,7 +132,14 @@ export class ChatSession {
           messages: this.messages,
           signal: this.abort.signal,
           onText: (t) => { reply.text += t; this.emit({ type: 'text', reply, text: reply.text }); },
-          onToolStart: () => {},
+          onToolStart: (name, id, info) => {
+            // Anthropic's web tools show as chips straight away; their results come with the reply
+            if (info && info.server && !reply.chips.some((c) => c.id === id)) {
+              const chip = { id, name, input: {}, status: 'running', result: null, web: true };
+              reply.chips.push(chip);
+              this.emit({ type: 'chip', reply, chip });
+            }
+          },
         });
         if (res.stopReason === 'refusal') {
           reply.refusal = res.refusal || 'The model declined this request.';
@@ -128,7 +147,15 @@ export class ChatSession {
           this.messages.length = sentFrom;
           break;
         }
-        if (res.content.length) this.messages.push({ role: 'assistant', content: res.content, raw: res.raw });
+        for (const w of res.server || []) {
+          let chip = reply.chips.find((c) => c.id === w.id);
+          if (!chip) { chip = { id: w.id, name: w.name, web: true }; reply.chips.push(chip); }
+          Object.assign(chip, { input: w.input, status: w.error ? 'error' : 'ok', result: w.error ? `Failed: ${w.error}` : (w.results || []) });
+          this.emit({ type: 'chip', reply, chip });
+        }
+        for (const src of res.sources || []) if (!reply.sources.some((x) => x.url === src.url)) reply.sources.push(src);
+        if (res.content.length || (res.raw && res.raw.anthropic && res.raw.anthropic.length)) this.messages.push({ role: 'assistant', content: res.content, raw: res.raw });
+        if (res.stopReason === 'pause') continue;   // a web search paused part-way: send it back to carry on
         const calls = res.content.filter((c) => c.type === 'tool_call');
         if (!calls.length) {
           if (res.stopReason === 'max_tokens') reply.text += '\n\n(The reply was cut off: it was too long.)';
@@ -177,7 +204,8 @@ export class ChatSession {
     };
     if (call.inputError) return finish(false, call.inputError);
     if (!tool) return finish(false, `There's no tool called "${call.name}".`);
-    if (!scope.tools.includes(tool)) {
+    const list = [...scope.tools, ...(this.extra || [])];
+    if (!list.includes(tool)) {
       return finish(false, scope.id === 'laser'
         ? `${call.name} is for the 3D design; the user is in the Laser workspace, so use the laser tools.`
         : `${call.name} is for the Laser workspace; the user is in 3D Design, so use the 3D tools.`);
@@ -186,7 +214,7 @@ export class ChatSession {
       const ok = await this._ask(reply, chip, tool, call);
       if (!ok) return finish(false, 'The user skipped this edit: it was not made.', { skipped: true });
     }
-    const r = await runTool(scope.ctx, call.name, call.input, scope.tools);
+    const r = await runTool(scope.ctx, call.name, call.input, list);
     if (r.ok && r.edited) reply.edits++;
     return r.ok ? finish(true, r.result) : finish(false, r.error);
   }
