@@ -4,8 +4,7 @@ import './slicer.css';
 import * as THREE from 'three';
 import { h, clear, button, icon, toast, popupMenu } from '../ui/dom.js';
 import { ViewCube } from '../view/viewcube.js';
-import { addResizer } from '../ui/resizer.js';
-import { makeDraggable } from '../ui/draggable.js';
+import { DockManager } from '../ui/dock.js';
 import { platform } from '../platform.js';
 import { CURAENGINE_URL } from '../config.js';
 import { exportObjects, importFiles } from '../core/io.js';
@@ -83,6 +82,7 @@ export class SlicerWorkspace {
     this.store.onChange(() => this._settingsChanged());
     this._syncVolume(true);
     if (this.pendingAdd) { const add = this.pendingAdd; this.pendingAdd = null; await this.addFromDesign(add); }
+    if (this.app.ai) this.app.ai.sync();   // the AI chat can float or dock here now
     return true;
   }
 
@@ -151,12 +151,13 @@ export class SlicerWorkspace {
       h('div', { class: 'sl-footer-btns' }, this.cancelBtn, this.saveBtn, this.sendBtn, this.sliceBtn));
     this.banner = h('div', { class: 'mode-banner', hidden: true });
     this.inspectorEl = h('div', { class: 'inspector sl-inspector' });
-    makeDraggable(this.inspectorEl, { key: 'slicer-inspector' });
     this.previewPanel = h('div', { class: 'sl-preview', hidden: true });
     this.logEl = h('pre', { class: 'sl-log', hidden: true });
-    this.root.append(this.toolbar, h('div', { class: 'sl-main' }, this.outliner, this.viewEl, h('div', { class: 'side sl-side' }, this.panel.el, this.footer)));
-    addResizer(this.outliner, { side: 'left', key: 'slicer-outliner', min: 170, max: 460 });
-    addResizer(this.root.querySelector('.sl-side'), { side: 'right', key: 'slicer-side', min: 300, max: 760 });
+    // print settings and the Slice / Send buttons: one panel, docked on the right to begin with
+    this.settingsEl = h('div', { class: 'side sl-side' },
+      h('div', { class: 'insp-head sl-settings-head' }, icon('settings', 15), h('div', { class: 'insp-title' }, 'Print settings')),
+      this.panel.el, this.footer);
+    this.root.append(this.toolbar, h('div', { class: 'sl-main' }, this.viewEl));
     this.scene = new SlicerScene(this.viewEl);
     this.scene.typeColors = { ...this.profiles.colors };
     this.viewcube = new ViewCube(this.scene);
@@ -169,6 +170,11 @@ export class SlicerWorkspace {
         button({ icon: 'minus', title: 'Zoom out', onClick: () => this.scene.zoomBy(1 / 0.75) }),
         this.projBtn)),
       this.inspectorEl, this.previewPanel, this.banner);
+    // panels float or dock at the view's edges, as in every workspace
+    this.dock = new DockManager(this.viewEl, { key: 'slicer-dock', width: 340 });
+    this.dock.add(this.outliner, { key: 'slicer-plate', handle: '.outliner-head', dock: 'left', grow: true, isOpen: () => this.outliner.classList.contains('open') });
+    this.dock.add(this.settingsEl, { key: 'slicer-settings', handle: '.sl-settings-head', dock: 'right', grow: true, isOpen: () => true });
+    this.dock.add(this.inspectorEl, { key: 'slicer-inspector', handle: '.insp-head', oldKey: 'slicer-inspector', isOpen: () => !this.inspectorEl.hidden || this.inspectorEl.classList.contains('docked') });
     this.gizmo = new ModelGizmo(this.scene, {
       getModel: () => this.selectedModel,
       active: () => this._editing,
@@ -327,7 +333,6 @@ export class SlicerWorkspace {
     this.outliner.classList.toggle('open');
     this.listBtn.classList.toggle('active', this.outliner.classList.contains('open'));
     this._renderModels();
-    this.scene.resize();
   }
 
   _checkFit() {
@@ -473,7 +478,7 @@ export class SlicerWorkspace {
     const m = this.selectedModel;
     this.fields = {};
     this.inspectorEl.hidden = !m || this.mode === 'preview' || !!this.monitoring;
-    if (!m) return;
+    if (this.inspectorEl.hidden) return;
     const input = (key, step, axis) => {
       const el = h('input', { class: 'input' + (axis ? ' ax-' + axis : ''), type: 'number', step, 'aria-label': key });
       el.addEventListener('change', () => {
@@ -614,7 +619,7 @@ export class SlicerWorkspace {
       row('Layer', this.monLayer), row('Time left', this.monLeft), row('Elapsed', this.monElapsed),
       this.monTemps, this.monNote));
     this.viewEl.append(this.monitorEl);
-    makeDraggable(this.monitorEl, { key: 'slicer-monitor' });
+    this.dock.add(this.monitorEl, { key: 'slicer-monitor', handle: '.sl-mon-head', oldKey: 'slicer-monitor', isOpen: () => !this.monitorEl.hidden });
     this._setMonStyle(saved);
   }
 

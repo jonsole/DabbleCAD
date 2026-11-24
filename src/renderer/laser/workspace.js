@@ -1,5 +1,5 @@
 // Laser workspace: 2D canvas editor, layers, machine control. Owns its own tools and shortcuts.
-import { addResizer } from '../ui/resizer.js';
+import { DockManager } from '../ui/dock.js';
 import { h, clear, button, icon, toast, popupMenu, promptDialog } from '../ui/dom.js';
 import { platform } from '../platform.js';
 import { listFontNames, ensureFont } from '../core/fonts.js';
@@ -214,20 +214,30 @@ export class LaserWorkspace {
       if (this.device.job) return this.log('A job is running. Pause or stop it first.', 'error');
       this.device.send(line).catch((err) => this.log(err.message, 'error'));
     });
-    const section = (title, body, open = true) => h('details', { class: 'laser-section', open }, h('summary', {}, title), body);
-    this.side = h('div', { class: 'laser-side' },
-      section('Layers', h('div', {}, this.layerList, this.layerEditor)),
-      section('Laser', this.laserPanel),
-      section('Move', this.movePanel, false),
-      section('Console', h('div', {}, this.consoleLog, this.consoleInput), false));
-    this.side.addEventListener('keydown', (e) => { if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') e.stopPropagation(); });
+    // the side panels: each floats or docks (right, to begin with) and folds down to its header
+    const panel = (key, title, body) => {
+      const el = h('div', { class: 'laser-panel', 'data-key': key },
+        h('div', { class: 'insp-head laser-panel-head' },
+          button({ icon: 'chevron', size: 14, cls: 'btn-ghost collapse-btn', title: 'Fold / unfold', onClick: () => this.dock.toggleCollapse(key) }),
+          h('div', { class: 'insp-title' }, title)),
+        h('div', { class: 'laser-panel-body' }, body));
+      el.addEventListener('keydown', (e) => { if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') e.stopPropagation(); });
+      return el;
+    };
+    this.sidePanels = [
+      [panel('laser-layers', 'Layers', h('div', {}, this.layerList, this.layerEditor)), { grow: true }],
+      [panel('laser-laser', 'Laser', this.laserPanel), {}],
+      [panel('laser-move', 'Move', this.movePanel), { collapsed: true }],
+      [panel('laser-console', 'Console', h('div', {}, this.consoleLog, this.consoleInput)), { collapsed: true }],
+    ];
 
     this.palette = h('div', { class: 'laser-palette' });
     this.statusBar = h('div', { class: 'laser-status' });
     this.root.append(this.toolbar, this.propBar,
-      h('div', { class: 'laser-main' }, this.toolCol, this.wrap, this.side),
+      h('div', { class: 'laser-main' }, this.toolCol, this.wrap),
       h('div', { class: 'laser-bottom' }, this.palette, this.statusBar));
-    addResizer(this.side, { side: 'right', key: 'laser-side', min: 260, max: 640 });
+    this.dock = new DockManager(this.wrap, { key: 'laser-dock', width: 344 });
+    this.sidePanels.forEach(([el, o], i) => this.dock.add(el, { key: el.dataset.key, handle: '.laser-panel-head', dock: 'right', order: i * 2, isOpen: () => true, ...o }));
 
     const cv = this.canvas;
     cv.addEventListener('pointerdown', (e) => this._down(e));
@@ -564,7 +574,7 @@ export class LaserWorkspace {
 
   _down(e) {
     const act = document.activeElement;
-    if (act && act !== document.body && (this.propBar.contains(act) || this.side.contains(act))) act.blur();
+    if (act && act !== document.body && (this.propBar.contains(act) || this.sidePanels.some(([el]) => el.contains(act)))) act.blur();
     this.canvas.focus?.();
     const sp = this.screenOf(e), raw = this.toBed(e), p = this.snap(raw, e);
     try { this.canvas.setPointerCapture(e.pointerId); } catch { /* synthetic */ }

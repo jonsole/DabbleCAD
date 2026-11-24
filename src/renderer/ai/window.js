@@ -107,54 +107,18 @@ export class AiWindow {
     this.stopBtn = button({ icon: 'stop', label: 'Stop', size: 14, cls: 'btn-outline ai-stop', onClick: () => this.session.stop() });
     this.stopBtn.style.display = 'none';
     this.footer = h('div', { class: 'ai-foot' });
-    const grip = h('div', { class: 'ai-grip', title: 'Resize' });
     this.el = h('div', { class: 'ai-win', role: 'dialog', 'aria-label': 'AI chat' },
       this.head, this.list,
       this.fileChips,
       h('div', { class: 'ai-compose' }, this.input, h('div', { class: 'ai-compose-btns' }, this.clipBtn, this.attachBtn, this.stopBtn, this.sendBtn), this.fileIn),
-      this.footer, grip);
-    this.el.style.display = 'none';
-    document.body.append(this.el);
-    this._place();
-    this._dragging(this.head, (dx, dy, start) => this._setRect({ x: start.x + dx, y: start.y + dy }));
-    this._dragging(grip, (dx, dy, start) => this._setRect({ w: Math.max(300, start.w + dx), h: Math.max(320, start.h + dy) }));
-    window.addEventListener('resize', () => this._place());
+      this.footer);
+    this.el.classList.add('closed');
     // files dropped on the chat are attached, not imported straight away
     this.el.addEventListener('dragover', (e) => { if (e.dataTransfer && [...e.dataTransfer.types].includes('Files')) { e.preventDefault(); e.stopPropagation(); } });
     this.el.addEventListener('drop', (e) => { if (!e.dataTransfer || !e.dataTransfer.files.length) return; e.preventDefault(); e.stopPropagation(); this.addFiles([...e.dataTransfer.files]); });
   }
 
-  _rect() {
-    const r = this.el.getBoundingClientRect();
-    return { x: r.left, y: r.top, w: r.width, h: r.height };
-  }
-
-  _place() {
-    const s = this.st();
-    const W = window.innerWidth, H = window.innerHeight;
-    const w = Math.min(s.w || 380, W - 16), hh = Math.min(s.h || 560, H - 16);
-    const x = Math.min(Math.max(8, s.x ?? W - w - 24), W - w - 8);
-    const y = Math.min(Math.max(8, s.y ?? 110), H - hh - 8);
-    Object.assign(this.el.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${hh}px` });
-  }
-
-  _setRect(p) { this.save(p); this._place(); }
-
-  _dragging(handle, move) {
-    handle.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0 || e.target.closest('button, input, label')) return;
-      e.preventDefault();
-      const start = this._rect(), x0 = e.clientX, y0 = e.clientY;
-      handle.setPointerCapture(e.pointerId);
-      const mv = (ev) => move(ev.clientX - x0, ev.clientY - y0, start);
-      const up = () => { handle.removeEventListener('pointermove', mv); handle.removeEventListener('pointerup', up); handle.removeEventListener('lostpointercapture', up); };
-      handle.addEventListener('pointermove', mv);
-      handle.addEventListener('pointerup', up);
-      handle.addEventListener('lostpointercapture', up);
-    });
-  }
-
-  get open() { return this.el.style.display !== 'none'; }
+  get open() { return !this.el.classList.contains('closed'); }
 
   /** Show or hide; remembered. In the Slicer the window stays hidden (the AI doesn't work there). */
   toggle(on = !this.open) {
@@ -167,13 +131,13 @@ export class AiWindow {
   async sync() {
     const allowed = this.app.viewMode !== 'slicer';
     const show = allowed && !!this.st().open;
-    this.el.style.display = show ? '' : 'none';
+    this.el.classList.toggle('closed', !show);
+    this._attach();
     if (this.app.aiBtn) {
       this.app.aiBtn.classList.toggle('active', show);
       this.app.aiBtn.style.display = allowed ? '' : 'none';
     }
     if (!show) return;
-    this._place();
     const cfg = aiSettings(this.app);
     const info = providerInfo(cfg.provider);
     this.modelLabel.textContent = cfg.provider === 'local' ? (cfg.model || 'local model') : (cfg.model || info.defaultModel);
@@ -189,6 +153,14 @@ export class AiWindow {
       h('p', {}, 'To chat, add an API key for the AI provider in Settings → AI. (Or use a model running on this computer.)'),
       button({ label: 'Set up AI', icon: 'settings', cls: 'btn-primary', onClick: () => this.app.openAiSettings() }));
     this.list.prepend(this.setupEl);
+  }
+
+  /** The window floats or docks in the current workspace, like every other panel. */
+  _attach() {
+    const a = this.app;
+    const mgr = a.viewMode === 'laser' ? a.laser && a.laser.dock : a.viewMode === 'slicer' ? a.slicer && a.slicer.dock : a.dock;
+    if (!mgr) { if (!this.el.parentElement) document.body.append(this.el); return; }
+    if (this.el._dock !== mgr) mgr.add(this.el, { key: 'ai-chat', handle: '.ai-head', grow: true, isOpen: () => this.open });
   }
 
   setAttach(on) {

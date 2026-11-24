@@ -10,8 +10,6 @@ import { h, clear, button, icon, toast, popupMenu, promptDialog, confirmDialog }
 import { platform } from './platform.js';
 import { Viewport, HOME_VIEW } from './view/viewport.js';
 import { ViewCube } from './view/viewcube.js';
-import { addResizer } from './ui/resizer.js';
-import { makeDraggable } from './ui/draggable.js';
 import { DockManager } from './ui/dock.js';
 import { Gizmo, formatLength, parseLength } from './view/gizmo.js';
 import { buildVoxels, disposeVoxels } from './view/voxels.js';
@@ -144,8 +142,7 @@ export class App {
     this.side = h('div', { class: 'side parts-panel' });
     this.laserRoot = h('div', { class: 'laser-root' });
     this.slicerRoot = h('div', { class: 'slicer-root' });
-    root.append(topbar, workspaceBar, toolbar, h('div', { class: 'main' }, this.outliner, this.viewEl), this.laserRoot, this.slicerRoot);
-    addResizer(this.outliner, { side: 'left', key: '3d-outliner', min: 170, max: 460 });
+    root.append(topbar, workspaceBar, toolbar, h('div', { class: 'main' }, this.viewEl), this.laserRoot, this.slicerRoot);
 
     this.viewport = new Viewport(this.viewEl, this.settings);
     this.editor = new Editor(this.viewport, this.settings);
@@ -176,20 +173,15 @@ export class App {
     this.voxelInfo = h('span', {});
     this.voxelBar = h('div', { class: 'voxel-bar' }, h('span', {}, 'Detail'), this.voxelDetail, this.voxelInfo,
       button({ label: 'Back to 3D design', cls: 'btn-primary', onClick: () => this.setViewMode('design') }));
-    // the Parts panel's size (resized from its corner) is remembered like its position
-    try { const sz = JSON.parse(localStorage.getItem('dabblecad.card.3d-parts.size') || 'null'); if (sz) Object.assign(this.side.style, { width: sz.w + 'px', height: sz.h + 'px' }); } catch { /* ignore */ }
-    if (window.ResizeObserver) {
-      let t = 0;
-      new ResizeObserver(() => { clearTimeout(t); t = setTimeout(() => { if (this.side.offsetWidth && this.side.style.width) try { localStorage.setItem('dabblecad.card.3d-parts.size', JSON.stringify({ w: this.side.offsetWidth, h: this.side.offsetHeight })); } catch { /* ignore */ } }, 300); }).observe(this.side);
-    }
     this.viewEl.append(this.side, this.inspectorEl, this.banner, this.status, this.gridbar, this.voxelBar, h('div', { class: 'busy-pill' }, 'Working…'));
 
     this.inspector = new Inspector(this.editor, this.inspectorEl, this);
     this.shapes = new ShapesPanel(this.editor, this.side, this);
     // Parts and the selection card float, or dock at the left / right edge of the view
     this.dock = new DockManager(this.viewEl, { key: '3d-dock' });
-    this.dock.add(this.side, { key: '3d-parts', handle: '.parts-head', oldKey: '3d-parts' });
-    this.dock.add(this.inspectorEl, { key: '3d-inspector', handle: '.insp-head', oldKey: '3d-inspector' });
+    this.dock.add(this.outliner, { key: '3d-objects', handle: '.outliner-head', dock: 'left', grow: true, isOpen: () => this.outliner.classList.contains('open') });
+    this.dock.add(this.side, { key: '3d-parts', handle: '.parts-head', oldKey: '3d-parts', grow: true, isOpen: () => this.side.classList.contains('open') });
+    this.dock.add(this.inspectorEl, { key: '3d-inspector', handle: '.insp-head', oldKey: '3d-inspector', isOpen: () => true });
     this.btn.parts.classList.add('keep-label');
     this.toggleParts(this.settings.partsOpen !== false);   // open until the user closes it
     this.editor.on('tool', () => { for (const id of ['workplane', 'ruler', 'note']) this.btn[id].classList.toggle('active', this.editor.tool === id); });
@@ -718,7 +710,6 @@ export class App {
     this.outliner.classList.toggle('open');
     this.btn.outliner.classList.toggle('active', this.outliner.classList.contains('open'));
     this._renderOutliner();
-    this.viewport.resize();
   }
 
   _renderOutliner() {

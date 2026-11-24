@@ -550,8 +550,11 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
 
 /* ---------------------------------------------------------------- AI chat window */
 .ai-btn.active { color: var(--accent); background: var(--accent-soft); }
-.ai-win { position: fixed; z-index: 60; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; min-width: 300px; min-height: 320px; }
-.ai-head { display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 10px; border-bottom: 1px solid var(--border); cursor: move; user-select: none; background: var(--panel-2); }
+.ai-win { display: flex; flex-direction: column; background: var(--panel); overflow: hidden; }
+.ai-win.closed { display: none !important; }
+.ai-win:not(.docked) { position: absolute; z-index: 12; right: 14px; top: 14px; width: 380px; height: min(560px, calc(100% - 28px)); min-width: 300px; min-height: 320px; border-radius: 12px; }
+.dock > .ai-win.docked.dock-grow { min-height: 300px; }
+.ai-head { display: flex; align-items: center; gap: 6px; padding: 6px 6px 6px 10px; border-bottom: 1px solid var(--border); cursor: grab; user-select: none; background: var(--panel-2); }
 .ai-head .icon { color: var(--accent); }
 .ai-head .spacer { flex: 1; }
 .ai-head .btn { height: 28px; min-width: 28px; padding: 0 4px; }
@@ -606,7 +609,6 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
 .ai-attach.active { color: var(--accent); background: var(--accent-soft); }
 .ai-send.disabled { opacity: .4; pointer-events: none; }
 .ai-foot { font-size: 10.5px; color: var(--muted); padding: 0 10px 6px; }
-.ai-grip { position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize; background: linear-gradient(135deg, transparent 50%, var(--border) 50%, var(--border) 60%, transparent 60%, transparent 72%, var(--border) 72%, var(--border) 82%, transparent 82%); }
 .set-group .ai-keyrow .input { width: 200px; }
 .ai-key-status.ok { color: #3fb950; }
 .ai-key-status.bad { color: var(--danger); }
@@ -629,22 +631,41 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
 .toolbar::-webkit-scrollbar { display: none; }
 @media (max-width: 1500px) { .toolbar .btn:not(.keep-label) .btn-label { display: none; } .toolbar .btn:not(.keep-label) { padding: 0 6px; } }
 
-/* ---------------------------------------------------------------- dockable panels */
-.dock { flex: none; width: 290px; display: flex; flex-direction: column; background: var(--panel); overflow: hidden; position: relative; }
+/* ---------------------------------------------------------------- dockable panels (every workspace) */
+.dock { flex: none; width: 290px; display: flex; flex-direction: column; background: var(--panel); overflow-x: hidden; overflow-y: auto; position: relative; min-width: 0; }
+.dock.empty { display: none; }
 .dock-left { border-right: 1px solid var(--border); }
 .dock-right { border-left: 1px solid var(--border); }
-/* a column with nothing showing in it takes no room (a docked selection card keeps its place, so
-   the view doesn't jump each time the selection changes) */
-.dock:not(:has(> .parts-panel.open, > .inspector)) { display: none; }
-.dock > .inspector.docked:empty { display: block; }
-.dock > .inspector.docked:empty::before { content: 'Select a shape to see its settings here. Drag this panel\'s header out to float it.'; display: block; padding: 16px 14px; color: var(--muted); font-size: 12.5px; }
-.dock > .docked { position: static !important; width: auto !important; max-height: none !important; border: none; border-radius: 0; box-shadow: none; resize: none; flex: 0 1 auto; overflow: auto; min-height: 0; }
+/* floating: a card over the view, resizable from its corner */
+.dockable:not(.docked) { position: absolute; z-index: 11; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); resize: both; overflow: hidden; min-width: 200px; min-height: 44px; }
+.dockable.dock-grow:not(.docked) { display: flex; flex-direction: column; }
+.dockable:not(.docked):not(.inspector):not(.parts-panel):not(.ai-win) { left: 14px; top: 14px; width: 300px; height: min(560px, calc(100% - 28px)); }
+/* docked: part of the column */
+.dock > .docked { position: static !important; width: auto !important; height: auto !important; max-height: none !important; border: none; border-radius: 0; box-shadow: none; resize: none; flex: 0 1 auto; min-height: 0; overflow: auto; }
+.dock > .docked.dock-grow { flex: 1 1 0; min-height: 160px; display: flex; flex-direction: column; overflow: hidden; }
 .dock > .docked + .docked { border-top: 1px solid var(--border); }
-.dock > .parts-panel.docked { flex: 1 1 0; height: auto !important; min-height: 220px; }
-.dock > .inspector.docked { flex: 0 1 auto; max-height: 60% !important; }
-.dock > .docked .insp-head { cursor: grab; }
-.dockable.dragging { opacity: .92; z-index: 30; }
+.dock > .docked.collapsed { flex: none !important; min-height: 0; }
+.dockable.collapsed { resize: none; height: auto !important; min-height: 0; }
+.dockable.collapsed > :not(.insp-head):not(.outliner-head):not(.ai-head) { display: none !important; }
+.dock > .inspector.docked { max-height: 60% !important; }
+.dock > .inspector.docked:empty, .dock > .inspector.docked[hidden] { display: block; }
+.dock > .inspector.docked:empty::before { content: 'Select something to see its settings here. Drag a panel by its header to move it.'; display: block; padding: 16px 14px; color: var(--muted); font-size: 12.5px; }
+.dockable .insp-head, .dockable .outliner-head { cursor: grab; }
+.dockable.dragging { opacity: .92; z-index: 30; user-select: none; -webkit-user-select: none; }
+.dockable.dragging .insp-head, .dockable.dragging .outliner-head { cursor: grabbing; }
 .dock-hint { position: absolute; top: 0; bottom: 0; width: 0; z-index: 29; pointer-events: none; background: var(--accent-soft); border: 2px dashed var(--accent); opacity: 0; transition: opacity .12s; }
 .dock-hint.on { opacity: 1; width: 260px; }
 .dock-hint.left { left: 0; border-radius: 0 10px 10px 0; }
 .dock-hint.right { right: 0; border-radius: 10px 0 0 10px; }
+.outliner.dockable:not(.open) { display: none !important; }
+.collapse-btn .icon { transition: transform .12s; }
+.dockable.collapsed .collapse-btn .icon { transform: rotate(-90deg); }
+.parts-panel.dockable:not(.open) { display: none !important; }
+.main:has(> .voxel-mode) > .dock, .main:has(> .voxel-mode) > .splitter { display: none !important; }
+.laser-panel-head { padding: 4px 8px 4px 4px; gap: 2px; }
+.laser-panel-head .insp-title { font-weight: 700; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
+.laser-panel-head .btn { height: 26px; min-width: 26px; padding: 0; }
+.laser-panel-body { padding: 8px 10px 10px; overflow: auto; flex: 1; min-height: 0; }
+.dock > .laser-panel.docked { overflow: hidden; display: flex; flex-direction: column; }
+.laser-panel:not(.docked) { display: flex; flex-direction: column; }
+.sl-settings-head .icon { color: var(--accent); }
