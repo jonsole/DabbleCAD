@@ -47,11 +47,28 @@ function nodeInfo(ed, n, { detail = false } = {}) {
   if (b) info.bounds = { min: b.min, max: b.max };
   if (detail) {
     if (b) info.size = b.size;
-    if (n.type === 'shape') info.params = { ...n.params };
+    if (n.type === 'shape') info.params = compactParams(n.params);
     if (n.type === 'group') info.children = n.children.map((c) => ({ id: c.id, name: c.name || kindName(c), kind: c.type === 'group' ? 'group' : c.kind, hole: !!c.hole }));
     info.matrix = n.matrix.map((v) => Math.round(v * 1e5) / 1e5);
   }
   return info;
+}
+
+/** Shape settings without bulk data (an imported mesh keeps its vertices in its params). */
+function compactParams(params = {}) {
+  const out = {};
+  for (const [k, v] of Object.entries(params)) {
+    if (v == null || typeof v === 'number' || typeof v === 'boolean') out[k] = v;
+    else if (typeof v === 'string') out[k] = v.length > 200 ? `(${v.length} characters)` : v;
+    else if (ArrayBuffer.isView(v) || Array.isArray(v)) out[k] = v.length > 24 ? `(${v.length} values: mesh data, not shown)` : Array.from(v);
+    else if (typeof v === 'object') {
+      // e.g. an imported mesh: { positions: Float32Array }
+      const big = Object.values(v).some((x) => (ArrayBuffer.isView(x) || Array.isArray(x)) && x.length > 24);
+      if (big) out[k] = Object.fromEntries(Object.entries(v).map(([a, x]) => [a, ArrayBuffer.isView(x) || Array.isArray(x) ? `(${x.length} values: mesh data, not shown)` : x]));
+      else { const j = JSON.stringify(v); out[k] = j && j.length > 400 ? '(data, not shown)' : v; }
+    }
+  }
+  return out;
 }
 
 /** The nodes named by ids: every id must exist; for edits none may be locked. */

@@ -217,5 +217,25 @@ ok('no printer or laser control tools', out.deviceTools.length === 0);
   check('fetch_page not offered with Anthropic web access', !s.tools.some((t) => t.name === 'fetch_page'));
 }
 
+// ---- big meshes: get_node stays small, holes are found by cutting through
+{
+  const { scopeFor } = window.dabbleAi;
+  const sc = scopeFor(app, app.ai.session);
+  const run = (n, i) => window.dabbleAi.runTool(sc.ctx, n, i, sc.tools);
+  app.setViewMode('design');
+  await run('add_shape', { catalogId: 'box', name: 'Plate', size: { x: 60, y: 40, z: 10 }, position: { x: 200, y: 0, z: 0 } });
+  const p = app.editor.selectedNodes()[0].id;
+  await run('add_shape', { catalogId: 'cylinder', name: 'H', hole: true, size: { x: 5, y: 5, z: 12 }, position: { x: 185, y: 0, z: -1 } });
+  const hh = app.editor.selectedNodes()[0].id;
+  await run('group', { ids: [p, hh], mode: 'union' });
+  const gid = app.editor.selectedNodes()[0].id;
+  const fh = await run('find_holes', { id: gid });
+  check('find_holes: 5 mm hole', fh.ok && fh.result.holes.length === 1 && Math.abs(fh.result.holes[0].diameter - 5) < 0.1 && fh.result.holes[0].axis === 'z');
+  const n = window.dabbleLib.doc.makeShape('mesh', { mesh: { positions: new Float32Array(300000).map((_, i) => (i % 9) * 0.1) } }, '#888888', 'Big mesh');
+  app.editor.addNode(n);
+  const gn = await run('get_node', { id: n.id });
+  check('get_node: mesh data left out', gn.ok && JSON.stringify(gn.result).length < 2000);
+}
+
 if (fails.length) throw new Error(fails.join('\n'));
 return { checks, fails };

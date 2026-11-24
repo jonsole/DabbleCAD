@@ -25,7 +25,7 @@ How DabbleCAD works:
 - Groups: union combines shapes (holes cut), intersect keeps only the overlap, bundle keeps shapes together without combining. Grouping makes a new id; ungrouping gives the parts new ids.
 - The shape catalog (list_shape_catalog) has boxes, cylinders, spheres, cones, text, and many more, each with its own settings (for example a box's corner radius, a cylinder's sides). Use add_shape with a size to make one exactly as big as needed.
 - Locked shapes belong to the user: never try to move or change them.
-- Edges can be rounded or chamfered (list_edges, set_edges), shapes cut with a plane (split), and single shapes reshaped by moving their faces, edges or corners (list_parts, move_parts), as in the Edge, Face and Corner modes.
+- Edges can be rounded or chamfered (list_edges, set_edges), shapes cut with a plane (split), and single shapes reshaped by moving their faces, edges or corners (list_parts, move_parts), as in the Edge, Face and Corner modes. To look inside a shape (hole and drill sizes, wall thickness) use find_holes and section; don't try to read mesh data.
 - You can move the workplane onto a shape or a face (set_workplane) to build on it, change the view so the user can see your work (set_view), lock / hide / show shapes (set_flags), change a group's mode, pin notes, import files the user attached to the chat (list_attachments, import_file) and export the design (export_design).
 
 How to work:
@@ -38,6 +38,7 @@ How to work:
 - You cannot control printers or lasers, start jobs, or send G-code, and you have no tools for it: if asked, say the user has to do that themselves.`;
 
 const MAX_STEPS = 30;
+const MAX_RESULT = 40000;   // characters of one tool result sent to the model
 
 /** Undo history of the 3D editor, as the chat needs it (snapshots compared by identity). */
 export function editorHistory(ed) {
@@ -172,6 +173,12 @@ export class ChatSession {
       reply.error = err;
       // keep the conversation valid for the next message: drop an unanswered tail
       this._trimUnanswered(sentFrom);
+      // too long for the model: this turn leaves the conversation, so the chat can carry on
+      if (/prompt is too long|context (length|window)|maximum context|too many tokens/i.test(err.message)) {
+        this.messages.length = Math.min(this.messages.length, sentFrom);
+        err.message = 'The conversation got too long for the model. That last message was dropped: try again, or start a New chat.';
+        err.kind = 'too-long';
+      }
       this.emit({ type: 'error', reply, error: err });
     } finally {
       reply.done = true;
@@ -200,7 +207,10 @@ export class ChatSession {
       chip.status = ok ? 'ok' : extra.skipped ? 'skipped' : 'error';
       chip.result = payload;
       this.emit({ type: 'chip', reply, chip });
-      return { id: call.id, name: call.name, content: typeof payload === 'string' ? payload : JSON.stringify(payload), isError: !ok };
+      let content = typeof payload === 'string' ? payload : JSON.stringify(payload);
+      // a huge result would overflow the model's context: send the start and say so
+      if (content.length > MAX_RESULT) content = `${content.slice(0, MAX_RESULT)}\n…(cut: the result was ${content.length} characters; ask for less, e.g. a smaller limit or one item)`;
+      return { id: call.id, name: call.name, content, isError: !ok };
     };
     if (call.inputError) return finish(false, call.inputError);
     if (!tool) return finish(false, `There's no tool called "${call.name}".`);
