@@ -2,7 +2,9 @@
 // Candidates are the directions of the model's big flat faces (they make good bases), the six axes and
 // the current orientation. Each one is scored by an estimate of the support volume (overhanging area
 // times the height it has to be propped up from the plate), the overhang area itself (rough underside
-// finish), and a penalty for a tiny contact patch (a model that would barely stick to the bed).
+// finish), and how badly it stands: a model resting on an edge or a point barely sticks to the bed and
+// can be knocked over by the nozzle. That last one is costed like support for part of the model's
+// box, so turning a box onto its edge to put every face at exactly the support angle never wins.
 import * as THREE from 'three';
 
 const DOWN = new THREE.Vector3(0, 0, -1);
@@ -52,9 +54,19 @@ function score(m, d, cosLimit) {
     supportVol += a * nd * h;
   }
   let cost = supportVol + overhang * 2;
-  const smallBase = 1 - Math.min(1, contact / (0.03 * total + 1e-9));
-  cost += smallBase * total * 0.25;
-  return { cost, supportVol, overhang, contact, height: hi - lo };
+  // how well it stands: flat contact compared with the area it covers on the plate
+  const u = Math.abs(dz) < 0.9 ? new THREE.Vector3(-dy, dx, 0).normalize() : new THREE.Vector3(0, -dz, dy).normalize();
+  const v = new THREE.Vector3(dx, dy, dz).cross(u);
+  let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+  for (let i = 0; i < P.length; i += 3) {
+    const a = P[i] * u.x + P[i + 1] * u.y + P[i + 2] * u.z, b = P[i] * v.x + P[i + 1] * v.y + P[i + 2] * v.z;
+    if (a < u0) u0 = a; if (a > u1) u1 = a; if (b < v0) v0 = b; if (b > v1) v1 = b;
+  }
+  const footprint = Math.max(1, (u1 - u0) * (v1 - v0));
+  const standing = Math.min(1, contact / (0.2 * footprint));   // a fifth of the footprint flat on the bed is plenty
+  const wobble = (1 - standing) * footprint * (hi - lo) * 0.3;
+  cost += wobble;
+  return { cost, supportVol, overhang, contact, wobble, height: hi - lo };
 }
 
 /** Candidate "down" directions in model space. */
