@@ -75,6 +75,7 @@ export class Gizmo {
 
     this._build();
     editor.on('split', () => this.refresh());
+    editor.on('lifthover', (on) => { this.hoverLift = on; this.layout(); });
     editor.on('selection', () => this.refresh());
     editor.on('transform', () => this.refresh());
     editor.on('doc', () => { this.refresh(); this._renderNotes(); });
@@ -252,7 +253,7 @@ export class Gizmo {
       const o = vp.unitsPerPixel(c.clone().applyMatrix4(ed.frame)) * 30;
       const v = new THREE.Vector3();
       for (const it of this.items) {
-        if (!show[it.group] || (it.noArrows && ed.settings.moveArrows)) { it.el.style.display = 'none'; continue; }   // the Z arrow takes over from the lift cone
+        if (!show[it.group] || it.noArrows) { it.el.style.display = 'none'; continue; }   // raising and lowering: the shared black arrow (parttool.js)
         const arr = it.pos(b, c, o);
         v.set(arr[0], arr[1], arr[2]).applyMatrix4(ed.frame);
         vp.project(v, p);

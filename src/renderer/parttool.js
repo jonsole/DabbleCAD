@@ -21,16 +21,24 @@ const ARROW_PX = 40; // how far an arrow sits from the part it moves, on screen
 // drag with pointer capture on the handle, like the object handles
 function track(el, e, onMove, onEnd) {
   try { el.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
+  let ended = false;
   const up = (ev) => {
+    if (ended) return;
+    ended = true;
     try { el.releasePointerCapture(e.pointerId); } catch { /* released */ }
     el.removeEventListener('pointermove', onMove);
     el.removeEventListener('pointerup', up);
     el.removeEventListener('pointercancel', up);
+    el.removeEventListener('lostpointercapture', up);
+    window.removeEventListener('pointerup', up, true);
     onEnd(ev);
   };
   el.addEventListener('pointermove', onMove);
   el.addEventListener('pointerup', up);
   el.addEventListener('pointercancel', up);
+  // never left stuck to the pointer: the handle may be hidden or redrawn mid-drag
+  el.addEventListener('lostpointercapture', up);
+  window.addEventListener('pointerup', up, true);
 }
 const pkey = (p) => Math.round(p.x * 1e3) + ',' + Math.round(p.y * 1e3) + ',' + Math.round(p.z * 1e3);
 const r4 = (v) => Math.round(v * 1e4) / 1e4;
@@ -301,16 +309,16 @@ export class PartTool {
    */
   pressDrag(e, onClick) {
     const canvas = this.vp.canvas, x0 = e.clientX, y0 = e.clientY;
-    const done = () => { canvas.removeEventListener('pointermove', move); canvas.removeEventListener('pointerup', up); canvas.removeEventListener('pointercancel', up); };
+    const done = () => { window.removeEventListener('pointermove', move, true); window.removeEventListener('pointerup', up, true); window.removeEventListener('pointercancel', up, true); };
     const move = (ev) => {
       if (Math.hypot(ev.clientX - x0, ev.clientY - y0) < 4) return;
       done();
       this._dragPicked(e, canvas);
     };
     const up = () => { done(); if (onClick) onClick(); };
-    canvas.addEventListener('pointermove', move);
-    canvas.addEventListener('pointerup', up);
-    canvas.addEventListener('pointercancel', up);
+    window.addEventListener('pointermove', move, true);
+    window.addEventListener('pointerup', up, true);
+    window.addEventListener('pointercancel', up, true);
   }
 
   // ---------------------------------------------------------------- what is picked, for any mode
@@ -547,6 +555,10 @@ export class PartTool {
       const el = h('div', { class: 'gz-handle gz-part-arrow' });
       el.style.display = 'none';
       el.addEventListener('pointerdown', (e) => this._arrowDown(e, i));
+      // an object's up arrow shows its height above the workplane, as the lift cone did
+      const lift = (on) => { const a = this.arrows && this.arrows.object && this.arrows.axes[i]; if (a && a.name === 'z') this.ed.emit('lifthover', on || !!this.drag); };
+      el.addEventListener('pointerenter', () => lift(true));
+      el.addEventListener('pointerleave', () => lift(false));
       this.layer.append(el);
       return el;
     });
@@ -565,7 +577,7 @@ export class PartTool {
     this.anchorEl.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault(); e.stopPropagation();
-      this._dragPicked(e, this.anchorEl);
+      this.pressDrag(e, null);
     });
     this.layer.append(this.anchorEl);
     this.markEls = [];
@@ -577,7 +589,7 @@ export class PartTool {
     if (spec) {
       spec.axes.forEach((a, i) => {
         if (!this.arrowEls[i]) return;
-        this.arrowEls[i].title = a.name === 'n' ? 'Drag to move the face in or out' : a.plain ? 'Drag to move up or down' : `Drag to move along ${a.name.toUpperCase()}`;
+        this.arrowEls[i].title = a.name === 'n' ? 'Drag to move the face in or out' : a.plain ? 'Drag to raise or lower' : `Drag to move along ${a.name.toUpperCase()}`;
         // X red, Y green, Z blue (as the X / Y / Z fields); a face's arrow is black like the lift arrow
         for (const el of [this.arrowEls[i], this.tailEls[i], this.labelEls[i]]) {
           el.classList.remove('ax-x', 'ax-y', 'ax-z', 'ax-n');
@@ -702,23 +714,26 @@ export class PartTool {
       tail.style.width = `${Math.max(0, ARROW_PX - 9)}px`;
       tail.style.transform = `translate(${Math.round(ox)}px, ${Math.round(oy) - 1}px) rotate(${Math.atan2(uy, ux)}rad)`;
       // beside the arrow, past its tip
+      if (A.object) { lab.style.display = 'none'; return; }   // objects show their sizes and height on the gizmo instead
       const w = lab.offsetWidth || 40, hh = lab.offsetHeight || 20;
       const r = ARROW_PX + 14 + Math.abs(ux) * w / 2 + Math.abs(uy) * hh / 2;
       place(lab, ox + ux * r, oy + uy * r);
     });
   }
 
-  /** Object mode with the X / Y / Z arrows on: arrows from the bottom middle of the selection. */
+  /**
+   * Object mode: the same arrows as for faces, edges and corners, from the top middle of the
+   * selection. Move arrows on: X / Y / Z; off: one black arrow to raise or lower it.
+   */
   _objectArrows() {
     const ed = this.ed;
-    if (!ed.settings.moveArrows || ed.tool !== 'select' || ed.placing) return null;
+    if (ed.tool !== 'select' || ed.placing) return null;
     const nodes = ed.movableNodes();
     if (!nodes.length) return null;
     const b = ed.bounds(nodes);
     if (b.isEmpty()) return null;
-    const anchor = new THREE.Vector3((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, b.min.z).applyMatrix4(ed.frame);
-    const f = ed.frame;
-    return { anchor, axes: AXES.map((a) => ({ ...a, dir: a.dir.clone().transformDirection(f) })), anchorMark: false, object: true };
+    const anchor = new THREE.Vector3((b.min.x + b.max.x) / 2, (b.min.y + b.max.y) / 2, b.max.z).applyMatrix4(ed.frame);
+    return { anchor, axes: this._worldAxes(), anchorMark: false, object: true };
   }
 
   /** Move the selected objects along one arrow. */
