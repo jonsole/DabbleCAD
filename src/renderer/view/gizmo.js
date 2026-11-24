@@ -112,7 +112,7 @@ export class Gizmo {
     add(top, (b, c) => [c.x, c.y, b.max.z]);
     top.addEventListener('pointerdown', (e) => this._scaleDrag(e, { z: 1 }));
     const lift = this._handle('gz-lift', 'Drag to raise or lower');
-    add(lift, (b, c) => [c.x, c.y, b.max.z], { dy: -30 });
+    add(lift, (b, c) => [c.x, c.y, b.max.z], { dy: -30, noArrows: true });
     lift.addEventListener('pointerdown', (e) => this._liftDrag(e));
     lift.addEventListener('pointerenter', () => { this.hoverLift = true; this.layout(); });
     lift.addEventListener('pointerleave', () => { this.hoverLift = false; this.layout(); });
@@ -252,7 +252,7 @@ export class Gizmo {
       const o = vp.unitsPerPixel(c.clone().applyMatrix4(ed.frame)) * 30;
       const v = new THREE.Vector3();
       for (const it of this.items) {
-        if (!show[it.group]) { it.el.style.display = 'none'; continue; }
+        if (!show[it.group] || (it.noArrows && ed.settings.moveArrows)) { it.el.style.display = 'none'; continue; }   // the Z arrow takes over from the lift cone
         const arr = it.pos(b, c, o);
         v.set(arr[0], arr[1], arr[2]).applyMatrix4(ed.frame);
         vp.project(v, p);

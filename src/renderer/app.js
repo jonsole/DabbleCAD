@@ -152,8 +152,10 @@ export class App {
       button({ icon: 'fit', title: 'Fit all in view (F)', onClick: () => this.fit() }),
       button({ icon: 'plus', title: 'Zoom in (+)', onClick: () => this.viewport.zoomBy(0.75) }),
       button({ icon: 'minus', title: 'Zoom out (−)', onClick: () => this.viewport.zoomBy(1 / 0.75) }),
-      this.projBtn)));
+      this.projBtn,
+      this.axesBtn = button({ icon: 'axes', title: 'Move arrows (A): X / Y / Z arrows to move objects, edges and corners along one axis', onClick: () => this.toggleMoveArrows() }))));
 
+    if (this.settings.moveArrows) { this.axesBtn.classList.add('active'); this.axesBtn.setAttribute('aria-pressed', 'true'); }
     this.inspectorEl = h('div', { class: 'inspector' });
     makeDraggable(this.inspectorEl, { key: '3d-inspector' });
     this.banner = h('div', { class: 'mode-banner' });
@@ -551,6 +553,16 @@ export class App {
     this.viewport.requestRender();
   }
 
+  /** The coloured X / Y / Z move arrows, in every mode (off: drag for X / Y, the black arrow for height). */
+  toggleMoveArrows(on = !this.settings.moveArrows) {
+    this.patchSettings({ moveArrows: on });
+    this.axesBtn.classList.toggle('active', on);
+    this.axesBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    this.editor.parts.refresh();
+    this.gizmo.refresh();
+    toast(on ? 'Move arrows on' : 'Move arrows off', 'info', 1500);
+  }
+
   setTheme(theme) {
     this.settings.theme = theme;
     document.documentElement.dataset.theme = theme;
@@ -880,7 +892,7 @@ export class App {
       w: () => { if (shift) { ed.workplaneAtSelection(); this._updateBanner(); } else ed.setTool('workplane'); },
       1: () => ed.setTool('select'), 2: () => ed.setTool(ed.tool === 'face' ? 'select' : 'face'),
       3: () => ed.setTool(ed.tool === 'edges' ? 'select' : 'edges'), 4: () => ed.setTool(ed.tool === 'corner' ? 'select' : 'corner'),
-      e: () => ed.setTool('edges'), r: () => ed.setTool('ruler'), n: () => ed.setTool('note'), l: () => ed.setTool('align'), m: () => ed.setTool('mirror'), k: () => ed.setTool('split'),
+      e: () => ed.setTool('edges'), r: () => ed.setTool('ruler'), n: () => ed.setTool('note'), l: () => ed.setTool('align'), m: () => ed.setTool('mirror'), k: () => ed.setTool('split'), a: () => this.toggleMoveArrows(),
       c: () => ed.toggleCruise(), d: () => ed.dropToWorkplane(), s: () => ed.setHole(false), h: () => ed.setHole(true), t: () => ed.toggleTransparent(),
     };
     if (map[key]) { done(); map[key](); }
