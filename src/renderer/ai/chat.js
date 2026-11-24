@@ -10,6 +10,9 @@
 
 import { TOOLS, runTool, designSummary, toolByName } from './tools.js';
 import { LASER_TOOLS, laserSummary, laserContext } from './lasertools.js';
+import { MORE_TOOLS } from './moretools.js';
+
+export const DESIGN_TOOLS = [...TOOLS, ...MORE_TOOLS];
 import { AiError } from './providers.js';
 
 export const SYSTEM_PROMPT = `You are the design assistant inside DabbleCAD Plus, a 3D design app for making things to 3D print, in the style of Tinkercad. You help the user by answering questions about their design and by building or changing it with the tools you have.
@@ -21,6 +24,8 @@ How DabbleCAD works:
 - Groups: union combines shapes (holes cut), intersect keeps only the overlap, bundle keeps shapes together without combining. Grouping makes a new id; ungrouping gives the parts new ids.
 - The shape catalog (list_shape_catalog) has boxes, cylinders, spheres, cones, text, and many more, each with its own settings (for example a box's corner radius, a cylinder's sides). Use add_shape with a size to make one exactly as big as needed.
 - Locked shapes belong to the user: never try to move or change them.
+- Edges can be rounded or chamfered (list_edges, set_edges), shapes cut with a plane (split), and single shapes reshaped by moving their faces, edges or corners (list_parts, move_parts), as in the Edge, Face and Corner modes.
+- You can move the workplane onto a shape or a face (set_workplane) to build on it, change the view so the user can see your work (set_view), lock / hide / show shapes (set_flags), change a group's mode, pin notes, import files the user attached to the chat (list_attachments, import_file) and export the design (export_design).
 
 How to work:
 - Read before you edit: the design summary in each message lists every shape with its id and bounding box; use get_node, measure or list_shape_catalog when you need more.
@@ -45,13 +50,13 @@ export function editorHistory(ed) {
 }
 
 /** What the AI works on: the 3D design, or the laser drawing in the Laser workspace. */
-export function scopeFor(app) {
+export function scopeFor(app, session = null) {
   if (app.viewMode === 'laser') {
     const ctx = laserContext(app);
     return { id: 'laser', ctx, tools: LASER_TOOLS, summary: () => laserSummary(ctx), history: ctx.history };
   }
-  const ctx = { editor: app.editor, workspace: () => '3d' };
-  return { id: '3d', ctx, tools: TOOLS, summary: () => designSummary(ctx), history: editorHistory(app.editor) };
+  const ctx = { editor: app.editor, app, workspace: () => '3d', attachments: () => (session ? session.attachments : []) };
+  return { id: '3d', ctx, tools: DESIGN_TOOLS, summary: () => designSummary(ctx), history: editorHistory(app.editor) };
 }
 
 export const LASER_PROMPT = `
@@ -68,7 +73,8 @@ export class ChatSession {
     this.askBeforeEdits = askBeforeEdits;
     // every tool is always offered (so the tool list, and the prompt cache, stay the same);
     // the ones for the other workspace say so when called
-    this.tools = [...TOOLS, ...LASER_TOOLS];
+    this.tools = [...DESIGN_TOOLS, ...LASER_TOOLS];
+    this.attachments = [];   // files the user attached for import: { name, data: ArrayBuffer }
     this.messages = [];     // the conversation sent to the provider
     this.listeners = new Set();
     this.busy = false;
@@ -81,6 +87,7 @@ export class ChatSession {
   reset() {
     this.stop();
     this.messages = [];
+    this.attachments = [];
   }
 
   stop() {

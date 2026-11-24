@@ -600,3 +600,8 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
 .ai-key-status.ok { color: #3fb950; }
 .ai-key-status.bad { color: var(--danger); }
 .set-row.ai-test { padding-top: 0; }
+.ai-files { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 8px; }
+.ai-files:empty { display: none; }
+.ai-files:not(:empty) { padding-top: 6px; border-top: 1px solid var(--border); }
+.ai-file { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; padding: 1px 2px 1px 7px; }
+.ai-file .btn { height: 18px; min-width: 18px; padding: 0; }

@@ -501,9 +501,19 @@ export class Editor extends Emitter {
     const em = this.edgeMode;
     const node = em && em.id && this.node(em.id);
     if (!node || !em.picked.size || node.locked) return;
+    const failed = await this.setEdgeStyle(node, [...em.picked], t, r);
+    if (failed.added && failed.count) toast(failed.count >= failed.added ? 'Those edges could not be shaped (try a smaller size)' : `${failed.count} edge${failed.count > 1 ? 's' : ''} could not be shaped`, 'warn', 4000);
+    this.emit('selection');
+  }
+
+  /**
+   * Style edges of a node by their index in nodeEdgeData(node).chains (one undo step).
+   * Returns { added, count }: how many edges were newly shaped and how many of those failed.
+   */
+  async setEdgeStyle(node, indices, t, r) {
     const d = nodeEdgeData(node);
     const idx = edgeRoundIndex(node);
-    const picked = [...em.picked].filter((i) => i < d.chains.length);
+    const picked = [...new Set(indices)].filter((i) => i >= 0 && i < d.chains.length);
     // edges already shaped keep their place in the list (the order edges are cut in); new ones go last
     const shape = t !== 'sharp' && r > 0;
     const replace = new Map(picked.filter((i) => idx[i] !== undefined).map((i) => [idx[i], i]));
@@ -519,9 +529,7 @@ export class Editor extends Emitter {
       this.sync();
       this.commit();
     });
-    const failed = added.length ? geoStats.edgeRoundsFailed || 0 : 0;
-    if (failed) toast(failed >= added.length ? 'Those edges could not be shaped (try a smaller size)' : `${failed} edge${failed > 1 ? 's' : ''} could not be shaped`, 'warn', 4000);
-    this.emit('selection');
+    return { added: added.length, count: added.length ? geoStats.edgeRoundsFailed || 0 : 0 };
   }
 
   /** Does this node have edges shaped by the Edges tool or the all-edges radius? */

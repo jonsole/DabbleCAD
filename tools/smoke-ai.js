@@ -153,5 +153,29 @@ ok('laser tools: one undo step each, undo reply', out.laser.added === 1 && out.l
 ok('hidden in the Slicer', out.slicerHidden && out.backOpen);
 ok('no printer or laser control tools', out.deviceTools.length === 0);
 
+// ---- the extra 3D tools (edges, split, parts, workplane, flags, notes, import)
+{
+  const { scopeFor } = window.dabbleAi;
+  const sc = scopeFor(app, app.ai.session);
+  const run = (n, i) => window.dabbleAi.runTool(sc.ctx, n, i, sc.tools);
+  app.setViewMode('design');
+  await run('add_shape', { catalogId: 'box', name: 'T', size: { x: 40, y: 30, z: 20 } });
+  const id = app.editor.selectedNodes()[0].id;
+  const e = await run('set_edges', { id, set: 'top', style: 'round', size: 3 });
+  check('tools: round top edges', e.ok && e.result.edges.length === 4 && app.editor.history.undoLabel === 'AI: round top edges');
+  const faces = (await run('list_parts', { id, kind: 'faces' })).result.faces;
+  const top = faces.find((f) => f.outward.z > 0.9);
+  check('tools: move a face', (await run('move_parts', { id, kind: 'faces', parts: [top.face], by: 5 })).ok && Math.abs(app.editor.bounds([app.editor.node(id)]).max.z - 25) < 0.01);
+  const sp = await run('split', { ids: [id], axis: 'z', at: 8 });
+  check('tools: split', sp.ok && sp.result.pieces.length === 2);
+  check('tools: workplane on top and back', (await run('set_workplane', { to: 'on_top', ids: [sp.result.pieces[0].id] })).ok && app.editor.hasFrame && (await run('set_workplane', { to: 'main' })).ok && !app.editor.hasFrame);
+  check('tools: lock, no unlock', (await run('set_flags', { ids: [sp.result.pieces[0].id], locked: true })).ok && !(await run('set_flags', { ids: [sp.result.pieces[0].id], locked: false })).ok);
+  check('tools: note', (await run('note', { action: 'add', text: 'hi', at: { x: 0, y: 0, z: 30 } })).ok && app.editor.doc.notes.length >= 1);
+  const stl = 'solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 10 0 0\nvertex 0 10 0\nendloop\nendfacet\nendsolid t\n';
+  app.ai.session.attachments = [{ name: 'tri.stl', data: new TextEncoder().encode(stl).buffer }];
+  const im = await run('import_file', { name: 'tri.stl', largest_side: 30 });
+  check('tools: import an attachment', im.ok && im.result.imported.length === 1);
+}
+
 if (fails.length) throw new Error(fails.join('\n'));
 return { checks, fails };

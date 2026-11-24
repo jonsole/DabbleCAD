@@ -447,3 +447,6 @@ export async function runTool(ctx, name, input, list = TOOLS) {
     return { ok: false, error: `It went wrong: ${e.message || e}. Nothing was changed.` };
   }
 }
+
+// shared with the other tool files (moretools.js)
+export const helpers = { nodesFor, focus, box, out, inn, num, str, ids, vec, obj, nodeInfo, placeNodes, sizeNodes, factor };
