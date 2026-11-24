@@ -294,7 +294,7 @@ registerGoogleAuth(ipcMain, () => win, fakeGoogle ? {
 } : null);
 
 // AI chat: keys and provider requests (nothing here can reach printers or lasers)
-registerAi(ipcMain, () => win);
+registerAi(ipcMain, () => win, { testAllow: SMOKE ? argValue('fake-ai') : null });
 
 ipcMain.handle('designs:list', () => listDesigns());
 ipcMain.handle('designs:load', (_e, id) => fs.readFileSync(designPath(id), 'utf8'));

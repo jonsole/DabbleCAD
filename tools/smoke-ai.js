@@ -197,5 +197,25 @@ ok('no printer or laser control tools', out.deviceTools.length === 0);
   check('web: chip and sources', r.chips.length === 1 && r.chips[0].web && r.chips[0].status === 'ok' && r.sources.length === 1 && !!document.querySelector('.ai-sources a[href="https://example.com/m3"]'));
 }
 
+// ---- fetch_page (desktop): reads public pages, never the local network
+{
+  const { FETCH_PAGE } = window.dabbleAi;
+  const run = (i) => window.dabbleAi.runTool({ editor: app.editor }, 'fetch_page', i, [FETCH_PAGE]);
+  const ok = await run({ url: fakeUrl + '/page', links: true });
+  check('fetch_page: reads a page as text', ok.ok && ok.result.title === 'Pi 4 drawing' && /# Raspberry Pi 4/.test(ok.result.text) && /58 x 49 mm/.test(ok.result.text) && /Hole \| 2.7 mm|Hole \|  2.7 mm|\| Hole \| 2.7 mm/.test(ok.result.text) && !/var x|menu/.test(ok.result.text) && ok.result.links.length === 1);
+  for (const u of ['http://192.168.88.210/rr_status', 'http://localhost:5183/', 'http://127.0.0.1:1/', 'http://printer.local/', 'file:///etc/passwd', fakeUrl + '/moved']) {
+    const r = await run({ url: u });
+    check('fetch_page: refuses ' + u, !r.ok);
+  }
+  app.patchSettings({ ai: { provider: 'local', baseURL: fakeUrl + '/v1', model: 'fake-model' } });
+  const s = app.ai.session;
+  s.getProvider = async () => ({ web: false, async stream() { return { content: [{ type: 'text', text: 'ok' }], stopReason: 'end' }; } });
+  await s.send('hi');
+  check('fetch_page offered to models without web tools', s.tools.some((t) => t.name === 'fetch_page'));
+  s.getProvider = async () => ({ web: true, async stream() { return { content: [{ type: 'text', text: 'ok' }], stopReason: 'end' }; } });
+  await s.send('hi');
+  check('fetch_page not offered with Anthropic web access', !s.tools.some((t) => t.name === 'fetch_page'));
+}
+
 if (fails.length) throw new Error(fails.join('\n'));
 return { checks, fails };

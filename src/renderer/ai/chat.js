@@ -11,6 +11,7 @@
 import { TOOLS, runTool, designSummary, toolByName } from './tools.js';
 import { LASER_TOOLS, laserSummary, laserContext } from './lasertools.js';
 import { MORE_TOOLS } from './moretools.js';
+import { FETCH_PAGE, pageFetchAvailable } from './webtool.js';
 
 export const DESIGN_TOOLS = [...TOOLS, ...MORE_TOOLS];
 import { AiError } from './providers.js';
@@ -33,7 +34,7 @@ How to work:
 - Every edit you make is one undo step the user can take back, so make reasonable choices instead of asking about details; ask only when the request is genuinely unclear.
 - After building something, make sure the result is selected (add_shape and group leave their result selected; use select otherwise), and say briefly what you made, with its main sizes.
 - Keep replies short and plain. Don't repeat the design summary back.
-- If web access is on (you have web_search and web_fetch), use it for facts you need for the design, such as standard sizes (screw and nut sizes, a board's mounting holes, a part's datasheet dimensions). Say where the numbers came from.
+- If you have web tools (web_search and web_fetch, or fetch_page), use them for facts you need for the design, such as standard sizes (screw and nut sizes, a board's mounting holes, a part's datasheet dimensions). Say where the numbers came from.
 - You cannot control printers or lasers, start jobs, or send G-code, and you have no tools for it: if asked, say the user has to do that themselves.`;
 
 const MAX_STEPS = 30;
@@ -120,6 +121,9 @@ export class ChatSession {
     this.abort = new AbortController();
     try {
       const provider = await this.getProvider();
+      // fetch_page for models without their own web tools (desktop only)
+      this.extra = pageFetchAvailable && !provider.web ? [FETCH_PAGE] : [];
+      this.tools = [...DESIGN_TOOLS, ...LASER_TOOLS, ...this.extra];
       for (let step = 0; step < MAX_STEPS; step++) {
         if (this.abort.signal.aborted) throw new AiError('cancelled', 'Stopped.');
         const res = await provider.stream({
@@ -200,7 +204,8 @@ export class ChatSession {
     };
     if (call.inputError) return finish(false, call.inputError);
     if (!tool) return finish(false, `There's no tool called "${call.name}".`);
-    if (!scope.tools.includes(tool)) {
+    const list = [...scope.tools, ...(this.extra || [])];
+    if (!list.includes(tool)) {
       return finish(false, scope.id === 'laser'
         ? `${call.name} is for the 3D design; the user is in the Laser workspace, so use the laser tools.`
         : `${call.name} is for the Laser workspace; the user is in 3D Design, so use the 3D tools.`);
@@ -209,7 +214,7 @@ export class ChatSession {
       const ok = await this._ask(reply, chip, tool, call);
       if (!ok) return finish(false, 'The user skipped this edit: it was not made.', { skipped: true });
     }
-    const r = await runTool(scope.ctx, call.name, call.input, scope.tools);
+    const r = await runTool(scope.ctx, call.name, call.input, list);
     if (r.ok && r.edited) reply.edits++;
     return r.ok ? finish(true, r.result) : finish(false, r.error);
   }
