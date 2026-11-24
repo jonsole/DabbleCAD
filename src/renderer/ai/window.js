@@ -120,7 +120,7 @@ export class AiWindow {
 
   get open() { return !this.el.classList.contains('closed'); }
 
-  /** Show or hide; remembered. In the Slicer the window stays hidden (the AI doesn't work there). */
+  /** Show or hide; remembered. */
   toggle(on = !this.open) {
     this.save({ open: on });
     this.sync();
@@ -129,7 +129,7 @@ export class AiWindow {
 
   /** Match the window to the workspace and settings. */
   async sync() {
-    const allowed = this.app.viewMode !== 'slicer';
+    const allowed = true;
     const show = allowed && !!this.st().open;
     this.el.classList.toggle('closed', !show);
     this._attach();
@@ -171,7 +171,10 @@ export class AiWindow {
 
   /** A PNG of the current view, about 1024 px on its long side. */
   snapshot() {
-    const src = this.app.viewMode === 'laser' ? this.app.laser.canvas : (this.app.viewport.renderNow(), this.app.viewport.canvas);
+    const sl = this.app.slicer;
+    const src = this.app.viewMode === 'laser' ? this.app.laser.canvas
+      : this.app.viewMode === 'slicer' && sl.scene ? (sl.scene.renderNow ? sl.scene.renderNow() : sl.scene.render && sl.scene.render(), sl.scene.renderer.domElement)
+        : (this.app.viewport.renderNow(), this.app.viewport.canvas);
     const k = Math.min(1, LONG_SIDE / Math.max(src.width, src.height));
     const c = document.createElement('canvas');
     c.width = Math.max(1, Math.round(src.width * k)); c.height = Math.max(1, Math.round(src.height * k));

@@ -9,7 +9,7 @@ import { importFiles, EXPORT_FORMATS } from '../core/io.js';
 import { kindName } from '../core/shapes.js';
 import { ToolError, helpers } from './tools.js';
 
-const { nodesFor, focus, out, inn, num, str, ids, vec, obj, nodeInfo, placeNodes } = helpers;
+const { nodesFor, focus, out, inn, num, str, ids, vec, obj, nodeInfo, placeNodes, factor } = helpers;
 const one = (description = 'Id of one shape (from the design summary or list_nodes).') => ({ type: 'string', description });
 const r3 = (v) => Math.round(v * 1000) / 1000;
 
@@ -82,6 +82,119 @@ function partsInfo(ed, node) {
 function target(ed, node, I, kind, items) {
   const t = { node, I, kind, items, edits: node.shapeEdits ? [...node.shapeEdits] : [] };
   return t;
+}
+
+
+// ------------------------------------------------------------------ cross-sections and holes
+const AXI = { x: 0, y: 1, z: 2 };
+
+/** Triangles of a node in workplane coordinates (mm), as a flat array of 9 numbers each. */
+function worldTris(ed, node) {
+  const g = getGeometry(node);
+  const pos = g.attributes.position;
+  if (!pos) return new Float32Array(0);
+  const M = ed.frameInv.clone().multiply(ed.doc.nodes.includes(node) ? nodeWorld(ed, node) : new THREE.Matrix4().fromArray(node.matrix));
+  const idx = g.index ? g.index.array : null;
+  const n = idx ? idx.length : pos.count;
+  const out = new Float32Array(n * 3);
+  const v = new THREE.Vector3();
+  for (let k = 0; k < n; k++) {
+    v.fromBufferAttribute(pos, idx ? idx[k] : k).applyMatrix4(M);
+    out[k * 3] = v.x; out[k * 3 + 1] = v.y; out[k * 3 + 2] = v.z;
+  }
+  return out;
+}
+
+/** Closed outlines where the plane axis = c cuts the triangles: [{ pts: [[u, v]...], area }]. */
+function sectionLoops(tris, axis, c) {
+  const a = AXI[axis], u = (a + 1) % 3, w = (a + 2) % 3;
+  const q = (x) => Math.round(x * 1e4);
+  const key = (p) => `${q(p[0])},${q(p[1])}`;
+  const segs = [];
+  for (let t = 0; t < tris.length; t += 9) {
+    const d = [tris[t + a] - c, tris[t + 3 + a] - c, tris[t + 6 + a] - c];
+    const pts = [];
+    for (let e = 0; e < 3; e++) {
+      const i = e, j = (e + 1) % 3;
+      if ((d[i] < 0) !== (d[j] < 0)) {
+        const f = d[i] / (d[i] - d[j]);
+        const P = (k) => tris[t + i * 3 + k] + (tris[t + j * 3 + k] - tris[t + i * 3 + k]) * f;
+        pts.push([P(u), P(w)]);
+      }
+    }
+    if (pts.length === 2 && key(pts[0]) !== key(pts[1])) segs.push(pts);
+  }
+  // chain the segments into loops
+  const ends = new Map();
+  segs.forEach((sg, i) => { for (const p of sg) { const k = key(p); if (!ends.has(k)) ends.set(k, []); ends.get(k).push(i); } });
+  const used = new Uint8Array(segs.length);
+  const loops = [];
+  for (let s0 = 0; s0 < segs.length; s0++) {
+    if (used[s0]) continue;
+    used[s0] = 1;
+    const pts = [segs[s0][0], segs[s0][1]];
+    for (let guard = 0; guard < segs.length; guard++) {
+      const k = key(pts[pts.length - 1]);
+      const nx = (ends.get(k) || []).find((i) => !used[i]);
+      if (nx === undefined) break;
+      used[nx] = 1;
+      const sg = segs[nx];
+      pts.push(key(sg[0]) === k ? sg[1] : sg[0]);
+    }
+    if (pts.length > 3 && key(pts[0]) === key(pts[pts.length - 1])) {
+      pts.pop();
+      let area = 0;
+      for (let i = 0; i < pts.length; i++) { const p = pts[i], r = pts[(i + 1) % pts.length]; area += p[0] * r[1] - r[0] * p[1]; }
+      loops.push({ pts, area: Math.abs(area) / 2 });
+    }
+  }
+  const inside = (p, poly) => { let c2 = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const A = poly[i], B = poly[j]; if ((A[1] > p[1]) !== (B[1] > p[1]) && p[0] < ((B[0] - A[0]) * (p[1] - A[1])) / (B[1] - A[1]) + A[0]) c2 = !c2; } return c2; };
+  for (const L of loops) {
+    // an outline inside an odd number of others is a hole in the material
+    L.depth = loops.filter((o) => o !== L && o.area > L.area && inside(L.pts[0], o.pts)).length;
+    L.hole = L.depth % 2 === 1;
+    L.min = [Math.min(...L.pts.map((p) => p[0])), Math.min(...L.pts.map((p) => p[1]))];
+    L.max = [Math.max(...L.pts.map((p) => p[0])), Math.max(...L.pts.map((p) => p[1]))];
+    L.centre = [(L.min[0] + L.max[0]) / 2, (L.min[1] + L.max[1]) / 2];
+    // round? fit a circle (least squares) and check every point is near it
+    const fit = fitCircle(L.pts);
+    if (fit && L.pts.length >= 8) {
+      const dev = Math.max(...L.pts.map((p) => Math.abs(Math.hypot(p[0] - fit.cx, p[1] - fit.cy) - fit.r)));
+      if (dev < 0.04 * fit.r) {
+        L.centre = [fit.cx, fit.cy];
+        // a polygon's flats sit inside its corners: use the circle of the same area
+        L.diameter = 2 * Math.sqrt(L.area / Math.PI);
+      }
+    }
+  }
+  return { loops, u: 'xyz'[u], v: 'xyz'[w] };
+}
+
+/** Least-squares circle through 2D points: { cx, cy, r } or null. */
+function fitCircle(pts) {
+  let sx = 0, sy = 0, sxx = 0, syy = 0, sxy = 0, sxz = 0, syz = 0, sz = 0;
+  const n = pts.length;
+  for (const [x, y] of pts) { const z = x * x + y * y; sx += x; sy += y; sxx += x * x; syy += y * y; sxy += x * y; sxz += x * z; syz += y * z; sz += z; }
+  // solve [sxx sxy sx; sxy syy sy; sx sy n] [a b c] = [sxz syz sz]  (x²+y² = a x + b y + c)
+  const A = [[sxx, sxy, sx, sxz], [sxy, syy, sy, syz], [sx, sy, n, sz]];
+  for (let i = 0; i < 3; i++) {
+    let m = i;
+    for (let k = i + 1; k < 3; k++) if (Math.abs(A[k][i]) > Math.abs(A[m][i])) m = k;
+    [A[i], A[m]] = [A[m], A[i]];
+    if (Math.abs(A[i][i]) < 1e-12) return null;
+    for (let k = 0; k < 3; k++) if (k !== i) { const f = A[k][i] / A[i][i]; for (let j = i; j < 4; j++) A[k][j] -= f * A[i][j]; }
+  }
+  const a = A[0][3] / A[0][0], b = A[1][3] / A[1][1], c = A[2][3] / A[2][2];
+  const cx = a / 2, cy = b / 2, r2 = c + cx * cx + cy * cy;
+  return r2 > 0 ? { cx, cy, r: Math.sqrt(r2) } : null;
+}
+
+function loopView(ed, L, axis, c, names) {
+  const pos = { [axis]: out(ed, c) };
+  pos[names.u] = out(ed, L.centre[0]); pos[names.v] = out(ed, L.centre[1]);
+  const o = { kind: L.hole ? 'hole' : 'outline', centre: pos, size: { [names.u]: out(ed, L.max[0] - L.min[0]), [names.v]: out(ed, L.max[1] - L.min[1]) }, area: Math.round(L.area / (factor(ed) ** 2) * 100) / 100 };
+  if (L.diameter) o.round_diameter = out(ed, L.diameter);
+  return o;
 }
 
 // ------------------------------------------------------------------ tools
@@ -253,6 +366,61 @@ export const MORE_TOOLS = [
       const r = nodeInfo(ed, node, { detail: true });
       if (st && st.failed) r.warning = `${st.failed} move${st.failed > 1 ? 's' : ''} could not be made: it would turn the shape inside out.`;
       return r;
+    },
+  },
+  // ---- looking inside: cross-sections and holes
+  {
+    name: 'section',
+    kind: 'read',
+    description: 'Cut through a shape (or group, or imported mesh) with a flat plane without changing it, and list the outlines on the cut: each with its centre, size and area, whether it is material or a hole, and the diameter of round ones. axis z, at 5 is a horizontal cut 5 up. Good for finding hole sizes, wall thickness and the shape of a part at a height.',
+    inputSchema: obj({ id: one(), axis: { type: 'string', enum: ['x', 'y', 'z'] }, at: num('Where to cut along that axis, design units.') }, ['id', 'axis', 'at']),
+    run: ({ editor: ed }, i) => {
+      const [node] = nodesFor(ed, i.id, { edit: false });
+      const tris = worldTris(ed, node);
+      const c = inn(ed, i.at) + 1e-5;
+      const sec = sectionLoops(tris, i.axis, c);
+      if (!sec.loops.length) return { outlines: [], note: 'The plane misses the shape there.' };
+      return { axis: i.axis, at: i.at, outlines: sec.loops.sort((a, b) => b.area - a.area).slice(0, 60).map((L) => loopView(ed, L, i.axis, c, sec)) };
+    },
+  },
+  {
+    name: 'find_holes',
+    kind: 'read',
+    description: 'Find the round holes in a shape or imported mesh by cutting through it at several places along each axis: for each hole, its axis (direction), centre, diameter (design units) and the stretch along its axis where it was found (a counterbore shows as two holes with the same centre and different diameters). Use it to answer "what drill / screw sizes".',
+    inputSchema: obj({ id: one(), axis: { type: 'string', enum: ['x', 'y', 'z'], description: 'Only holes along this axis (optional).' }, samples: { type: 'integer', minimum: 3, maximum: 40, description: 'Cuts per axis (default 12).' } }, ['id']),
+    run: ({ editor: ed }, i) => {
+      const [node] = nodesFor(ed, i.id, { edit: false });
+      const tris = worldTris(ed, node);
+      const bb = new THREE.Box3();
+      for (let k = 0; k < tris.length; k += 3) bb.expandByPoint(new THREE.Vector3(tris[k], tris[k + 1], tris[k + 2]));
+      const holes = [];
+      const K = i.samples || 12;
+      for (const axis of i.axis ? [i.axis] : ['z', 'x', 'y']) {
+        const lo = bb.min[axis], hi = bb.max[axis];
+        for (let s2 = 0; s2 < K; s2++) {
+          const c = lo + ((hi - lo) * (s2 + 0.5)) / K;
+          const sec = sectionLoops(tris, axis, c);
+          for (const L of sec.loops) {
+            if (!L.hole || !L.diameter) continue;
+            const tol = Math.max(0.2, L.diameter * 0.02);
+            let h = holes.find((x) => x.axis === axis && Math.hypot(x.c[0] - L.centre[0], x.c[1] - L.centre[1]) < tol && Math.abs(x.d - L.diameter) < tol);
+            if (!h) { h = { axis, c: L.centre, d: L.diameter, from: c, to: c, names: sec }; holes.push(h); }
+            h.from = Math.min(h.from, c); h.to = Math.max(h.to, c);
+          }
+        }
+      }
+      const step = (ax) => (bb.max[ax] - bb.min[ax]) / K;
+      return {
+        count: holes.length,
+        holes: holes.slice(0, 80).map((h) => ({
+          axis: h.axis,
+          diameter: out(ed, h.d),
+          centre: { [h.names.u]: out(ed, h.c[0]), [h.names.v]: out(ed, h.c[1]) },
+          found_from: out(ed, Math.max(bb.min[h.axis], h.from - step(h.axis) / 2)),
+          found_to: out(ed, Math.min(bb.max[h.axis], h.to + step(h.axis) / 2)),
+        })),
+        note: 'Diameters are measured from the model\'s facets, so they are close but not exact; depths are only as fine as the cuts. Holes smaller than about two cut spacings deep may be missed (try more samples, or section).',
+      };
     },
   },
   // ---- workplane and view
