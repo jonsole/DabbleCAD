@@ -522,3 +522,16 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
 .inspector.dragging { user-select: none; -webkit-user-select: none; }
 .shape-grid { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); }
 .side-tools { grid-template-columns: repeat(auto-fill, minmax(62px, 1fr)); }
+
+/* split tool */
+.split-bar { display: flex; flex-direction: column; gap: 8px; min-width: 560px; }
+.split-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.split-field { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-dim, #9aa3b0); }
+.split-field small { font-size: 11px; }
+.split-num { width: 64px; height: 26px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text); font: inherit; font-size: 13px; text-align: right; }
+.split-hint { font-size: 12px; color: var(--text-dim, #9aa3b0); }
+.split-note { font-size: 12px; color: var(--text-dim, #9aa3b0); }
+.split-note.warn { color: #f5a524; }
+.split-note:empty { display: none; }
+.gz-split-slide { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 50%; color: #fff; background: rgba(24, 28, 36, 0.82); border: 1px solid rgba(255,255,255,.55); cursor: grab; }
+.gz-split-slide:hover { background: var(--select); color: #06202b; }

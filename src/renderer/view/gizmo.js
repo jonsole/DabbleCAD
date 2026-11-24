@@ -60,7 +60,21 @@ export class Gizmo {
     this.rulerLines.raycast = () => {};
     viewport.helpers.add(this.rulerLines);
 
+    // Split tool: the see-through cutting plane and its outline
+    this.splitMesh = new THREE.Group();
+    const planeMat = new THREE.MeshBasicMaterial({ color: 0x29c5ff, transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false });
+    const planeFill = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), planeMat);
+    const edge = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(1, 1)), new THREE.LineBasicMaterial({ color: 0x29c5ff, transparent: true, opacity: 0.9 }));
+    const cross = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute([-0.5, 0, 0, 0.5, 0, 0, 0, -0.5, 0, 0, 0.5, 0], 3));
+    const crossLines = new THREE.LineSegments(cross, new THREE.LineBasicMaterial({ color: 0x29c5ff, transparent: true, opacity: 0.35 }));
+    for (const o of [planeFill, edge, crossLines]) { o.raycast = () => {}; o.renderOrder = 8; }
+    this.splitMesh.add(planeFill, edge, crossLines);
+    this.splitMesh.matrixAutoUpdate = false;
+    this.splitMesh.visible = false;
+    viewport.helpers.add(this.splitMesh);
+
     this._build();
+    editor.on('split', () => this.refresh());
     editor.on('selection', () => this.refresh());
     editor.on('transform', () => this.refresh());
     editor.on('doc', () => { this.refresh(); this._renderNotes(); });
@@ -159,6 +173,23 @@ export class Gizmo {
         : axis === 'y' ? [b.min.x - o * 1.5, c.y, b.min.z] : [b.max.x + o * 0.9, b.max.y + o * 0.9, c.z]), { group: 'mirror' });
       el.addEventListener('pointerdown', (e) => { e.stopPropagation(); this.editor.mirror(axis); });
     }
+    // split: an arrow to slide the plane along its normal, rings to turn it, the offset as a label
+    const splitAt = (k) => (b, c, o) => { const s = this._splitScreen; return s ? s[k] : [c.x, c.y, c.z]; };
+    const slide = this.splitSlide = this._handle('gz-split-slide', 'Drag to move the cutting plane', icon('arrowUp', 20));
+    add(slide, splitAt('arrow'), { group: 'split' });
+    slide.addEventListener('pointerdown', (e) => this._splitSlideDrag(e));
+    for (const axis of ['x', 'y', 'z']) {
+      const el = this._handle('gz-rot gz-rot-' + axis, `Turn the cutting plane around ${axis.toUpperCase()} (Shift: 45° steps)`, icon('rotate', 22));
+      add(el, splitAt('rot' + axis), { group: 'split' });
+      el.addEventListener('pointerdown', (e) => this._splitRotateDrag(e, axis));
+    }
+    this.splitLabel = h('div', { class: 'gz-label gz-split-label', title: 'Click to type the plane position' });
+    this.splitLabel.style.display = 'none';
+    this.layer.append(this.splitLabel);
+    add(this.splitLabel, splitAt('label'), { group: 'split', dx: 34 });
+    this.splitLabel.addEventListener('pointerdown', (e) => e.stopPropagation());
+    this.splitLabel.addEventListener('click', () => this._editSplitOffset());
+
     // ruler dismiss + notes host
     this.rulerClose = h('button', { class: 'gz-ruler-close', title: 'Remove ruler', type: 'button' }, '×');
     this.rulerClose.style.display = 'none';
@@ -206,14 +237,16 @@ export class Gizmo {
     const locked = ed.selection.size > 0 && ed.movableNodes().length === 0;
     const show = {
       edit: !!b && !locked && (tool === 'select' || tool === 'place') && !ed.placing,
-      dims: !!b && ed.settings.showDims !== false && tool !== 'align' && tool !== 'mirror' && !ed.placing,
+      dims: !!b && ed.settings.showDims !== false && tool !== 'align' && tool !== 'mirror' && tool !== 'split' && !ed.placing,
       elev: !!b && !locked && tool === 'select' && (this.hoverLift || this.dragKind === 'lift' || Math.abs(b.min.z) > 1e-6),
       align: !!b && !locked && tool === 'align',
       mirror: !!b && !locked && tool === 'mirror',
+      split: !!b && !!ed.split && tool === 'split',
       ruler: !!b && !!ed.ruler,
     };
     if (this.dragKind === 'rotate') { show.dims = false; show.elev = false; }
     const p = {};
+    this._layoutSplit(show.split);
     if (b) {
       const c = b.getCenter(new THREE.Vector3());
       const o = vp.unitsPerPixel(c.clone().applyMatrix4(ed.frame)) * 30;
@@ -229,6 +262,7 @@ export class Gizmo {
       }
       if (!this.editingLabel) {
         const u = ed.units;
+        if (ed.split) this.splitLabel.textContent = '↕ ' + formatLength(ed.split.offset, u);
         this.labels.x.el.textContent = formatLength(b.max.x - b.min.x, u);
         this.labels.y.el.textContent = formatLength(b.max.y - b.min.y, u);
         this.labels.z.el.textContent = formatLength(b.max.z - b.min.z, u);
@@ -431,6 +465,135 @@ export class Gizmo {
       this.angleLabel.textContent = (Math.round(deg * 10) / 10) + '°';
       this.angleLabel.style.transform = `translate(${ev.clientX - rect.left + 18}px, ${ev.clientY - rect.top - 18}px)`;
     }, null, { alwaysCommit: dup });
+  }
+
+  // ---------------------------------------------------------------- split plane
+  /** Size and place the cutting plane, and work out where its handles go (frame coordinates). */
+  _layoutSplit(on) {
+    const ed = this.editor, vp = this.viewport;
+    const pl = on ? ed.splitPlane() : null;
+    this.splitMesh.visible = !!pl;
+    this._splitScreen = null;
+    if (!pl) return;
+    const size = Math.max(30, ed.split.size * 1.25);
+    this.splitMesh.matrix.copy(ed.frame).multiply(pl.matrix).multiply(S(size, size, 1));
+    this.splitMesh.updateMatrixWorld(true);
+    const o = vp.unitsPerPixel(pl.point.clone().applyMatrix4(ed.frame)) * 30;
+    const ax = new THREE.Vector3(1, 0, 0).applyQuaternion(ed.split.q), ay = new THREE.Vector3(0, 1, 0).applyQuaternion(ed.split.q);
+    const at = (v) => [v.x, v.y, v.z];
+    const P = pl.point, half = size / 2;
+    this._splitScreen = {
+      arrow: at(P.clone().addScaledVector(pl.normal, o * 1.6)),
+      label: at(P.clone().addScaledVector(pl.normal, o * 1.6)),
+      // the rings sit near the middle of the plane (its far corners can be off screen)
+      rotx: at(P.clone().addScaledVector(ax, Math.min(half, o * 3.4))),
+      roty: at(P.clone().addScaledVector(ay, -Math.min(half, o * 3.4))),
+      rotz: at(P.clone().addScaledVector(ax, -Math.min(half, o * 3.4))),
+    };
+    // point the slide arrow along the plane's normal as seen on screen
+    const a = {}, b2 = {};
+    vp.project(P.clone().applyMatrix4(ed.frame), a);
+    vp.project(P.clone().addScaledVector(pl.normal, o).applyMatrix4(ed.frame), b2);
+    const deg = (Math.atan2(b2.x - a.x, -(b2.y - a.y)) * 180) / Math.PI;
+    const svg = this.splitSlide.firstChild;
+    if (svg) svg.style.transform = `rotate(${Math.round(deg)}deg)`;
+  }
+
+  _splitSlideDrag(e) {
+    const ed = this.editor;
+    const pl = ed.splitPlane();
+    if (!pl) return;
+    const n = pl.normal.clone(), P = pl.point.clone(), off0 = ed.split.offset;
+    // the point on the normal line closest to the pointer ray
+    const along = (ev) => {
+      const ray = ed.localRay(ev);
+      const w0 = P.clone().sub(ray.origin), b = n.dot(ray.direction), d = n.dot(w0), e2 = ray.direction.dot(w0);
+      const den = 1 - b * b;
+      return den < 1e-6 ? null : (b * e2 - d) / den;
+    };
+    const t0 = along(e);
+    if (t0 == null) return;
+    this._splitDrag(e, 'split', (ev) => {
+      const t = along(ev);
+      if (t == null) return;
+      ed.setSplit({ offset: ed.snapValue(off0 + t - t0) });
+    });
+  }
+
+  _splitRotateDrag(e, axis) {
+    const ed = this.editor, vp = this.viewport;
+    const pl = ed.splitPlane();
+    if (!pl) return;
+    const c = pl.point.clone(), cWorld = c.clone().applyMatrix4(ed.frame);
+    const q0 = ed.split.q.clone(), off0 = ed.split.offset, c0 = ed.split.c.clone();
+    const axisLocal = new THREE.Vector3(axis === 'x' ? 1 : 0, axis === 'y' ? 1 : 0, axis === 'z' ? 1 : 0);
+    const cs = vp.project(cWorld, {});
+    const rect = vp.canvas.getBoundingClientRect();
+    const facing = -axisLocal.clone().transformDirection(ed.frame).dot(vp.viewDirection());
+    const angleAt = (ev) => {
+      const a = Math.atan2(-(ev.clientY - rect.top - cs.y), ev.clientX - rect.left - cs.x);
+      return facing >= 0 ? a : -a;
+    };
+    let prev = angleAt(e), total = 0;
+    this._splitDrag(e, 'rotate', (ev) => {
+      const a = angleAt(ev);
+      let step = a - prev;
+      if (step > Math.PI) step -= Math.PI * 2; else if (step < -Math.PI) step += Math.PI * 2;
+      total += step; prev = a;
+      const dist = Math.hypot(ev.clientX - rect.left - cs.x, ev.clientY - rect.top - cs.y);
+      const inc = ev.shiftKey ? 45 : dist < RING_PX * 0.6 ? 22.5 : 1;
+      const deg = Math.round(((total * 180) / Math.PI) / inc) * inc;
+      const q = new THREE.Quaternion().setFromAxisAngle(axisLocal, (deg * Math.PI) / 180).multiply(q0);
+      // turn about the plane's own point, so the plane keeps passing through it
+      const n = new THREE.Vector3(0, 0, 1).applyQuaternion(q);
+      ed.setSplit({ q, offset: c.clone().sub(c0).dot(n) });
+      void off0;
+      this.angleLabel.style.display = '';
+      this.angleLabel.textContent = (Math.round(deg * 10) / 10) + '°';
+      this.angleLabel.style.transform = `translate(${ev.clientX - rect.left + 18}px, ${ev.clientY - rect.top - 18}px)`;
+    });
+  }
+
+  /** Drags of the split handles change only the plane, not the document (no history). */
+  _splitDrag(e, kind, onMove) {
+    e.preventDefault();
+    e.stopPropagation();
+    const el = e.currentTarget;
+    try { el.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
+    this.dragKind = kind; this.dragging = true;
+    const up = () => {
+      try { el.releasePointerCapture(e.pointerId); } catch { /* released */ }
+      el.removeEventListener('pointermove', onMove);
+      el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', up);
+      this.dragKind = null; this.dragging = false;
+      this.angleLabel.style.display = 'none';
+      this.refresh();
+    };
+    el.addEventListener('pointermove', onMove);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+  }
+
+  _editSplitOffset() {
+    const ed = this.editor;
+    if (!ed.split || this.editingLabel) return;
+    const el = this.splitLabel;
+    const input = h('input', { class: 'gz-input', type: 'text', value: formatLength(ed.split.offset, ed.units) });
+    this.editingLabel = 'split';
+    el.textContent = ''; el.append(input); el.classList.add('editing');
+    input.focus(); input.select();
+    let done = false;
+    const finish = (apply) => {
+      if (done) return; done = true;
+      this.editingLabel = null; el.classList.remove('editing');
+      const v = parseLength(input.value, ed.units);
+      input.remove();
+      if (apply && isFinite(v)) ed.setSplit({ offset: v });
+      this.refresh();
+    };
+    input.addEventListener('keydown', (ev) => { ev.stopPropagation(); if (ev.key === 'Enter') finish(true); else if (ev.key === 'Escape') finish(false); });
+    input.addEventListener('blur', () => finish(true));
   }
 
   // ---------------------------------------------------------------- typed dimensions
