@@ -253,7 +253,7 @@ export class Gizmo {
       const o = vp.unitsPerPixel(c.clone().applyMatrix4(ed.frame)) * 30;
       const v = new THREE.Vector3();
       for (const it of this.items) {
-        if (!show[it.group] || it.noArrows) { it.el.style.display = 'none'; continue; }   // raising and lowering: the shared black arrow (parttool.js)
+        if (!show[it.group] || (it.noArrows && ed.settings.moveArrows)) { it.el.style.display = 'none'; continue; }   // with move arrows on, the Z arrow takes over
         const arr = it.pos(b, c, o);
         v.set(arr[0], arr[1], arr[2]).applyMatrix4(ed.frame);
         vp.project(v, p);

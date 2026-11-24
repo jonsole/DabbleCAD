@@ -17,6 +17,7 @@ const AXES = [
   { name: 'z', dir: new THREE.Vector3(0, 0, 1), color: 0x3e7bfa },
 ];
 const ARROW_PX = 40; // how far an arrow sits from the part it moves, on screen
+const LIFT_PX = 30;  // the black arrow sits like the object lift arrow (30 px off)
 
 // drag with pointer capture on the handle, like the object handles
 function track(el, e, onMove, onEnd) {
@@ -708,26 +709,29 @@ export class PartTool {
       const dx = q.x - ox, dy = q.y - oy, L = Math.hypot(dx, dy);
       if (L < 8 && !(this.drag && this.drag.axis === a)) { el.style.display = 'none'; lab.style.display = 'none'; tail.style.display = 'none'; return; } // pointing at the camera
       const ux = L ? dx / L : 0, uy = L ? dy / L : -1;
-      place(el, ox + ux * ARROW_PX, oy + uy * ARROW_PX, ` rotate(${Math.atan2(ux, -uy)}rad)`);
-      // the tail runs from the square to the base of the arrow
-      tail.style.display = '';
+      const black = a.plain || a.name === 'n';
+      const dist = black ? LIFT_PX : ARROW_PX;
+      place(el, ox + ux * dist, oy + uy * dist, ` rotate(${Math.atan2(ux, -uy)}rad)`);
+      // the tail runs from the square to the base of the arrow (the black arrow has none, like the object's lift arrow)
+      if (black) tail.style.display = 'none';
+      else tail.style.display = '';
       tail.style.width = `${Math.max(0, ARROW_PX - 9)}px`;
       tail.style.transform = `translate(${Math.round(ox)}px, ${Math.round(oy) - 1}px) rotate(${Math.atan2(uy, ux)}rad)`;
       // beside the arrow, past its tip
       if (A.object) { lab.style.display = 'none'; return; }   // objects show their sizes and height on the gizmo instead
       const w = lab.offsetWidth || 40, hh = lab.offsetHeight || 20;
-      const r = ARROW_PX + 14 + Math.abs(ux) * w / 2 + Math.abs(uy) * hh / 2;
+      const r = dist + 14 + Math.abs(ux) * w / 2 + Math.abs(uy) * hh / 2;
       place(lab, ox + ux * r, oy + uy * r);
     });
   }
 
   /**
-   * Object mode: the same arrows as for faces, edges and corners, from the top middle of the
-   * selection. Move arrows on: X / Y / Z; off: one black arrow to raise or lower it.
+   * Object mode with the move arrows on: X / Y / Z arrows from the top middle of the selection
+   * (off: the gizmo's own black lift arrow, which the other modes copy).
    */
   _objectArrows() {
     const ed = this.ed;
-    if (ed.tool !== 'select' || ed.placing) return null;
+    if (!ed.settings.moveArrows || ed.tool !== 'select' || ed.placing) return null;
     const nodes = ed.movableNodes();
     if (!nodes.length) return null;
     const b = ed.bounds(nodes);
