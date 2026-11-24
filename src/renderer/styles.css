@@ -215,6 +215,17 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 
 /* ---------- right side panel ---------- */
 .side { width: 292px; flex: none; display: flex; flex-direction: column; background: var(--panel); border-left: 1px solid var(--border); }
+/* the Parts panel floats over the 3D view (toolbar: Parts, or P) */
+.parts-panel { position: absolute; right: 14px; top: 14px; width: 282px; height: min(640px, calc(100% - 96px)); z-index: 11; display: none; border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); overflow: hidden; resize: both; min-width: 220px; min-height: 240px; max-width: 640px; }
+.parts-panel.open { display: flex; }
+.parts-head { cursor: grab; }
+.parts-head .insp-title { flex: 1; font-weight: 600; }
+.parts-head .icon { color: var(--accent); }
+.parts-panel.dragging .parts-head { cursor: grabbing; }
+.parts-panel.dragging { user-select: none; -webkit-user-select: none; }
+.parts-panel .shape-grid { grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); }
+/* with Parts open, the selection card starts to its left (until the user moves it) */
+.viewport.parts-open .inspector { right: 310px; }
 .side-tools { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 10px; border-bottom: 1px solid var(--border); }
 .side-tool { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 2px 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); cursor: pointer; font-size: 11.5px; }
 .side-tool:hover { border-color: var(--muted); }
@@ -339,7 +350,7 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .voxel-bar { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); z-index: 12; display: none; align-items: center; gap: 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 6px 12px; box-shadow: var(--shadow); }
 .voxel-bar.open { display: flex; }
 .voxel-bar input[type='range'] { width: 140px; accent-color: var(--accent); }
-.voxel-mode .inspector, .voxel-mode .gizmo-layer, .voxel-mode .gridbar { display: none !important; }
+.voxel-mode .inspector, .voxel-mode .gizmo-layer, .voxel-mode .gridbar, .voxel-mode .parts-panel { display: none !important; }
 
 /* ---------- laser workspace ---------- */
 .laser-root { display: none; flex: 1; min-height: 0; flex-direction: column; }
@@ -612,3 +623,8 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
 .ai-host { color: var(--muted); font-size: 10.5px; }
 .ai-sources { width: 100%; border-top: 1px solid var(--border); padding-top: 4px; }
 .ai-chip.web summary { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+/* toolbar: buttons never squash into each other; on narrower windows the labelled tools go icon-only */
+.toolbar .btn, .toolbar .mode-group { flex-shrink: 0; }
+.toolbar { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.toolbar::-webkit-scrollbar { display: none; }
+@media (max-width: 1500px) { .toolbar .btn:not(.keep-label) .btn-label { display: none; } .toolbar .btn:not(.keep-label) { padding: 0 6px; } }

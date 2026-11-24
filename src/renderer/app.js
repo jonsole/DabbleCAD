@@ -102,7 +102,8 @@ export class App {
     this.wsTabs['3d'].classList.add('active');
     this.applyWorkspaces();
     const toolbar = h('div', { class: 'toolbar', role: 'toolbar', 'aria-label': 'Editing tools' },
-      tb('outliner', 'list', 'Objects list', () => this.toggleOutliner()), h('span', { class: 'sep' }),
+      tb('outliner', 'list', 'Objects list', () => this.toggleOutliner()),
+      tb('parts', 'parts', 'Parts (P): the shape library: drag a shape onto the workplane', () => this.toggleParts(), 'Parts'), h('span', { class: 'sep' }),
       tb('copy', 'copy', 'Copy (Ctrl+C)', () => this.editor.copy()),
       tb('paste', 'paste', 'Paste (Ctrl+V)', () => this.editor.paste()),
       tb('duplicate', 'duplicate', 'Duplicate and repeat (Ctrl+D)', () => this.editor.duplicate()),
@@ -116,6 +117,10 @@ export class App {
         tb('modeFace', 'modeFace', 'Face mode (2): pick flat faces and move them in or out', () => this.editor.setTool(this.editor.tool === 'face' ? 'select' : 'face')),
         tb('modeEdge', 'modeEdge', 'Edge mode (3): pick edges to round, chamfer or move them', () => this.editor.setTool(this.editor.tool === 'edges' ? 'select' : 'edges')),
         tb('modeCorner', 'modeCorner', 'Corner mode (4): pick corners and move them', () => this.editor.setTool(this.editor.tool === 'corner' ? 'select' : 'corner'))),
+      h('span', { class: 'sep' }),
+      tb('workplane', 'workplane', 'Workplane (W): click a face to build on it, click empty space to reset', () => this.editor.setTool(this.editor.tool === 'workplane' ? 'select' : 'workplane')),
+      tb('ruler', 'ruler', 'Ruler (R): click the workplane to place a ruler', () => this.editor.setTool(this.editor.tool === 'ruler' ? 'select' : 'ruler')),
+      tb('note', 'note', 'Notes (N): click to pin a note', () => this.editor.setTool(this.editor.tool === 'note' ? 'select' : 'note')),
       h('span', { class: 'spacer' }),
       tb('stats', 'stats', 'Size, volume and weight', () => statsDialog(this)),
       tb('pattern', 'pattern', 'Pattern: repeat the selection in rows or a circle', () => patternDialog(this)),
@@ -135,12 +140,11 @@ export class App {
 
     this.outliner = h('div', { class: 'outliner' });
     this.viewEl = h('div', { class: 'viewport' });
-    this.side = h('div', { class: 'side' });
+    this.side = h('div', { class: 'side parts-panel' });
     this.laserRoot = h('div', { class: 'laser-root' });
     this.slicerRoot = h('div', { class: 'slicer-root' });
-    root.append(topbar, workspaceBar, toolbar, h('div', { class: 'main' }, this.outliner, this.viewEl, this.side), this.laserRoot, this.slicerRoot);
+    root.append(topbar, workspaceBar, toolbar, h('div', { class: 'main' }, this.outliner, this.viewEl), this.laserRoot, this.slicerRoot);
     addResizer(this.outliner, { side: 'left', key: '3d-outliner', min: 170, max: 460 });
-    addResizer(this.side, { side: 'right', key: '3d-side', min: 240, max: 640 });
 
     this.viewport = new Viewport(this.viewEl, this.settings);
     this.editor = new Editor(this.viewport, this.settings);
@@ -172,10 +176,20 @@ export class App {
     this.voxelInfo = h('span', {});
     this.voxelBar = h('div', { class: 'voxel-bar' }, h('span', {}, 'Detail'), this.voxelDetail, this.voxelInfo,
       button({ label: 'Back to 3D design', cls: 'btn-primary', onClick: () => this.setViewMode('design') }));
-    this.viewEl.append(this.inspectorEl, this.banner, this.status, this.gridbar, this.voxelBar, h('div', { class: 'busy-pill' }, 'Working…'));
+    // the Parts panel's size (resized from its corner) is remembered like its position
+    try { const sz = JSON.parse(localStorage.getItem('dabblecad.card.3d-parts.size') || 'null'); if (sz) Object.assign(this.side.style, { width: sz.w + 'px', height: sz.h + 'px' }); } catch { /* ignore */ }
+    if (window.ResizeObserver) {
+      let t = 0;
+      new ResizeObserver(() => { clearTimeout(t); t = setTimeout(() => { if (this.side.offsetWidth && this.side.style.width) try { localStorage.setItem('dabblecad.card.3d-parts.size', JSON.stringify({ w: this.side.offsetWidth, h: this.side.offsetHeight })); } catch { /* ignore */ } }, 300); }).observe(this.side);
+    }
+    makeDraggable(this.side, { key: '3d-parts', handle: '.parts-head' });
+    this.viewEl.append(this.side, this.inspectorEl, this.banner, this.status, this.gridbar, this.voxelBar, h('div', { class: 'busy-pill' }, 'Working…'));
 
     this.inspector = new Inspector(this.editor, this.inspectorEl, this);
     this.shapes = new ShapesPanel(this.editor, this.side, this);
+    this.btn.parts.classList.add('keep-label');
+    this.toggleParts(this.settings.partsOpen !== false);   // open until the user closes it
+    this.editor.on('tool', () => { for (const id of ['workplane', 'ruler', 'note']) this.btn[id].classList.toggle('active', this.editor.tool === id); });
     this.dashboard = new Dashboard(this);
     this.laser = new LaserWorkspace(this, this.laserRoot);
     this.slicer = new SlicerWorkspace(this, this.slicerRoot);
@@ -688,6 +702,15 @@ export class App {
   }
 
   // ---------------------------------------------------------------- outliner
+  /** Show or hide the floating Parts panel (remembered). */
+  toggleParts(on = !this.side.classList.contains('open')) {
+    this.side.classList.toggle('open', on);
+    this.viewEl.classList.toggle('parts-open', on);
+    this.btn.parts.classList.toggle('active', on);
+    this.btn.parts.setAttribute('aria-pressed', String(on));
+    if (this.settings.partsOpen !== on) this.patchSettings({ partsOpen: on });
+  }
+
   toggleOutliner() {
     this.outliner.classList.toggle('open');
     this.btn.outliner.classList.toggle('active', this.outliner.classList.contains('open'));
@@ -928,6 +951,7 @@ export class App {
       w: () => { if (shift) { ed.workplaneAtSelection(); this._updateBanner(); } else ed.setTool('workplane'); },
       1: () => ed.setTool('select'), 2: () => ed.setTool(ed.tool === 'face' ? 'select' : 'face'),
       3: () => ed.setTool(ed.tool === 'edges' ? 'select' : 'edges'), 4: () => ed.setTool(ed.tool === 'corner' ? 'select' : 'corner'),
+      p: () => this.toggleParts(),
       e: () => ed.setTool('edges'), r: () => ed.setTool('ruler'), n: () => ed.setTool('note'), l: () => ed.setTool('align'), m: () => ed.setTool('mirror'), k: () => ed.setTool('split'), a: () => this.toggleMoveArrows(),
       c: () => ed.toggleCruise(), d: () => ed.dropToWorkplane(), s: () => ed.setHole(false), h: () => ed.setHole(true), t: () => ed.toggleTransparent(),
     };

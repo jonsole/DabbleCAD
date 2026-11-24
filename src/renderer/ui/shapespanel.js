@@ -1,4 +1,6 @@
-// Right-hand shape library: categories, search, drag-or-click placement, saved creations.
+// The Parts panel: a floating shape library (categories, search, drag-or-click placement, saved
+// creations), opened from the toolbar's Parts button. Drag it by its header; it remembers where it
+// was, its height, and whether it was open.
 import { h, clear, icon, button, toast } from './dom.js';
 import { CATALOG, CATEGORIES, nodeFromCatalog } from '../core/shapes.js';
 import { serializeDoc, deserializeDoc, makeGroup, cloneNode, uid } from '../core/doc.js';
@@ -27,13 +29,6 @@ export class ShapesPanel {
     this.query = '';
     this.creations = loadCreations();
 
-    this.tools = {};
-    const tool = (id, label, ic, title) => {
-      const b = h('button', { class: 'side-tool', type: 'button', title }, icon(ic, 22), label);
-      b.addEventListener('click', () => { editor.setTool(id); b.blur(); });
-      this.tools[id] = b;
-      return b;
-    };
     this.select = h('select', { class: 'select', title: 'Shape category' }, CATEGORIES.map((c) => h('option', { value: c.id }, c.name)));
     this.select.addEventListener('change', () => { this.category = this.select.value; this.select.blur(); this.render(); });
     this.search = h('input', { class: 'input', type: 'search', placeholder: 'Search shapes' });
@@ -41,17 +36,14 @@ export class ShapesPanel {
     this.search.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Escape') { this.search.value = ''; this.query = ''; this.search.blur(); this.render(); } });
     this.grid = h('div', { class: 'shape-grid' });
     host.append(
-      h('div', { class: 'side-tools' },
-        tool('workplane', 'Workplane', 'workplane', 'Workplane (W): click a face to build on it, click empty space to reset'),
-        tool('ruler', 'Ruler', 'ruler', 'Ruler (R): click the workplane to place a ruler'),
-        tool('note', 'Notes', 'note', 'Notes (N): click to pin a note')),
+      h('div', { class: 'insp-head parts-head' }, icon('parts', 16), h('div', { class: 'insp-title' }, 'Parts'),
+        button({ icon: 'close', title: 'Close (P)', size: 16, onClick: () => app.toggleParts(false) })),
       h('div', { class: 'side-filter' }, this.select),
       h('div', { class: 'side-search' }, icon('search', 15), this.search),
       this.grid,
       h('div', { class: 'side-foot' },
         button({ label: 'Import', icon: 'import', cls: 'btn-outline', title: 'Import STL, OBJ, GLB, 3MF, SVG or an image', onClick: () => app.importDialog() }),
         button({ label: 'Save shape', icon: 'star', cls: 'btn-outline', title: 'Save the selection to Your Creations', onClick: () => this.saveCreation() })));
-    editor.on('tool', () => { for (const [id, b] of Object.entries(this.tools)) b.classList.toggle('active', editor.tool === id); });
     this.render();
   }
 
