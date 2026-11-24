@@ -20,14 +20,17 @@
     "test:depth": "vite build && node tools/run.js --smoke=tools/smoke-depth.js",
     "test:save": "vite build && node tools/run.js --smoke=tools/smoke-save.js",
     "test:all": "npm run build && node tools/test.js",
-    "test:packaged": "node tools/test.js --packaged"
+    "test:packaged": "node tools/test.js --packaged",
+    "test:ai": "node tools/test-ai.mjs"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^1.13.0",
     "@fontsource/roboto": "^5.3.0",
     "clipper-lib": "^6.4.2",
     "electron": "^45.3.2",
     "electron-builder": "26.18.0",
     "manifold-3d": "^3.5.5",
+    "openai": "^7.63.0",
     "opentype.js": "^2.0.0",
     "qrcode-generator": "^2.0.4",
     "three": "^0.187.0",

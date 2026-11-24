@@ -186,15 +186,24 @@ export class History {
 
   reset(state) {
     this.stack = [state];
+    this.labels = [null];
     this.index = 0;
   }
 
-  push(state) {
+  /** label (optional): what the step did, e.g. "AI: add box" (shown on the undo button). */
+  push(state, label = null) {
+    this.labels = this.labels || this.stack.map(() => null);
     this.stack.length = this.index + 1;
+    this.labels.length = this.index + 1;
     this.stack.push(state);
-    if (this.stack.length > this.limit) this.stack.shift();
+    this.labels.push(label);
+    if (this.stack.length > this.limit) { this.stack.shift(); this.labels.shift(); }
     this.index = this.stack.length - 1;
   }
+
+  /** The label of the step Undo would take back (and Redo would redo). */
+  get undoLabel() { return this.labels && this.index > 0 ? this.labels[this.index] : null; }
+  get redoLabel() { return this.labels && this.canRedo ? this.labels[this.index + 1] : null; }
 
   get canUndo() { return this.index > 0; }
   get canRedo() { return this.index < this.stack.length - 1; }

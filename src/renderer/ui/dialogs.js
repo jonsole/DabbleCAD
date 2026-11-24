@@ -8,6 +8,7 @@ import { countShapes } from '../core/doc.js';
 import { printCheckDialog } from './printdialog.js';
 import * as drive from '../drive.js';
 import { driveAction } from './dashboard.js';
+import { aiSettingsGroup } from '../ai/settings.js';
 
 /** Settings › Google Drive (browser version only). */
 function driveGroup(app, m) {
@@ -86,7 +87,8 @@ export async function settingsDialog(app) {
   };
 
   const ws = (id) => toggle(app.workspaceOn(id), (v) => app.setWorkspace(id, v));
-  m.body.append(
+  // (desktop-only groups are null in a browser: leave them out rather than print "null")
+  m.body.append(...[
     h('div', { class: 'set-group' }, h('h4', {}, 'Workspaces'),
       row('Slicer', 'Slice designs to G-code and send them to a 3D printer.', ws('slicer')),
       row('Laser', 'Draw, set up cuts and engraves, and run a laser.', ws('laser'))),
@@ -109,6 +111,7 @@ export async function settingsDialog(app) {
       row('Auto-save', 'Designs are saved to your library as you work.', toggle(s.autosave !== false, (v) => app.patchSettings({ autosave: v }))),
       isDesktop ? row('Design library', `Where ${APP_NAME} keeps your designs.`, button({ label: 'Open folder', icon: 'folder', cls: 'btn-outline', onClick: () => platform.openDesignsFolder() })) : null),
     driveGroup(app, m),
+    aiSettingsGroup(app),
     isDesktop ? h('div', { class: 'set-group' }, h('h4', {}, '3D printing'),
       row('Slicer', s.slicerPath ? s.slicerPath : 'Not set: "Open in slicer" uses whatever app opens 3MF files on this computer.', h('div', { class: 'set-btns' },
         button({ label: 'Choose…', cls: 'btn-outline', onClick: async () => { const p = await platform.pickApp(); if (p) { app.patchSettings({ slicerPath: p }); toast('Slicer set'); m.close(); settingsDialog(app); } } }),
@@ -118,7 +121,7 @@ export async function settingsDialog(app) {
       row(`You have version ${s.version || ''}`, 'Looks for a newer release of this fork (github.com/jonsole/DabbleCAD), downloads it and installs it. Your designs and settings are kept.', button({ label: 'Check for updates', cls: 'btn-outline', onClick: () => { m.close(); updateDialog(app); } })),
       row('Tell me about new versions', 'Asks GitHub for the latest release when the app starts. Nothing about you or your designs is sent. Turn off to stay fully offline.', toggle(s.checkUpdates !== false, (v) => app.patchSettings({ checkUpdates: v })))) : null,
     h('div', { class: 'set-group' }, h('h4', {}, 'About'),
-      row(`${APP_NAME} ${s.version || ''}`, 'jonsole\'s fork of DabbleCAD by DJMcNewgent · open source under the Apache License 2.0.', button({ label: 'About', icon: 'info', cls: 'btn-outline', onClick: () => aboutDialog(app) }))));
+      row(`${APP_NAME} ${s.version || ''}`, 'jonsole\'s fork of DabbleCAD by DJMcNewgent · open source under the Apache License 2.0.', button({ label: 'About', icon: 'info', cls: 'btn-outline', onClick: () => aboutDialog(app) })))].filter(Boolean));
   void pendingRestart;
 }
 

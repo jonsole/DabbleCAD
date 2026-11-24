@@ -3,6 +3,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Menu, nativeTheme, net } = r
 const { spawn } = require('node:child_process');
 const { registerUpdater } = require('./updater');
 const { registerGoogleAuth } = require('./googleauth');
+const { registerAi } = require('./ai');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -262,7 +263,7 @@ ipcMain.on('serial:choose', (_e, id) => {
   pendingSerial = null;
   cb(id || '');
 });
-ipcMain.handle('settings:get', () => ({ ...settings, hardwareAcceleration, platform: process.platform, version: app.getVersion(), smoke: !!SMOKE }));
+ipcMain.handle('settings:get', () => ({ ...settings, hardwareAcceleration, platform: process.platform, version: app.getVersion(), smoke: !!SMOKE, ...(SMOKE && argValue('fake-ai') ? { fakeAi: argValue('fake-ai') } : {}) }));
 ipcMain.handle('settings:set', (_e, patch) => {
   settings = { ...settings, ...patch };
   if (patch && patch.theme) nativeTheme.themeSource = settings.theme === 'light' ? 'light' : 'dark';
@@ -291,6 +292,9 @@ const fakeGoogle = SMOKE && typeof argValue('fake-google') === 'string' ? argVal
 registerGoogleAuth(ipcMain, () => win, fakeGoogle ? {
   auth: fakeGoogle + '/o/oauth2/v2/auth', token: fakeGoogle + '/token', revoke: fakeGoogle + '/revoke', api: fakeGoogle + '/', headless: true,
 } : null);
+
+// AI chat: keys and provider requests (nothing here can reach printers or lasers)
+registerAi(ipcMain, () => win);
 
 ipcMain.handle('designs:list', () => listDesigns());
 ipcMain.handle('designs:load', (_e, id) => fs.readFileSync(designPath(id), 'utf8'));
