@@ -11,6 +11,7 @@
 import { TOOLS, runTool, designSummary, toolByName } from './tools.js';
 import { LASER_TOOLS, laserSummary, laserContext } from './lasertools.js';
 import { MORE_TOOLS } from './moretools.js';
+import { SLICER_TOOLS, SLICER_PROMPT, plateSummary, slicerContext } from './slicertools.js';
 import { FETCH_PAGE, pageFetchAvailable } from './webtool.js';
 
 export const DESIGN_TOOLS = [...TOOLS, ...MORE_TOOLS];
@@ -35,6 +36,7 @@ How to work:
 - After building something, make sure the result is selected (add_shape and group leave their result selected; use select otherwise), and say briefly what you made, with its main sizes.
 - Keep replies short and plain. Don't repeat the design summary back.
 - If you have web tools (web_search and web_fetch, or fetch_page), use them for facts you need for the design, such as standard sizes (screw and nut sizes, a board's mounting holes, a part's datasheet dimensions). Say where the numbers came from.
+- The user can be in 3D Design, Laser or Slicer; each message's design summary says which, and only that workspace's tools work.
 - You cannot control printers or lasers, start jobs, or send G-code, and you have no tools for it: if asked, say the user has to do that themselves.`;
 
 const MAX_STEPS = 30;
@@ -54,6 +56,10 @@ export function editorHistory(ed) {
 
 /** What the AI works on: the 3D design, or the laser drawing in the Laser workspace. */
 export function scopeFor(app, session = null) {
+  if (app.viewMode === 'slicer') {
+    const ctx = slicerContext(app);
+    return { id: 'slicer', ctx, tools: SLICER_TOOLS, summary: () => plateSummary(ctx), history: ctx.history };
+  }
   if (app.viewMode === 'laser') {
     const ctx = laserContext(app);
     return { id: 'laser', ctx, tools: LASER_TOOLS, summary: () => laserSummary(ctx), history: ctx.history };
@@ -76,7 +82,7 @@ export class ChatSession {
     this.askBeforeEdits = askBeforeEdits;
     // every tool is always offered (so the tool list, and the prompt cache, stay the same);
     // the ones for the other workspace say so when called
-    this.tools = [...DESIGN_TOOLS, ...LASER_TOOLS];
+    this.tools = [...DESIGN_TOOLS, ...LASER_TOOLS, ...SLICER_TOOLS];
     this.attachments = [];   // files the user attached for import: { name, data: ArrayBuffer }
     this.messages = [];     // the conversation sent to the provider
     this.listeners = new Set();
@@ -124,11 +130,11 @@ export class ChatSession {
       const provider = await this.getProvider();
       // fetch_page for models without their own web tools (desktop only)
       this.extra = pageFetchAvailable && !provider.web ? [FETCH_PAGE] : [];
-      this.tools = [...DESIGN_TOOLS, ...LASER_TOOLS, ...this.extra];
+      this.tools = [...DESIGN_TOOLS, ...LASER_TOOLS, ...SLICER_TOOLS, ...this.extra];
       for (let step = 0; step < MAX_STEPS; step++) {
         if (this.abort.signal.aborted) throw new AiError('cancelled', 'Stopped.');
         const res = await provider.stream({
-          system: SYSTEM_PROMPT + LASER_PROMPT,
+          system: SYSTEM_PROMPT + LASER_PROMPT + SLICER_PROMPT,
           tools: this.tools,
           messages: this.messages,
           signal: this.abort.signal,
@@ -216,9 +222,9 @@ export class ChatSession {
     if (!tool) return finish(false, `There's no tool called "${call.name}".`);
     const list = [...scope.tools, ...(this.extra || [])];
     if (!list.includes(tool)) {
-      return finish(false, scope.id === 'laser'
-        ? `${call.name} is for the 3D design; the user is in the Laser workspace, so use the laser tools.`
-        : `${call.name} is for the Laser workspace; the user is in 3D Design, so use the 3D tools.`);
+      const where = { '3d': '3D Design', laser: 'the Laser workspace', slicer: 'the Slicer' }[scope.id];
+      const home = DESIGN_TOOLS.includes(tool) ? '3D Design' : LASER_TOOLS.includes(tool) ? 'the Laser workspace' : 'the Slicer';
+      return finish(false, `${call.name} is for ${home}, but the user is in ${where}: use the tools for ${where}${home === '3D Design' && scope.id === 'slicer' ? ' (add_to_plate brings the design over)' : ''}.`);
     }
     if (tool.kind === 'edit' && this.askBeforeEdits()) {
       const ok = await this._ask(reply, chip, tool, call);

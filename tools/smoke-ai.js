@@ -150,7 +150,7 @@ ok('error shown with Retry, conversation kept valid', out.error.kind === 'rate' 
 ok('cancel', out.stopVisible && out.cancel.kind === 'cancelled' && out.cancel.msgs === 0 && !out.cancel.busy);
 ok('refusals: locked, bad input, wrong workspace', out.refuse.length === 3 && out.refuse.every((r) => r.startsWith('error:')));
 ok('laser tools: one undo step each, undo reply', out.laser.added === 1 && out.laser.hsteps === 2 && out.laser.mode === 'fill' && out.laserUndo.ok && out.laserUndo.back === 0);
-ok('hidden in the Slicer', out.slicerHidden && out.backOpen);
+ok('window stays open in the Slicer', !out.slicerHidden && out.backOpen);
 ok('no printer or laser control tools', out.deviceTools.length === 0);
 
 // ---- the extra 3D tools (edges, split, parts, workplane, flags, notes, import)
@@ -235,6 +235,27 @@ ok('no printer or laser control tools', out.deviceTools.length === 0);
   app.editor.addNode(n);
   const gn = await run('get_node', { id: n.id });
   check('get_node: mesh data left out', gn.ok && JSON.stringify(gn.result).length < 2000);
+}
+
+// ---- Slicer: the AI works there too (only if the slicer engine can load here)
+{
+  app.setViewMode('slicer');
+  const ready = await Promise.race([app.slicer.ready, new Promise((r) => setTimeout(() => r(false), 20000))]);
+  if (ready) {
+    const { scopeFor } = window.dabbleAi;
+    const sc = scopeFor(app, app.ai.session);
+    const run = (n, i) => window.dabbleAi.runTool(sc.ctx, n, i, sc.tools);
+    check('slicer: scope', sc.id === 'slicer');
+    const add = await run('add_to_plate', {});
+    check('slicer: add design to plate', add.ok && add.result.added.length >= 1);
+    const id = app.slicer.models[0].id;
+    check('slicer: place and scale', (await run('place_models', { ids: [id], x: 10, y: 5, scale: 50 })).ok && app.slicer.models[0].x === 10);
+    check('slicer: set settings', (await run('set_settings', { values: { infill_sparse_density: 30 } })).ok && app.slicer.store.get('infill_sparse_density') === 30);
+    check('slicer: impossible settings refused', !(await run('set_settings', { values: { layer_height: 5 } })).ok);
+    check('slicer: start G-code is off limits', !(await run('set_settings', { values: { machine_start_gcode: 'M104 S300' } })).ok);
+    check('slicer: no send/print tools', !sc.tools.some((t) => /send|print|monitor|connect|gcode/.test(t.name)));
+  } else console.log('(slicer engine not available: Slicer AI checks skipped)');
+  app.setViewMode('design');
 }
 
 if (fails.length) throw new Error(fails.join('\n'));

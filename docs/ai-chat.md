@@ -1,9 +1,17 @@
 # AI chat
 
-The AI button (sparkle) in the top bar opens a floating chat window in **3D Design** and **Laser**.
+The AI button (sparkle) in the top bar opens a floating chat window in **3D Design**, **Slicer** and **Laser**.
 Ask about the design, or describe what to make: the AI builds and changes it with the same commands
 you use. Every change it makes is one undo step named "AI: …", and **Undo this reply** takes back a
 whole reply. Tick **Ask before edits** to approve each change (Apply / Skip / Apply all).
+
+## In the Slicer
+
+The AI can look at the plate and the print settings, bring the design onto the plate, move, turn,
+scale, duplicate, hide or remove models, arrange and auto-orient them, pick presets, change settings
+(refusing values the slicer can't use), slice, and report print time and filament. Plate changes are
+undo steps; settings changes are not, so it says what it changed. It can't change the start / end
+G-code, send to the printer, or start, pause or watch a print.
 
 ## Setting up
 
@@ -36,7 +44,7 @@ or router. It isn't available in the browser, which can't read other sites.
   never sees them, and an Anthropic key can only go to api.anthropic.com.
 - Browser: the key is kept for the open tab only, unless you tick **Remember on this device**.
 - The AI has no way to connect to, start, pause, frame, home or jog a laser or printer, or to send
-  G-code, and it doesn't work in the Slicer. Locked shapes are left alone.
+  G-code. Locked shapes are left alone.
 
 ## Code
 
