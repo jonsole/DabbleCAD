@@ -149,6 +149,7 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .gz-part-arrow.ax-x:hover, .gz-part-arrow.ax-y:hover, .gz-part-arrow.ax-z:hover, .gz-part-arrow.dragging { filter: brightness(1.25) drop-shadow(0 0 1px #fff) drop-shadow(0 0 1px #fff) drop-shadow(0 0 2px #fff); }
 .gz-part-label.ax-x { border-left: 3px solid #ef5350; } .gz-part-label.ax-y { border-left: 3px solid #43a047; } .gz-part-label.ax-z { border-left: 3px solid #2f80ed; }
 .part-layer > .gz-part-mark { pointer-events: none; }
+.part-layer > .gz-part-mark.gz-part-anchor { pointer-events: auto; cursor: move; }
 .gz-part-mark.mk-plain { width: 8px; height: 8px; background: #20242c; border: 1.5px solid #fff; border-radius: 2px; }
 .gz-part-mark.mk-picked { width: 11px; height: 11px; background: var(--handle); border: 1.5px solid var(--handle-border); border-radius: 2px; box-shadow: 0 0 0 1px rgba(255,255,255,.35); }
 .gz-part-mark.mk-hover { width: 11px; height: 11px; background: #ff5252; border: 1.5px solid var(--handle-border); border-radius: 2px; box-shadow: 0 0 0 1px rgba(255,255,255,.35); }

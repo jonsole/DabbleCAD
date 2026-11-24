@@ -678,16 +678,26 @@ export class Editor extends Emitter {
       if (!multi && em.picked.size) { em.picked.clear(); this._syncEdgeOverlays(); this.emit('selection'); }
       return;
     }
-    if (hit.id !== em.id) {
-      em.id = hit.id; em.key = null; em.picked = new Set([hit.i]);
-    } else if (multi) {
-      if (em.picked.has(hit.i)) em.picked.delete(hit.i); else em.picked.add(hit.i);
-    } else {
-      em.picked = em.picked.size === 1 && em.picked.has(hit.i) ? new Set() : new Set([hit.i]);
+    const changed = () => { this.refreshOutlines(); this._syncEdgeOverlays(); this.emit('selection'); };
+    if (multi) {
+      if (hit.id !== em.id) { em.id = hit.id; em.key = null; em.picked = new Set([hit.i]); }
+      else if (em.picked.has(hit.i)) em.picked.delete(hit.i); else em.picked.add(hit.i);
+      changed();
+      return;
     }
-    this.refreshOutlines();
-    this._syncEdgeOverlays();
-    this.emit('selection');
+    // like objects: press an edge to pick it and drag to move it; a click on the only picked edge unpicks it
+    const wasOnly = hit.id === em.id && em.picked.size === 1 && em.picked.has(hit.i);
+    if (!(hit.id === em.id && em.picked.has(hit.i))) {
+      if (hit.id !== em.id) { em.id = hit.id; em.key = null; }
+      em.picked = new Set([hit.i]);
+      changed();
+    }
+    this.parts.pressDrag(e, () => {
+      if (wasOnly) em.picked = new Set();
+      else if (em.picked.size > 1) em.picked = new Set([hit.i]);
+      else return;
+      changed();
+    });
   }
 
   // ---------------------------------------------------------------- pointer handling
