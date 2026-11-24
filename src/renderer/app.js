@@ -97,8 +97,9 @@ export class App {
     // top-level workspaces sit directly beneath the DabbleCAD brand
     this.wsTabs = {};
     const wsTab = (id, label, ic, tip) => { const b = button({ label, icon: ic, title: tip, size: 17, cls: 'ws-tab', onClick: () => this.setViewMode(id === 'laser' || id === 'slicer' ? id : this.last3d || 'design') }); b.dataset.mode = id === '3d' ? 'workspace-3d' : id; this.wsTabs[id] = b; return b; };
-    const workspaceBar = h('div', { class: 'workspace-bar', role: 'tablist', 'aria-label': 'Workspace' }, wsTab('3d', '3D Design', 'cube', '3D design workspace'), wsTab('laser', 'Laser', 'laser', 'Laser workspace: draw, set up cuts and engraves, and run your laser'), wsTab('slicer', 'Slicer', 'cube', 'Slicer workspace: slice your design to G-code for a 3D printer'));
+    const workspaceBar = this.workspaceBar = h('div', { class: 'workspace-bar', role: 'tablist', 'aria-label': 'Workspace' }, wsTab('3d', '3D Design', 'cube', '3D design workspace'), wsTab('slicer', 'Slicer', 'cube', 'Slicer workspace: slice your design to G-code for a 3D printer'), wsTab('laser', 'Laser', 'laser', 'Laser workspace: draw, set up cuts and engraves, and run your laser'));
     this.wsTabs['3d'].classList.add('active');
+    this.applyWorkspaces();
     const toolbar = h('div', { class: 'toolbar', role: 'toolbar', 'aria-label': 'Editing tools' },
       tb('outliner', 'list', 'Objects list', () => this.toggleOutliner()), h('span', { class: 'sep' }),
       tb('copy', 'copy', 'Copy (Ctrl+C)', () => this.editor.copy()),
@@ -444,6 +445,7 @@ export class App {
 
   /** Open the Slicer workspace and add the design (or just the selection) to its build plate. */
   async openSlicer({ selectedOnly = false } = {}) {
+    if (!this.workspaceOn('slicer')) return;
     let name;
     if (selectedOnly) {
       const nodes = this.editor.selectedNodes();
@@ -607,7 +609,24 @@ export class App {
     void unit;
   }
 
+  /** Is a workspace switched on? (Settings › Workspaces; 3D Design always is.) */
+  workspaceOn(id) { return id === '3d' || (this.settings.workspaces || {})[id] !== false; }
+
+  /** Show only the workspaces that are switched on; leave one that has just been switched off. */
+  applyWorkspaces() {
+    let shown = 0;
+    for (const [id, b] of Object.entries(this.wsTabs)) { const on = this.workspaceOn(id); b.style.display = on ? '' : 'none'; if (on) shown++; }
+    this.workspaceBar.style.display = shown < 2 ? 'none' : '';   // just 3D Design: no tabs needed
+    if ((this.viewMode === 'laser' || this.viewMode === 'slicer') && !this.workspaceOn(this.viewMode)) this.setViewMode(this.last3d || 'design');
+  }
+
+  setWorkspace(id, on) {
+    this.patchSettings({ workspaces: { ...(this.settings.workspaces || {}), [id]: on } });
+    this.applyWorkspaces();
+  }
+
   setViewMode(mode, silent = false) {
+    if ((mode === 'laser' || mode === 'slicer') && !this.workspaceOn(mode)) return;
     if (mode === this.viewMode) return;
     this.viewMode = mode;
     for (const b of this.modeSeg.children) b.classList.toggle('active', b.dataset.mode === mode);
@@ -790,7 +809,7 @@ export class App {
         { label: 'Select all', icon: 'select', shortcut: 'Ctrl+A', onClick: () => ed.selectAll() },
         { label: 'Show all', icon: 'bulb', shortcut: 'Ctrl+Shift+H', disabled: !ed.doc.nodes.some((x) => x.hidden), onClick: () => ed.showAll() },
         'sep',
-        { label: 'Slice design…', icon: 'export', disabled: !ed.doc.nodes.length, onClick: () => this.openSlicer() },
+        this.workspaceOn('slicer') && { label: 'Slice design…', icon: 'export', disabled: !ed.doc.nodes.length, onClick: () => this.openSlicer() },
         'sep',
         { label: 'Fit all in view', icon: 'fit', shortcut: 'F', onClick: () => this.fit() },
         { label: 'Home view', icon: 'home', onClick: () => this.viewport.home() },
@@ -821,7 +840,7 @@ export class App {
       { label: 'Drop to workplane', icon: 'drop', shortcut: 'D', disabled: !movable.length, onClick: () => ed.dropToWorkplane() },
       { label: 'Workplane on selection', icon: 'workplane', shortcut: 'Shift+W', onClick: () => { ed.workplaneAtSelection(); this._updateBanner(); } },
       'sep',
-      { label: 'Slice…', icon: 'export', title: 'Add the selection to the build plate in the Slicer', onClick: () => this.openSlicer({ selectedOnly: true }) },
+      this.workspaceOn('slicer') && { label: 'Slice…', icon: 'export', title: 'Add the selection to the build plate in the Slicer', onClick: () => this.openSlicer({ selectedOnly: true }) },
       'sep',
       { label: locked ? 'Unlock' : 'Lock', icon: locked ? 'unlock' : 'lock', shortcut: 'Ctrl+L', onClick: () => ed.toggleLock() },
       { label: 'Hide', icon: 'eyeOff', shortcut: 'Ctrl+H', onClick: () => ed.hideSelection() },
