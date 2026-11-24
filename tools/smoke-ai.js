@@ -177,5 +177,25 @@ ok('no printer or laser control tools', out.deviceTools.length === 0);
   check('tools: import an attachment', im.ok && im.result.imported.length === 1);
 }
 
+// ---- web tools: a paused search is sent back, chips and sources are shown
+{
+  const s = app.ai.session;
+  app.setViewMode('design');
+  let calls = 0;
+  s.getProvider = async () => ({ async stream({ messages, onToolStart, onText }) {
+    calls++;
+    if (calls === 1) {
+      onToolStart('web_search', 'srv1', { server: true });
+      return { content: [], stopReason: 'pause', server: [{ id: 'srv1', name: 'web_search', input: { query: 'M3 nut' }, results: [{ title: 'M3 nuts', url: 'https://example.com/m3' }] }], sources: [], raw: { anthropic: [{ type: 'server_tool_use', id: 'srv1', name: 'web_search', input: { query: 'M3 nut' } }] } };
+    }
+    const last = messages[messages.length - 1];
+    onText('An M3 nut is 5.5 mm across.');
+    return { content: [{ type: 'text', text: 'An M3 nut is 5.5 mm across.' }], stopReason: 'end', server: [], sources: [{ title: 'M3 nuts', url: 'https://example.com/m3' }], raw: { anthropic: [], lastRole: last.role } };
+  } });
+  const r = await s.send('how big is an M3 nut?');
+  check('web: paused search carried on', calls === 2 && !r.error && r.text.includes('5.5'));
+  check('web: chip and sources', r.chips.length === 1 && r.chips[0].web && r.chips[0].status === 'ok' && r.sources.length === 1 && !!document.querySelector('.ai-sources a[href="https://example.com/m3"]'));
+}
+
 if (fails.length) throw new Error(fails.join('\n'));
 return { checks, fails };

@@ -15,6 +15,14 @@ Settings → AI:
   LM Studio (`http://localhost:1234/v1`). Pick a model from the list. In the browser the server
   must be on the same computer; the desktop app can use one elsewhere.
 
+## Web access
+
+With Anthropic, **Web access** (on by default, in Settings → AI) lets the AI search the web and read
+pages, for example to look up a screw size or a board's mounting holes. Anthropic runs the searches
+on its side ($10 per 1,000 searches, plus the extra text read). Searches and pages read show as chips
+in the reply, and cited pages are listed as Sources. If web search isn't enabled for the
+organisation, an admin can turn it on in the Claude Console. Local models have no web access.
+
 ## Privacy and safety
 
 - Each message sends a summary of the design (names, sizes, positions, the selection) and the

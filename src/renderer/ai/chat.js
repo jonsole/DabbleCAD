@@ -33,6 +33,7 @@ How to work:
 - Every edit you make is one undo step the user can take back, so make reasonable choices instead of asking about details; ask only when the request is genuinely unclear.
 - After building something, make sure the result is selected (add_shape and group leave their result selected; use select otherwise), and say briefly what you made, with its main sizes.
 - Keep replies short and plain. Don't repeat the design summary back.
+- If web access is on (you have web_search and web_fetch), use it for facts you need for the design, such as standard sizes (screw and nut sizes, a board's mounting holes, a part's datasheet dimensions). Say where the numbers came from.
 - You cannot control printers or lasers, start jobs, or send G-code, and you have no tools for it: if asked, say the user has to do that themselves.`;
 
 const MAX_STEPS = 30;
@@ -109,7 +110,7 @@ export class ChatSession {
 
     const reply = {
       id: Math.random().toString(36).slice(2),
-      text: '', chips: [], cards: [], error: null, refusal: null, done: false,
+      text: '', chips: [], cards: [], sources: [], error: null, refusal: null, done: false,
       scope: scope.id, history: scope.history, before: scope.history.current(), after: null, edits: 0,
     };
     this.emit({ type: 'reply', reply });
@@ -127,7 +128,14 @@ export class ChatSession {
           messages: this.messages,
           signal: this.abort.signal,
           onText: (t) => { reply.text += t; this.emit({ type: 'text', reply, text: reply.text }); },
-          onToolStart: () => {},
+          onToolStart: (name, id, info) => {
+            // Anthropic's web tools show as chips straight away; their results come with the reply
+            if (info && info.server && !reply.chips.some((c) => c.id === id)) {
+              const chip = { id, name, input: {}, status: 'running', result: null, web: true };
+              reply.chips.push(chip);
+              this.emit({ type: 'chip', reply, chip });
+            }
+          },
         });
         if (res.stopReason === 'refusal') {
           reply.refusal = res.refusal || 'The model declined this request.';
@@ -135,7 +143,15 @@ export class ChatSession {
           this.messages.length = sentFrom;
           break;
         }
-        if (res.content.length) this.messages.push({ role: 'assistant', content: res.content, raw: res.raw });
+        for (const w of res.server || []) {
+          let chip = reply.chips.find((c) => c.id === w.id);
+          if (!chip) { chip = { id: w.id, name: w.name, web: true }; reply.chips.push(chip); }
+          Object.assign(chip, { input: w.input, status: w.error ? 'error' : 'ok', result: w.error ? `Failed: ${w.error}` : (w.results || []) });
+          this.emit({ type: 'chip', reply, chip });
+        }
+        for (const src of res.sources || []) if (!reply.sources.some((x) => x.url === src.url)) reply.sources.push(src);
+        if (res.content.length || (res.raw && res.raw.anthropic && res.raw.anthropic.length)) this.messages.push({ role: 'assistant', content: res.content, raw: res.raw });
+        if (res.stopReason === 'pause') continue;   // a web search paused part-way: send it back to carry on
         const calls = res.content.filter((c) => c.type === 'tool_call');
         if (!calls.length) {
           if (res.stopReason === 'max_tokens') reply.text += '\n\n(The reply was cut off: it was too long.)';

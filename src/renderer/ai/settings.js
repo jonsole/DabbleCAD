@@ -103,6 +103,15 @@ export function aiSettingsGroup(app) {
     body.append(row('Model', 'The list comes from the provider.', h('div', { class: 'set-btns' }, modelSel, refresh)));
     if (saved || !info.needsKey) loadModels();
 
+    // ---- web access (Anthropic's own web search and fetch)
+    if (cfg.provider === 'anthropic') {
+      const cb = h('input', { type: 'checkbox', checked: cfg.web !== false });
+      cb.addEventListener('change', () => patch({ web: cb.checked }));
+      body.append(row('Web access', 'Lets the AI search the web and read pages, e.g. to look up a part\'s dimensions. Anthropic runs the searches ($10 per 1,000 searches, plus the extra text it reads). An admin may need to turn web search on in the Claude Console.', h('label', { class: 'switch' }, cb, h('i'))));
+    } else {
+      body.append(row('Web access', 'Only with Anthropic: a local model can\'t search the web from here.', h('span')));
+    }
+
     // ---- effort / temperature
     if (cfg.provider === 'anthropic') {
       const seg = h('div', { class: 'segmented' });

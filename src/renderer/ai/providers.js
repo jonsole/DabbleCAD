@@ -37,7 +37,23 @@ function classify(e, name) {
 // ------------------------------------------------------------------ Anthropic
 const ANTHROPIC_BETAS = ['server-side-fallback-2026-07-01'];
 
-export async function anthropicProvider({ apiKey, fetch: customFetch, model, effort = 'medium' }) {
+// Anthropic's own web tools: they run on Anthropic's side, so nothing in the app fetches pages
+export const WEB_TOOLS = [
+  { type: 'web_search_20260318', name: 'web_search', max_uses: 5 },
+  { type: 'web_fetch_20260318', name: 'web_fetch', max_uses: 5 },
+];
+
+/** What a web tool found, for the chat's chips: [{ title, url }] or an error code. */
+function webResult(block) {
+  const c = block.content;
+  if (!c) return { error: 'no result' };
+  if (Array.isArray(c)) return { results: c.filter((r) => r && r.url).map((r) => ({ title: r.title || r.url, url: r.url })) };
+  if (c.type && /error/.test(c.type)) return { error: c.error_code || 'error' };
+  if (c.type === 'web_fetch_result' || c.url) return { results: [{ title: (c.content && c.content.title) || c.url, url: c.url }] };
+  return {};
+}
+
+export async function anthropicProvider({ apiKey, fetch: customFetch, model, effort = 'medium', web = false }) {
   const { default: Anthropic } = await import('@anthropic-ai/sdk');
   const client = new Anthropic({ apiKey: apiKey || 'from-main-process', authToken: null, baseURL: 'https://api.anthropic.com', dangerouslyAllowBrowser: true, maxRetries: 1, ...(customFetch ? { fetch: customFetch } : {}) });
   const name = 'Anthropic';
@@ -68,13 +84,14 @@ export async function anthropicProvider({ apiKey, fetch: customFetch, model, eff
     async test() {
       try { await client.models.retrieve(model || 'claude-opus-5-5'); return true; } catch (e) { throw classify(e, name); }
     },
+    web,
     async stream({ system, tools, messages, signal, onText, onToolStart }) {
       const body = {
         model: model || 'claude-opus-5-5',
         max_tokens: 64000,
         // the system prompt and tool list stay byte-for-byte the same, with a cache breakpoint after them
         system: [{ type: 'text', text: system, cache_control: { type: 'ephemeral' } }],
-        tools: tools.map((t) => ({ name: t.name, description: t.description, input_schema: wireSchema(t.inputSchema), eager_input_streaming: true })),
+        tools: [...tools.map((t) => ({ name: t.name, description: t.description, input_schema: wireSchema(t.inputSchema), eager_input_streaming: true })), ...(web ? WEB_TOOLS : [])],
         tool_choice: { type: 'auto' },
         thinking: { type: 'adaptive' },
         output_config: { effort },
@@ -87,6 +104,7 @@ export async function anthropicProvider({ apiKey, fetch: customFetch, model, eff
         const s = client.beta.messages.stream(body, { signal });
         for await (const ev of s) {
           if (ev.type === 'content_block_start' && ev.content_block.type === 'tool_use' && onToolStart) onToolStart(ev.content_block.name, ev.content_block.id);
+          else if (ev.type === 'content_block_start' && ev.content_block.type === 'server_tool_use' && onToolStart) onToolStart(ev.content_block.name, ev.content_block.id, { server: true });
           else if (ev.type === 'content_block_delta' && ev.delta.type === 'text_delta' && onText) onText(ev.delta.text);
         }
         final = await s.finalMessage();
@@ -97,15 +115,22 @@ export async function anthropicProvider({ apiKey, fetch: customFetch, model, eff
         return { content: [], stopReason: 'refusal', refusal: d.explanation || null, raw: null };
       }
       const content = [];
+      const server = [];   // web searches and fetches Anthropic ran during this reply
+      const sources = [];  // pages cited in the text
+      const byId = new Map();
       for (const b of final.content || []) {
+        if (b.type === 'server_tool_use') { const it = { id: b.id, name: b.name, input: b.input || {} }; byId.set(b.id, it); server.push(it); }
+        else if (/_tool_result$/.test(b.type) && byId.has(b.tool_use_id)) Object.assign(byId.get(b.tool_use_id), webResult(b));
+        if (b.type === 'text' && Array.isArray(b.citations)) for (const c of b.citations) if (c.url && !sources.some((x) => x.url === c.url)) sources.push({ url: c.url, title: c.title || c.url });
         if (b.type === 'text' && b.text) content.push({ type: 'text', text: b.text });
         else if (b.type === 'tool_use') {
           const ok = b.input && typeof b.input === 'object' && !Array.isArray(b.input);
           content.push({ type: 'tool_call', id: b.id, name: b.name, input: ok ? b.input : {}, ...(ok ? {} : { inputError: 'The tool input was not valid JSON (it may have been cut off).' }) });
         }
       }
-      const stopReason = final.stop_reason === 'tool_use' ? 'tool_use' : final.stop_reason === 'max_tokens' ? 'max_tokens' : 'end';
-      return { content, stopReason, raw: { anthropic: final.content } };
+      // pause_turn: a long server-side step (web search) stopped part-way; sending it back carries on
+      const stopReason = final.stop_reason === 'tool_use' ? 'tool_use' : final.stop_reason === 'max_tokens' ? 'max_tokens' : final.stop_reason === 'pause_turn' ? 'pause' : 'end';
+      return { content, stopReason, server, sources, raw: { anthropic: final.content } };
     },
   };
 }
@@ -143,6 +168,7 @@ export async function openaiCompatibleProvider({ apiKey, baseURL, fetch: customF
       } catch (e) { throw classify(e, name); }
     },
     async test() { await this.listModels(); return true; },
+    web: false,
     async stream({ system, tools, messages, signal, onText, onToolStart }) {
       if (!model) throw new AiError('other', 'Choose a model in Settings → AI.');
       const calls = [];
@@ -186,5 +212,5 @@ export async function openaiCompatibleProvider({ apiKey, baseURL, fetch: customF
 /** The provider for the current AI settings. */
 export async function makeProvider(cfg, { apiKey, fetch } = {}) {
   if (cfg.provider === 'local') return openaiCompatibleProvider({ apiKey, baseURL: cfg.baseURL || providerInfo('local').baseURL, fetch, model: cfg.model, temperature: cfg.temperature });
-  return anthropicProvider({ apiKey, fetch, model: cfg.model || 'claude-opus-5-5', effort: cfg.effort || 'medium' });
+  return anthropicProvider({ apiKey, fetch, model: cfg.model || 'claude-opus-5-5', effort: cfg.effort || 'medium', web: cfg.web !== false });
 }
