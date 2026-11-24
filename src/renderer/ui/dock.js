@@ -178,10 +178,14 @@ export class DockManager {
     const { el, state } = p;
     if (state.left == null) { el.style.left = el.style.top = el.style.right = el.style.maxHeight = ''; return; }
     const pw = this.view.clientWidth, ph = this.view.clientHeight, w = el.offsetWidth || 262;
-    state.left = Math.min(Math.max(0, state.left), Math.max(0, pw - w));
-    state.top = Math.min(Math.max(0, state.top), Math.max(0, ph - 48));
-    el.style.left = state.left + 'px'; el.style.top = state.top + 'px'; el.style.right = 'auto';
-    el.style.maxHeight = `calc(100% - ${state.top + 8}px)`;
+    // a hidden workspace's view has no size: leave the panel (and its remembered place) alone
+    if (!pw || !ph) return;
+    // keep it inside the view as shown, without forgetting where the user put it (the view may
+    // only be smaller for a while)
+    const left = Math.min(Math.max(0, state.left), Math.max(0, pw - w));
+    const top = Math.min(Math.max(0, state.top), Math.max(0, ph - 48));
+    el.style.left = left + 'px'; el.style.top = top + 'px'; el.style.right = 'auto';
+    el.style.maxHeight = `calc(100% - ${top + 8}px)`;
   }
 
   /** Which edge (if any) the pointer is over: an edge strip of the view, or a docked column. */
@@ -228,8 +232,8 @@ export class DockManager {
         }
       }
       const vr = this.view.getBoundingClientRect();
-      p.state.left = ev.clientX - vr.left - Math.min(dx, el.offsetWidth - 24);
-      p.state.top = ev.clientY - vr.top - dy;
+      p.state.left = Math.min(Math.max(0, ev.clientX - vr.left - Math.min(dx, el.offsetWidth - 24)), Math.max(0, vr.width - el.offsetWidth));
+      p.state.top = Math.min(Math.max(0, ev.clientY - vr.top - dy), Math.max(0, vr.height - 48));
       this._applyFloat(p);
       this._showHint(this._zone(ev));
     };
