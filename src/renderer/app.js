@@ -102,8 +102,7 @@ export class App {
     this.wsTabs['3d'].classList.add('active');
     this.applyWorkspaces();
     const toolbar = h('div', { class: 'toolbar', role: 'toolbar', 'aria-label': 'Editing tools' },
-      tb('outliner', 'list', 'Objects list', () => this.toggleOutliner()),
-      tb('parts', 'parts', 'Parts (P): the shape library: drag a shape onto the workplane', () => this.toggleParts(), 'Parts'), h('span', { class: 'sep' }),
+      this.objectsToggle = h('span', { class: 'panel-toggles' }), h('span', { class: 'sep' }),
       tb('copy', 'copy', 'Copy (Ctrl+C)', () => this.editor.copy()),
       tb('paste', 'paste', 'Paste (Ctrl+V)', () => this.editor.paste()),
       tb('duplicate', 'duplicate', 'Duplicate and repeat (Ctrl+D)', () => this.editor.duplicate()),
@@ -137,8 +136,7 @@ export class App {
       tb('mirror', 'mirror', 'Mirror (M)', () => this.editor.setTool('mirror'), 'Mirror'),
       tb('split', 'split', 'Split: cut the selection in two with a plane (K)', () => this.editor.setTool('split'), 'Split'),
       tb('cruise', 'cruise', 'Cruise: drag shapes onto other shapes (C)', () => this.editor.toggleCruise(), 'Cruise'),
-      h('span', { class: 'sep' }),
-      tb('panels', 'panels', 'Panels: show or hide panels, or reset their layout', (e) => this.dock.menu(e.currentTarget)));
+);
 
     this.outliner = h('div', { class: 'outliner' });
     this.viewEl = h('div', { class: 'viewport' });
@@ -186,7 +184,10 @@ export class App {
     this.dock.add(this.side, { key: '3d-parts', title: 'Parts', icon: 'parts', oldKey: '3d-parts', grow: true, isOpen: () => this.side.classList.contains('open'), setOpen: (on) => this.toggleParts(on) });
     this.dock.add(this.inspectorEl, { key: '3d-inspector', title: 'Selection', icon: 'select', oldKey: '3d-inspector', isOpen: () => true, inMenu: false });
     this.inspectorEl.addEventListener('dockchange', () => this.inspector.render());
-    this.btn.parts.classList.add('keep-label');
+    // panel toggles at the start of the toolbar (the same in every workspace)
+    this.btn.outliner = this.dock.toggleButton('3d-objects', { icon: 'list', title: 'Objects list' });
+    this.btn.parts = this.dock.toggleButton('3d-parts', { icon: 'parts', title: 'Parts (P): the shape library: drag a shape onto the workplane' });
+    this.objectsToggle.append(this.btn.outliner, this.btn.parts);
     this.toggleParts(this.settings.partsOpen !== false);   // open until the user closes it
     this.editor.on('tool', () => { for (const id of ['workplane', 'ruler', 'note']) this.btn[id].classList.toggle('active', this.editor.tool === id); });
     this.dashboard = new Dashboard(this);
@@ -705,14 +706,11 @@ export class App {
   toggleParts(on = !this.side.classList.contains('open')) {
     this.side.classList.toggle('open', on);
     this.viewEl.classList.toggle('parts-open', on);
-    this.btn.parts.classList.toggle('active', on);
-    this.btn.parts.setAttribute('aria-pressed', String(on));
     if (this.settings.partsOpen !== on) this.patchSettings({ partsOpen: on });
   }
 
   toggleOutliner() {
     this.outliner.classList.toggle('open');
-    this.btn.outliner.classList.toggle('active', this.outliner.classList.contains('open'));
     this._renderOutliner();
   }
 

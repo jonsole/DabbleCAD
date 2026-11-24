@@ -125,7 +125,9 @@ export class LaserWorkspace {
   _build() {
     const tb = (ic, title, onClick, label) => button({ icon: ic, title, onClick, label });
     const menuBtn = (label, ic, items) => { const b = button({ icon: ic, label, title: label, onClick: () => popupMenu(items(), b) }); return b; };
+    this.panelToggles = h('span', { class: 'panel-toggles' });
     this.toolbar = h('div', { class: 'toolbar laser-toolbar', role: 'toolbar', 'aria-label': 'Laser tools' },
+      this.panelToggles, h('span', { class: 'sep' }),
       tb('import', 'Import SVG, DXF or images (Ctrl+I)', () => this.importDialog(), 'Import'),
       menuBtn('Export', 'export', () => [
         { label: 'Save G-code…', icon: 'export', onClick: () => this.saveGcode() },
@@ -182,9 +184,7 @@ export class LaserWorkspace {
       tb('stats', 'Depth Map Studio: turn an STL model or an image into a height map for relief engraving', () => depthMapStudio(this), 'Depth Map'),
       h('span', { class: 'spacer' }),
       tb('eye', 'Preview the job path and time (Alt+P)', () => tools.previewDialog(this), 'Preview'),
-      tb('settings', 'Device settings: work area, origin, controller', () => tools.deviceDialog(this), 'Device'),
-      h('span', { class: 'sep' }),
-      tb('panels', 'Panels: show or hide panels, or reset their layout', (e) => this.dock.menu(e.currentTarget)));
+      tb('settings', 'Device settings: work area, origin, controller', () => tools.deviceDialog(this), 'Device'));
 
     this.propBar = h('div', { class: 'laser-props' });
     this.toolBtns = {};
@@ -237,7 +237,10 @@ export class LaserWorkspace {
       h('div', { class: 'laser-main' }, this.toolCol, this.wrap),
       h('div', { class: 'laser-bottom' }, this.palette, this.statusBar));
     this.dock = new DockManager(this.wrap, { key: 'laser-dock', width: 344 });
-    this.sidePanels.forEach(([el, o], i) => this.dock.add(el, { key: el.dataset.key, title: el.dataset.title, icon: el.dataset.icon, dock: 'right', order: i * 2, ...o }));
+    this.sidePanels.forEach(([el, o], i) => {
+      this.dock.add(el, { key: el.dataset.key, title: el.dataset.title, icon: el.dataset.icon, dock: 'right', order: i * 2, ...o });
+      this.panelToggles.append(this.dock.toggleButton(el.dataset.key, { icon: el.dataset.icon, title: `${el.dataset.title} panel` }));
+    });
 
     const cv = this.canvas;
     cv.addEventListener('pointerdown', (e) => this._down(e));

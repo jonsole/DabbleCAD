@@ -6,7 +6,7 @@
 // its floating position and size, and whether it is open are remembered in this browser; columns
 // can be resized and hide when nothing in them is open.
 
-import { h, popupMenu } from './dom.js';
+import { h, button, popupMenu } from './dom.js';
 import { addResizer } from './resizer.js';
 
 const EDGE = 56;   // px from the view's edge that counts as "dock here"
@@ -18,6 +18,7 @@ export class DockManager {
     this.view = view;
     this.key = key;
     this.panels = new Map();
+    this.toggles = new Map();   // panel key -> its toolbar toggle button
     this.cols = {
       left: h('div', { class: 'dock dock-left', 'aria-label': 'Docked panels (left)', style: { width: `${width}px` } }),
       right: h('div', { class: 'dock dock-right', 'aria-label': 'Docked panels (right)', style: { width: `${width}px` } }),
@@ -34,6 +35,27 @@ export class DockManager {
     this._mo = new MutationObserver(() => this._refresh());
     for (const c of Object.values(this.cols)) this._mo.observe(c, { childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'hidden'] });
     this._refresh();
+  }
+
+  /**
+   * A toolbar toggle for a panel: lit while the panel is open, click to open or close it.
+   * Right-click any panel toggle for Reset panel layout.
+   */
+  toggleButton(key, { icon, title }) {
+    const b = button({ icon, title, cls: 'panel-toggle', onClick: () => this.setOpen(key, !this.isOpen(key)) });
+    b.setAttribute('aria-pressed', 'false');
+    b.addEventListener('contextmenu', (e) => { e.preventDefault(); popupMenu([{ label: 'Reset panel layout', icon: 'panels', onClick: () => this.resetLayout() }], { x: e.clientX, y: e.clientY }); });
+    this.toggles.set(key, b);
+    this._syncToggles();
+    return b;
+  }
+
+  _syncToggles() {
+    for (const [key, b] of this.toggles) {
+      const on = this.isOpen(key);
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-pressed', String(on));
+    }
   }
 
   _load(key) { try { return JSON.parse(localStorage.getItem(`dabblecad.dock.${key}`) || 'null'); } catch { return null; } }
@@ -80,6 +102,7 @@ export class DockManager {
       col.classList.toggle('empty', !any);
       if (this.splitters[side]) this.splitters[side].style.display = any ? '' : 'none';
     }
+    this._syncToggles();
   }
 
   /**
@@ -111,6 +134,8 @@ export class DockManager {
       });
     }
     el._dock = this;
+    // a panel opening or closing itself (a shortcut, its own X) updates the columns and toggles
+    this._mo.observe(el, { attributes: true, attributeFilter: ['class', 'hidden'] });
     if (state.w && state.dock === 'float') { el.style.width = `${state.w}px`; if (state.h) el.style.height = `${state.h}px`; }
     this._place(p);
     if (window.ResizeObserver && !el._dockRO) {

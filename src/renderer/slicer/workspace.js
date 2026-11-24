@@ -130,7 +130,7 @@ export class SlicerWorkspace {
     this.sendBtn.hidden = true;
     this.addBtns = [];
     this.toolbar = h('div', { class: 'toolbar sl-toolbar', role: 'toolbar', 'aria-label': 'Slicer tools' },
-      this.listBtn = button({ icon: 'list', title: 'Plate list', cls: 'active', onClick: () => this.toggleOutliner() }), h('span', { class: 'sep' }),
+      this.panelToggles = h('span', { class: 'panel-toggles' }), h('span', { class: 'sep' }),
       this.addBtns[0] = button({ icon: 'cube', label: 'Add design', title: 'Add the whole 3D design to the plate', onClick: () => this.addFromDesign() }),
       this.addBtns[1] = button({ icon: 'select', label: 'Selected', title: 'Add the shapes selected in 3D Design to the plate', onClick: () => this.addFromDesign({ selectedOnly: true }) }),
       this.addBtns[2] = button({ icon: 'plus', label: 'Import', title: 'Add an STL, OBJ, 3MF or PLY file', onClick: () => this.importFiles() }), h('span', { class: 'sep' }),
@@ -141,8 +141,7 @@ export class SlicerWorkspace {
       this.arrangeBtn = button({ icon: 'align', title: 'Arrange: space the models out on the bed', onClick: () => this.arrange() }),
       this.orientBtn = button({ icon: 'orient', title: 'Auto-orient for printing: turn the selected model (or every model if none is selected) to need the least support', onClick: () => this.autoOrient() }),
       this.resetBtn = button({ icon: 'drop', title: 'Reset the selected model: undo rotation and scaling', onClick: () => this.resetSelected() }),
-      h('span', { class: 'spacer' }),
-      button({ icon: 'panels', title: 'Panels: show or hide panels, or reset their layout', onClick: (e) => this.dock.menu(e.currentTarget) }));
+);
 
     // the 3D view, with the same floating pieces as 3D Design
     this.viewEl = h('div', { class: 'viewport sl-view' });
@@ -178,6 +177,9 @@ export class SlicerWorkspace {
     this.dock.add(this.settingsEl, { key: 'slicer-settings', title: 'Print settings', icon: 'settings', dock: 'right', grow: true });
     this.dock.add(this.inspectorEl, { key: 'slicer-inspector', title: 'Selection', icon: 'select', oldKey: 'slicer-inspector', inMenu: false, isOpen: () => !this.inspectorEl.hidden || this.inspectorEl.classList.contains('docked') });
     this.inspectorEl.addEventListener('dockchange', () => this._renderTransform());
+    this.panelToggles.append(
+      this.dock.toggleButton('slicer-plate', { icon: 'list', title: 'Plate list' }),
+      this.dock.toggleButton('slicer-settings', { icon: 'settings', title: 'Print settings (and the Slice, Save and Send buttons)' }));
     this.gizmo = new ModelGizmo(this.scene, {
       getModel: () => this.selectedModel,
       active: () => this._editing,
@@ -334,7 +336,6 @@ export class SlicerWorkspace {
 
   toggleOutliner() {
     this.outliner.classList.toggle('open');
-    this.listBtn.classList.toggle('active', this.outliner.classList.contains('open'));
     this._renderModels();
   }
 

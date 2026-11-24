@@ -665,3 +665,5 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
 .panel-head .ai-ask { margin: 0 4px; }
 .panel-head .sl-mon-state { font-size: 11.5px; margin: 0 4px; white-space: nowrap; }
 .panel-closed { display: none !important; }
+.panel-toggles { display: inline-flex; gap: 2px; flex-shrink: 0; }
+.toolbar .panel-toggle.active { color: var(--accent); background: var(--accent-soft); }
