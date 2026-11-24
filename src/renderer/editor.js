@@ -280,6 +280,7 @@ export class Editor extends Emitter {
     this.alignAnchor = this.selection.has(this.alignAnchor) ? this.alignAnchor : null;
     this.refreshOutlines();
     this.emit('selection');
+    if (this.tool === 'split' && !this.movableNodes().length) this.setTool('select');
   }
 
   selectAll() { this.select(this.doc.nodes.filter((n) => !n.hidden).map((n) => n.id)); }
@@ -363,6 +364,8 @@ export class Editor extends Emitter {
     if (this.tool === 'edges' && !this.edgeMode) this._startEdgeTool();
     if (part(this.tool) && !this.parts.active) this.parts.start(this.tool);
     if (this.tool !== 'align') this.alignAnchor = null;
+    if (this.tool === 'split' && !this._startSplit()) this.tool = 'select';
+    if (this.tool !== 'split') this.split = null;
     this.viewport.canvas.style.cursor = ['workplane', 'ruler', 'note'].includes(this.tool) ? 'crosshair' : '';
     this.emit('tool');
     this.emit('selection');
@@ -723,6 +726,12 @@ export class Editor extends Emitter {
       return;
     }
     const hit = this.pickNode(e);
+    if (this.tool === 'split') {
+      // Split: a click on a face lays the plane flush with it; Shift+click adds or removes a shape
+      if (hit && e.shiftKey) { this.select([hit.node.id], { toggle: true }); return; }
+      if (hit) this.splitToFace(hit);
+      return;
+    }
     if (!hit) return this._marquee(e);
     const node = hit.node;
     if (this.tool === 'align' && this.selection.has(node.id) && !e.shiftKey) {
@@ -1296,6 +1305,142 @@ export class Editor extends Emitter {
     if (!nodes.length) return;
     const c = this.bounds(nodes).getCenter(new THREE.Vector3());
     this.transformSelection(about(c, S(axis === 'x' ? -1 : 1, axis === 'y' ? -1 : 1, axis === 'z' ? -1 : 1)), nodes);
+  }
+
+  // ---------------------------------------------------------------- split
+  // The cutting plane, in workplane-frame coordinates: it passes through `c + n * offset`, where
+  // c is the middle of the selection when the tool started and n is the plane's z axis turned by q.
+  _startSplit() {
+    const nodes = this.movableNodes();
+    if (!nodes.length) { toast('Select the shapes to split first'); return false; }
+    const b = this.bounds(nodes);
+    if (b.isEmpty()) return false;
+    this.split = { c: b.getCenter(new THREE.Vector3()), q: new THREE.Quaternion(), offset: 0, size: b.getSize(new THREE.Vector3()).length() };
+    return true;
+  }
+
+  /** The plane in frame coordinates: { point, normal, matrix } (matrix: z = normal, origin on the plane). */
+  splitPlane() {
+    const sp = this.split;
+    if (!sp) return null;
+    const normal = new THREE.Vector3(0, 0, 1).applyQuaternion(sp.q);
+    const point = sp.c.clone().addScaledVector(normal, sp.offset);
+    const matrix = new THREE.Matrix4().compose(point, sp.q, new THREE.Vector3(1, 1, 1));
+    return { point, normal, matrix };
+  }
+
+  /** Angles of the plane (degrees, X then Y then Z) for showing and typing. */
+  splitAngles() {
+    if (!this.split) return { x: 0, y: 0, z: 0 };
+    const e = new THREE.Euler().setFromQuaternion(this.split.q, 'XYZ');
+    const d = (r) => Math.round((r * 180) / Math.PI * 10) / 10 + 0;
+    return { x: d(e.x), y: d(e.y), z: d(e.z) };
+  }
+
+  setSplit({ offset, angles, q } = {}) {
+    const sp = this.split;
+    if (!sp) return;
+    if (offset != null && isFinite(offset)) sp.offset = offset;
+    if (q) sp.q.copy(q).normalize();
+    if (angles) {
+      const r = (deg) => (deg * Math.PI) / 180;
+      sp.q.setFromEuler(new THREE.Euler(r(angles.x), r(angles.y), r(angles.z), 'XYZ'));
+    }
+    this.emit('split');
+    this.viewport.requestRender();
+  }
+
+  /** Preset directions: 'xy' flat, 'xz' upright front-to-back, 'yz' upright side-to-side (through the middle). */
+  splitPreset(which) {
+    const q = new THREE.Quaternion();
+    if (which === 'xz') q.setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2);   // normal along Y
+    else if (which === 'yz') q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2); // normal along X
+    this.setSplit({ q, offset: 0 });
+  }
+
+  /** Lay the plane flush with a picked face. */
+  splitToFace(hit) {
+    const sp = this.split;
+    if (!sp) return;
+    const n = hit.normal.clone().transformDirection(this.frameInv).normalize();
+    const p = hit.point.clone().applyMatrix4(this.frameInv);
+    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), n);
+    this.setSplit({ q, offset: p.sub(sp.c).dot(n) });
+  }
+
+  /** The selected shapes the plane passes through (the others are left alone). */
+  splitTargets() {
+    const pl = this.splitPlane();
+    if (!pl) return [];
+    const nW = pl.normal.clone().transformDirection(this.frame).normalize();
+    const pW = pl.point.clone().applyMatrix4(this.frame);
+    const d0 = nW.dot(pW), v = new THREE.Vector3(), m = new THREE.Matrix4();
+    return this.movableNodes().filter((n) => {
+      const pos = getGeometry(n).attributes.position;
+      if (!pos || !pos.count) return false;
+      m.fromArray(n.matrix);
+      let above = false, below = false;
+      for (let i = 0; i < pos.count; i++) {
+        const d = nW.dot(v.fromBufferAttribute(pos, i).applyMatrix4(m)) - d0;
+        if (d > 1e-4) above = true; else if (d < -1e-4) below = true;
+        if (above && below) return true;
+      }
+      return false;
+    });
+  }
+
+  /**
+   * Cut every selected shape the plane passes through into two pieces, one each side. Each piece is
+   * a group of the original shape (unchanged, still editable) and a big box hole covering the other
+   * side, so ungrouping a piece gives the original back. One undo step.
+   */
+  async applySplit() {
+    const pl = this.splitPlane();
+    const targets = this.splitTargets();
+    if (!pl || !targets.length) { toast('The plane doesn\'t pass through any selected shape'); return; }
+    const planeW = this.frame.clone().multiply(pl.matrix);
+    const pieces = [];
+    for (const node of targets) {
+      const nb = this.bounds([node], true);
+      const r = nb.getSize(new THREE.Vector3()).length();
+      const D = Math.max(40, r * 2 + 20);                // the hole box: comfortably bigger than the shape
+      // centred on the shape (its middle dropped onto the plane), so it covers the shape even far from the plane's middle
+      const local = nb.getCenter(new THREE.Vector3()).applyMatrix4(planeW.clone().invert());
+      const planeAt = planeW.clone().multiply(T(local.x, local.y, 0));
+      const name = node.name || kindName(node);
+      for (const side of [1, -1]) {
+        const keep = cloneNode(node, true);
+        keep.locked = false;
+        const hole = makeShape('box', { radius: 0, steps: 10 }, '#cfd8dc', 'Split cut');
+        hole.hole = true;
+        // put one face of the box on the plane, the box covering the side that goes away
+        const hb = new THREE.Box3().setFromBufferAttribute(getGeometry(hole).attributes.position);
+        const hs = hb.getSize(new THREE.Vector3()), k = D / Math.max(hs.x, hs.y, hs.z);
+        planeAt.clone().multiply(S(k, k, k))
+          .multiply(T(-(hb.min.x + hb.max.x) / 2, -(hb.min.y + hb.max.y) / 2, side === 1 ? -hb.max.z : -hb.min.z))
+          .toArray(hole.matrix);
+        const g = makeGroup([keep, hole], 'union');
+        g.name = `${name} (part ${side === 1 ? 1 : 2})`;
+        g.color = node.color;
+        if (node.type === 'group' && node.multicolor) g.multicolor = true;
+        g.transparent = !!node.transparent;
+        pieces.push({ from: node, g });
+      }
+    }
+    await this._busy(() => { for (const p of pieces) getGeometry(p.g); });
+    for (const node of targets) {
+      const at = this.doc.nodes.indexOf(node);
+      this.doc.nodes.splice(at, 1, ...pieces.filter((p) => p.from === node).map((p) => p.g));
+    }
+    this.selection = new Set(pieces.map((p) => p.g.id));
+    this.split = null;
+    this.tool = 'select';
+    this.sync();
+    this.commit();
+    this.emit('tool');
+    this.emit('selection');
+    const empty = pieces.filter((p) => !getGeometry(p.g).attributes.position.count).length;
+    if (empty) toast(`${empty === 1 ? 'One piece is' : empty + ' pieces are'} empty: the plane only touched ${empty === 1 ? 'that shape' : 'those shapes'} at the edge`, 'warn', 5000);
   }
 
   rotateSelection(axis, degrees) {

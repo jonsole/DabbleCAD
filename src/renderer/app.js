@@ -12,7 +12,7 @@ import { Viewport, HOME_VIEW } from './view/viewport.js';
 import { ViewCube } from './view/viewcube.js';
 import { addResizer } from './ui/resizer.js';
 import { makeDraggable } from './ui/draggable.js';
-import { Gizmo, formatLength } from './view/gizmo.js';
+import { Gizmo, formatLength, parseLength } from './view/gizmo.js';
 import { buildVoxels, disposeVoxels } from './view/voxels.js';
 import { Editor } from './editor.js';
 import { Inspector } from './ui/inspector.js';
@@ -128,6 +128,7 @@ export class App {
       h('span', { class: 'sep' }),
       tb('align', 'align', 'Align (L)', () => this.editor.setTool('align'), 'Align'),
       tb('mirror', 'mirror', 'Mirror (M)', () => this.editor.setTool('mirror'), 'Mirror'),
+      tb('split', 'split', 'Split: cut the selection in two with a plane (K)', () => this.editor.setTool('split'), 'Split'),
       tb('cruise', 'cruise', 'Cruise: drag shapes onto other shapes (C)', () => this.editor.toggleCruise(), 'Cruise'));
 
     this.outliner = h('div', { class: 'outliner' });
@@ -192,6 +193,8 @@ export class App {
     ed.on('transform', () => this._updateStatus());
     ed.on('history', () => this._updateButtons());
     ed.on('tool', () => { this._updateButtons(); this._updateBanner(); });
+    ed.on('split', () => this._syncSplitBanner());
+    ed.on('selection', () => { if (ed.tool === 'split') this._syncSplitBanner(); });
     ed.on('editing', () => { this._updateBanner(); this._updateButtons(); });
     ed.on('busy', (on) => this.viewEl.classList.toggle('busy', on));
     ed.on('contextmenu', (e) => this._contextMenu(e));
@@ -684,12 +687,13 @@ export class App {
     set('undo', ed.history.canUndo); set('redo', ed.history.canRedo);
     set('group', movable > 1); set('intersect', movable > 1); set('bundle', movable > 1);
     set('ungroup', ed.movableNodes().some((x) => x.type === 'group'));
-    set('align', movable > 0); set('mirror', movable > 0); set('drop', movable > 0); set('pattern', n > 0);
+    set('align', movable > 0); set('mirror', movable > 0); set('split', movable > 0 || ed.tool === 'split'); set('drop', movable > 0); set('pattern', n > 0);
     set('showall', ed.doc.nodes.some((x) => x.hidden));
     this.btn.align.classList.toggle('active', ed.tool === 'align');
     const mode = ed.tool === 'face' ? 'Face' : ed.tool === 'edges' ? 'Edge' : ed.tool === 'corner' ? 'Corner' : 'Object';
     for (const m of ['Object', 'Face', 'Edge', 'Corner']) { this.btn['mode' + m].classList.toggle('active', m === mode); this.btn['mode' + m].setAttribute('aria-pressed', m === mode ? 'true' : 'false'); }
     this.btn.mirror.classList.toggle('active', ed.tool === 'mirror');
+    this.btn.split.classList.toggle('active', ed.tool === 'split');
     this.btn.cruise.classList.toggle('active', ed.cruise);
   }
 
@@ -704,9 +708,48 @@ export class App {
       mirror: 'Click an arrow to flip the selection.',
     }[ed.tool];
     clear(this.banner);
+    if (ed.tool === 'split' && ed.split) { this._splitBanner(); return; }
     if (text) this.banner.append(h('span', {}, text), h('kbd', {}, 'Esc'));
     else if (ed.editing) this.banner.append(h('span', {}, 'Editing the parts of a group. Move, resize, add or delete parts, then finish.'), button({ label: 'Done', cls: 'btn-primary', onClick: () => ed.exitGroup() }));
     else if (ed.hasFrame) this.banner.append(h('span', {}, 'Temporary workplane active.'), button({ label: 'Reset workplane', cls: 'btn-outline', onClick: () => { ed.setFrame(null); this._updateBanner(); } }));
+  }
+
+  /** Split tool controls: plane position and angles, presets, Apply / Cancel. */
+  _splitBanner() {
+    const ed = this.editor;
+    const num = (title, get, set, unit) => {
+      const inp = h('input', { class: 'split-num', type: 'text', title });
+      inp._get = get;
+      inp.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') { inp.blur(); } if (e.key === 'Escape') { inp.value = get(); inp.blur(); } });
+      inp.addEventListener('change', () => { const v = parseFloat(inp.value.replace(',', '.')); if (isFinite(v)) set(v); else inp.value = get(); });
+      return h('label', { class: 'split-field' }, h('span', {}, title), inp, unit ? h('small', {}, unit) : null);
+    };
+    const u = ed.units;
+    const ang = (k) => () => String(ed.splitAngles()[k]);
+    const setAng = (k) => (v) => { const a = ed.splitAngles(); a[k] = v; ed.setSplit({ angles: a }); };
+    const fields = [
+      num('Position', () => formatLength(ed.split.offset, u), (v) => ed.setSplit({ offset: parseLength(String(v), u) }), u === 'brick' ? 'bricks' : u),
+      num('X', ang('x'), setAng('x'), '°'), num('Y', ang('y'), setAng('y'), '°'), num('Z', ang('z'), setAng('z'), '°'),
+    ];
+    const preset = (label, which, title) => button({ label, cls: 'btn-outline', title, onClick: () => ed.splitPreset(which) });
+    this.splitNote = h('span', { class: 'split-note' });
+    this.splitApply = button({ label: 'Split', icon: 'split', cls: 'btn-primary', title: 'Cut the shapes the plane passes through (Enter)', onClick: () => ed.applySplit() });
+    this.banner.append(h('div', { class: 'split-bar' },
+      h('div', { class: 'split-row' }, ...fields, h('span', { style: { flex: 1 } }),
+        button({ label: 'Cancel', cls: 'btn-outline', title: 'Esc', onClick: () => ed.setTool('select') }), this.splitApply),
+      h('div', { class: 'split-row' }, preset('Flat', 'xy', 'Horizontal plane'), preset('Front–back', 'xz', 'Upright, facing front'), preset('Side–side', 'yz', 'Upright, facing the side'),
+        h('span', { class: 'split-hint' }, 'or click a face to cut along it'), h('span', { style: { flex: 1 } }), this.splitNote)));
+    this._syncSplitBanner();
+  }
+
+  _syncSplitBanner() {
+    const ed = this.editor;
+    if (!this.splitApply || !ed.split || !this.banner.contains(this.splitApply)) return;
+    for (const inp of this.banner.querySelectorAll('.split-num')) if (document.activeElement !== inp) inp.value = inp._get();
+    const n = ed.splitTargets().length, sel = ed.movableNodes().length;
+    this.splitApply.classList.toggle('disabled', n === 0);
+    this.splitNote.textContent = n === 0 ? 'The plane misses the selection' : sel > 1 ? `Cuts ${n} of ${sel} shapes` : '';
+    this.splitNote.classList.toggle('warn', n === 0);
   }
 
   _updateStatus() {
@@ -762,6 +805,7 @@ export class App {
       'sep',
       { label: 'Align', icon: 'align', shortcut: 'L', disabled: !movable.length, onClick: () => ed.setTool('align') },
       { label: 'Mirror', icon: 'mirror', shortcut: 'M', disabled: !movable.length, onClick: () => ed.setTool('mirror') },
+      { label: 'Split', icon: 'split', shortcut: 'K', disabled: !movable.length, onClick: () => ed.setTool('split') },
       { label: 'Drop to workplane', icon: 'drop', shortcut: 'D', disabled: !movable.length, onClick: () => ed.dropToWorkplane() },
       { label: 'Workplane on selection', icon: 'workplane', shortcut: 'Shift+W', onClick: () => { ed.workplaneAtSelection(); this._updateBanner(); } },
       'sep',
@@ -811,6 +855,7 @@ export class App {
       else if (ed.editing) ed.exitGroup();
       return;
     }
+    if (key === 'Enter' && ed.tool === 'split') { done(); ed.applySplit(); return; }
     if (key === 'Delete' || key === 'Backspace') { done(); ed.deleteSelection(); return; }
     if (key.startsWith('Arrow')) {
       done();
@@ -835,7 +880,7 @@ export class App {
       w: () => { if (shift) { ed.workplaneAtSelection(); this._updateBanner(); } else ed.setTool('workplane'); },
       1: () => ed.setTool('select'), 2: () => ed.setTool(ed.tool === 'face' ? 'select' : 'face'),
       3: () => ed.setTool(ed.tool === 'edges' ? 'select' : 'edges'), 4: () => ed.setTool(ed.tool === 'corner' ? 'select' : 'corner'),
-      e: () => ed.setTool('edges'), r: () => ed.setTool('ruler'), n: () => ed.setTool('note'), l: () => ed.setTool('align'), m: () => ed.setTool('mirror'),
+      e: () => ed.setTool('edges'), r: () => ed.setTool('ruler'), n: () => ed.setTool('note'), l: () => ed.setTool('align'), m: () => ed.setTool('mirror'), k: () => ed.setTool('split'),
       c: () => ed.toggleCruise(), d: () => ed.dropToWorkplane(), s: () => ed.setHole(false), h: () => ed.setHole(true), t: () => ed.toggleTransparent(),
     };
     if (map[key]) { done(); map[key](); }

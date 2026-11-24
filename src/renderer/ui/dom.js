@@ -48,6 +48,7 @@ const P = {
   bundle: 'M4 8l8-4 8 4-8 4zM4 8v8l8 4 8-4V8M12 12v8',
   align: 'M4 3v18M8 6h10v4H8zM8 14h6v4H8z',
   mirror: 'M12 3v18M9 7 4 12l5 5zM15 7l5 5-5 5z',
+  split: 'M3 8.5h6.5v9H3zM14.5 6.5H21v9h-6.5zM12 2v3M12 8v3M12 14v3M12 20v2',
   cruise: 'M6 4v7a6 6 0 0 0 12 0V4h-4v7a2 2 0 0 1-4 0V4zM6 7h4M14 7h4',
   workplane: 'M3 15l9-4 9 4-9 4zM12 4v7M9 7l3-3 3 3',
   ruler: 'M4 16 16 4l4 4L8 20zM8.5 13.5l1.5 1.5M11 11l1.5 1.5M13.5 8.5 15 10',
