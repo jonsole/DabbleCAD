@@ -259,6 +259,16 @@ export class Gizmo {
         vp.project(v, p);
         if (p.behind) { it.el.style.display = 'none'; continue; }
         it.el.style.display = '';
+        if (it.noArrows) {
+          // the lift arrow points straight up from the workplane as seen on screen (a tilted workplane tilts it)
+          const tip = {};
+          vp.project(new THREE.Vector3(arr[0], arr[1], arr[2] + o).applyMatrix4(ed.frame), tip);
+          let ux = tip.x - p.x, uy = tip.y - p.y;
+          const L = Math.hypot(ux, uy);
+          if (L < 1e-3) { ux = 0; uy = -1; } else { ux /= L; uy /= L; }
+          it.el.style.transform = `translate(${Math.round(p.x + ux * 30)}px, ${Math.round(p.y + uy * 30)}px) translate(-50%, -50%) rotate(${Math.atan2(ux, -uy)}rad)`;
+          continue;
+        }
         it.el.style.transform = `translate(${Math.round(p.x + (it.dx || 0))}px, ${Math.round(p.y + (it.dy || 0))}px) translate(-50%, -50%)`;
       }
       if (!this.editingLabel) {
