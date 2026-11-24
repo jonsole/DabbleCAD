@@ -12,6 +12,7 @@ import { Viewport, HOME_VIEW } from './view/viewport.js';
 import { ViewCube } from './view/viewcube.js';
 import { addResizer } from './ui/resizer.js';
 import { makeDraggable } from './ui/draggable.js';
+import { DockManager } from './ui/dock.js';
 import { Gizmo, formatLength, parseLength } from './view/gizmo.js';
 import { buildVoxels, disposeVoxels } from './view/voxels.js';
 import { Editor } from './editor.js';
@@ -163,7 +164,6 @@ export class App {
 
     if (this.settings.moveArrows) { this.axesBtn.classList.add('active'); this.axesBtn.setAttribute('aria-pressed', 'true'); }
     this.inspectorEl = h('div', { class: 'inspector' });
-    makeDraggable(this.inspectorEl, { key: '3d-inspector' });
     this.banner = h('div', { class: 'mode-banner' });
     this.status = h('div', { class: 'statusbar' });
     this.snapSel = h('select', { class: 'select', title: 'Snap Grid' });
@@ -182,11 +182,14 @@ export class App {
       let t = 0;
       new ResizeObserver(() => { clearTimeout(t); t = setTimeout(() => { if (this.side.offsetWidth && this.side.style.width) try { localStorage.setItem('dabblecad.card.3d-parts.size', JSON.stringify({ w: this.side.offsetWidth, h: this.side.offsetHeight })); } catch { /* ignore */ } }, 300); }).observe(this.side);
     }
-    makeDraggable(this.side, { key: '3d-parts', handle: '.parts-head' });
     this.viewEl.append(this.side, this.inspectorEl, this.banner, this.status, this.gridbar, this.voxelBar, h('div', { class: 'busy-pill' }, 'Working…'));
 
     this.inspector = new Inspector(this.editor, this.inspectorEl, this);
     this.shapes = new ShapesPanel(this.editor, this.side, this);
+    // Parts and the selection card float, or dock at the left / right edge of the view
+    this.dock = new DockManager(this.viewEl, { key: '3d-dock' });
+    this.dock.add(this.side, { key: '3d-parts', handle: '.parts-head', oldKey: '3d-parts' });
+    this.dock.add(this.inspectorEl, { key: '3d-inspector', handle: '.insp-head', oldKey: '3d-inspector' });
     this.btn.parts.classList.add('keep-label');
     this.toggleParts(this.settings.partsOpen !== false);   // open until the user closes it
     this.editor.on('tool', () => { for (const id of ['workplane', 'ruler', 'note']) this.btn[id].classList.toggle('active', this.editor.tool === id); });

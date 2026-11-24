@@ -225,7 +225,7 @@ input, textarea { user-select: text; -webkit-user-select: text; }
 .parts-panel.dragging { user-select: none; -webkit-user-select: none; }
 .parts-panel .shape-grid { grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); }
 /* with Parts open, the selection card starts to its left (until the user moves it) */
-.viewport.parts-open .inspector { right: 310px; }
+.viewport:has(> .parts-panel.open) > .inspector { right: 310px; }
 .side-tools { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 10px; border-bottom: 1px solid var(--border); }
 .side-tool { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 2px 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); cursor: pointer; font-size: 11.5px; }
 .side-tool:hover { border-color: var(--muted); }
@@ -628,3 +628,23 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
 .toolbar { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
 .toolbar::-webkit-scrollbar { display: none; }
 @media (max-width: 1500px) { .toolbar .btn:not(.keep-label) .btn-label { display: none; } .toolbar .btn:not(.keep-label) { padding: 0 6px; } }
+
+/* ---------------------------------------------------------------- dockable panels */
+.dock { flex: none; width: 290px; display: flex; flex-direction: column; background: var(--panel); overflow: hidden; position: relative; }
+.dock-left { border-right: 1px solid var(--border); }
+.dock-right { border-left: 1px solid var(--border); }
+/* a column with nothing showing in it takes no room (a docked selection card keeps its place, so
+   the view doesn't jump each time the selection changes) */
+.dock:not(:has(> .parts-panel.open, > .inspector)) { display: none; }
+.dock > .inspector.docked:empty { display: block; }
+.dock > .inspector.docked:empty::before { content: 'Select a shape to see its settings here. Drag this panel\'s header out to float it.'; display: block; padding: 16px 14px; color: var(--muted); font-size: 12.5px; }
+.dock > .docked { position: static !important; width: auto !important; max-height: none !important; border: none; border-radius: 0; box-shadow: none; resize: none; flex: 0 1 auto; overflow: auto; min-height: 0; }
+.dock > .docked + .docked { border-top: 1px solid var(--border); }
+.dock > .parts-panel.docked { flex: 1 1 0; height: auto !important; min-height: 220px; }
+.dock > .inspector.docked { flex: 0 1 auto; max-height: 60% !important; }
+.dock > .docked .insp-head { cursor: grab; }
+.dockable.dragging { opacity: .92; z-index: 30; }
+.dock-hint { position: absolute; top: 0; bottom: 0; width: 0; z-index: 29; pointer-events: none; background: var(--accent-soft); border: 2px dashed var(--accent); opacity: 0; transition: opacity .12s; }
+.dock-hint.on { opacity: 1; width: 260px; }
+.dock-hint.left { left: 0; border-radius: 0 10px 10px 0; }
+.dock-hint.right { right: 0; border-radius: 10px 0 0 10px; }
