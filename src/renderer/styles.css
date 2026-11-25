@@ -612,3 +612,40 @@ body.resizing iframe, body.resizing canvas { pointer-events: none; }
 .ai-host { color: var(--muted); font-size: 10.5px; }
 .ai-sources { width: 100%; border-top: 1px solid var(--border); padding-top: 4px; }
 .ai-chip.web summary { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------- toolbars and context strips (shared with ElectroCAD, docs/UI.md there) ---------- */
+/* the main toolbar keeps what always applies; it never squashes its buttons, it scrolls */
+.toolbar .btn, .toolbar .mode-group, .toolbar .segmented { flex-shrink: 0; }
+.toolbar { overflow-x: auto; overflow-y: hidden; scrollbar-width: none; }
+.toolbar::-webkit-scrollbar { display: none; }
+@media (max-width: 1500px) { .toolbar .btn:not(.keep-label) .btn-label { display: none; } .toolbar .btn:not(.keep-label) { padding: 0 6px; } }
+/* a floating strip over the canvas: the tool in use's options, or the selection's actions */
+.tool-strip { position: absolute; top: 14px; left: 120px; max-width: calc(100% - 134px); z-index: 12; display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); }
+.tool-strip[hidden] { display: none; }
+.tool-strip-label { font-size: 12.5px; color: var(--muted); }
+.tool-strip .sep { width: 1px; height: 22px; background: var(--border); margin: 0 2px; }
+.context-strip { gap: 6px; padding: 4px 6px 4px 12px; flex-wrap: nowrap; }
+.context-strip .strip-body { min-width: 0; }
+.context-strip .tool-strip-label { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--text); white-space: nowrap; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.context-strip .tool-strip-label .icon { opacity: .75; flex: none; }
+.strip-field { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); white-space: nowrap; }
+.strip-field .input, .strip-field .select { height: 28px; padding: 0 6px; }
+.strip-field .select { max-width: 180px; }
+.strip-field em { font-style: normal; font-size: 11px; color: var(--muted); }
+.strip-btn { height: 30px; padding: 0 8px; }
+.strip-btn.active { background: var(--accent-soft); color: var(--accent); }
+.strip-btn.strip-danger:hover { color: var(--danger); }
+.strip-seg .btn { height: 28px; }
+.strip-grip { display: inline-flex; gap: 2px; align-items: center; align-self: stretch; padding: 0 5px 0 0; margin-left: -6px; cursor: grab; touch-action: none; }
+.strip-grip i { display: block; width: 2px; height: 14px; border-radius: 1px; background: var(--muted); opacity: .55; }
+.strip-grip:hover i { opacity: .95; }
+.tool-strip.moving { cursor: grabbing; opacity: .95; }
+.tool-strip.moving .strip-grip { cursor: grabbing; }
+.strip-body { display: flex; align-items: center; gap: inherit; flex-wrap: wrap; }
+.strip-field:has(:disabled) { opacity: .45; }
+.strip-field :disabled { cursor: not-allowed; }
+.strip-btn:disabled { opacity: .4; cursor: not-allowed; }
+.laser-canvas-wrap > .tool-strip { top: 30px; left: 40px; max-width: calc(100% - 52px); }
+/* the strip reaches the inspector's corner: the inspector starts below it so neither covers the other */
+.strip-crowded > .inspector { top: 62px; }
+.strip-compact .btn-label { display: none; }

@@ -3,6 +3,7 @@
 import './slicer.css';
 import * as THREE from 'three';
 import { h, clear, button, icon, toast, popupMenu } from '../ui/dom.js';
+import { ContextStrip, stripLabel, stripSep, stripButton, stripProps } from '../ui/contextStrip.js';
 import { ViewCube } from '../view/viewcube.js';
 import { addResizer } from '../ui/resizer.js';
 import { makeDraggable } from '../ui/draggable.js';
@@ -136,11 +137,10 @@ export class SlicerWorkspace {
       this.addBtns[2] = button({ icon: 'plus', label: 'Import', title: 'Add an STL, OBJ, 3MF or PLY file', onClick: () => this.importFiles() }), h('span', { class: 'sep' }),
       this.undoBtn = button({ icon: 'undo', title: 'Undo (Ctrl+Z)', onClick: () => this.undo() }),
       this.redoBtn = button({ icon: 'redo', title: 'Redo (Ctrl+Y)', onClick: () => this.redo() }), h('span', { class: 'sep' }),
-      this.dupBtn = button({ icon: 'duplicate', title: 'Copy the selected model', onClick: () => this.selected && this.duplicate(this.selected) }),
-      this.delBtn = button({ icon: 'trash', title: 'Remove the selected model (Del)', onClick: () => this.selected && this.removeModel(this.selected) }), h('span', { class: 'sep' }),
       this.arrangeBtn = button({ icon: 'align', title: 'Arrange: space the models out on the bed', onClick: () => this.arrange() }),
-      this.orientBtn = button({ icon: 'orient', title: 'Auto-orient for printing: turn the selected model (or every model if none is selected) to need the least support', onClick: () => this.autoOrient() }),
-      this.resetBtn = button({ icon: 'drop', title: 'Reset the selected model: undo rotation and scaling', onClick: () => this.resetSelected() }));
+      this.orientBtn = button({ icon: 'orient', title: 'Auto-orient for printing: turn the selected model (or every model if none is selected) to need the least support', onClick: () => this.autoOrient() }));
+    // copy, remove and reset act on the selected model: they are on the context strip over the view
+    this.strip = new ContextStrip('Selection actions', 'slicer');
 
     // the 3D view, with the same floating pieces as 3D Design
     this.viewEl = h('div', { class: 'viewport sl-view' });
@@ -169,6 +169,7 @@ export class SlicerWorkspace {
         button({ icon: 'minus', title: 'Zoom out', onClick: () => this.scene.zoomBy(1 / 0.75) }),
         this.projBtn)),
       this.inspectorEl, this.previewPanel, this.banner);
+    this.strip.mount(this.viewEl);
     this.gizmo = new ModelGizmo(this.scene, {
       getModel: () => this.selectedModel,
       active: () => this._editing,
@@ -472,7 +473,7 @@ export class SlicerWorkspace {
     clear(this.inspectorEl);
     const m = this.selectedModel;
     this.fields = {};
-    this.inspectorEl.hidden = !m || this.mode === 'preview' || !!this.monitoring;
+    this.inspectorEl.hidden = !m || this.mode === 'preview' || !!this.monitoring || !!this.app.settings.slicerInspectorHidden;
     if (!m) return;
     const input = (key, step, axis) => {
       const el = h('input', { class: 'input' + (axis ? ' ax-' + axis : ''), type: 'number', step, 'aria-label': key });
@@ -830,18 +831,34 @@ export class SlicerWorkspace {
   get _editing() { return this.mode === 'model' && !this.monitoring; }
 
   _syncTools() {
-    if (!this.dupBtn) return;
+    if (!this.strip) return;
     const m = this._editing ? this.selectedModel : null;
     const off = (b, v) => { b.classList.toggle('disabled', !!v); b.setAttribute('aria-disabled', v ? 'true' : 'false'); };
     const hs = this._hist, ed = this._editing, none = this._movable().length === 0;
     for (const b of this.addBtns) off(b, !ed);
     off(this.undoBtn, !ed || !hs || hs.i <= 0);
     off(this.redoBtn, !ed || !hs || hs.i >= hs.stack.length - 1);
-    off(this.dupBtn, !m);
-    off(this.delBtn, !m);
     off(this.arrangeBtn, !ed || none);
     off(this.orientBtn, !ed || none);
-    off(this.resetBtn, !m || m.locked || (m.rx === 0 && m.ry === 0 && m.rz === 0 && m.sx === 100 && m.sy === 100 && m.sz === 100));
+    this._updateStrip(m);
+  }
+
+  /** The context strip over the view: what can be done with the selected model (ElectroCAD's convention). */
+  _updateStrip(m) {
+    if (!m) { this.strip.hide(); return; }
+    const plain = m.rx === 0 && m.ry === 0 && m.rz === 0 && m.sx === 100 && m.sy === 100 && m.sz === 100;
+    const propsOpen = !this.app.settings.slicerInspectorHidden;
+    this.strip.show(`${m.id}|${m.name}|${!!m.locked}|${plain}|${propsOpen}`, () => [
+      stripLabel(m.name || 'Model', 'cube'), stripSep(),
+      stripButton({ icon: 'duplicate', title: 'Copy the selected model', onClick: () => this.duplicate(m.id) }),
+      stripButton({ icon: 'trash', title: 'Remove the selected model (Del)', danger: true, disabled: !!m.locked, onClick: () => this.removeModel(m.id) }),
+      stripSep(),
+      stripButton({ icon: 'orient', title: 'Auto-orient this model for printing: turn it to need the least support', disabled: !!m.locked, onClick: () => this.autoOrient() }),
+      stripButton({ icon: 'drop', title: 'Reset the selected model: undo rotation and scaling', disabled: !!m.locked || plain, onClick: () => this.resetSelected() }),
+      stripButton({ icon: m.locked ? 'lock' : 'unlock', title: m.locked ? 'Unlock' : 'Lock: stop it moving', active: !!m.locked, onClick: () => { m.locked = !m.locked; this._checkpoint(); this._renderModels(); this._renderTransform(); this.scene.requestRender(); } }),
+      stripSep(),
+      stripProps({ open: propsOpen, onToggle: () => { this.app.patchSettings({ slicerInspectorHidden: propsOpen }); this._renderTransform(); this._syncTools(); } }),
+    ]);
   }
 
   _updateBar() {
