@@ -100,6 +100,28 @@ await shot('s-final');
   check('update-dialog', um.getAttribute('aria-label') === 'Updates' && out.updateText === 'Could not check for updates' && [...um.querySelectorAll('button')].some((b) => b.textContent === 'Try again'), out.updateText);
   um.querySelector('.modal-head .btn').click(); await wait(60);
 }
+// the context strip (ElectroCAD's convention): selection actions float over the view, not on the toolbar
+{
+  const strip = () => app.viewEl.querySelector('.context-strip');
+  const stripBtn = (title) => [...strip().querySelectorAll('button')].find((b) => (b.title || '').startsWith(title));
+  ed.selection.clear(); ed.emit('selection'); await wait(30);
+  check('strip-hidden-empty', strip().hidden === true);
+  check('toolbar-no-selection-actions', !document.querySelector('.toolbar .btn[title^="Delete"]') && !document.querySelector('.toolbar .btn[title^="Group"]'));
+  const a = add('box', -40, 40), b = add('box', -10, 40);
+  ed.selection.clear(); ed.selection.add(a.id); ed.selection.add(b.id); ed.emit('selection'); await wait(30);
+  check('strip-shown', strip().hidden === false && strip().textContent.includes('2 shapes'), strip().textContent);
+  const count = ed.doc.nodes.length;
+  stripBtn('Group:').click(); await wait(400);
+  check('strip-group', ed.doc.nodes.length === count - 1 && ed.selectedNodes()[0]?.type === 'group', ed.doc.nodes.length);
+  check('strip-ungroup-offered', !!stripBtn('Ungroup'));
+  const props = strip().querySelector('.strip-props');
+  props.click(); await wait(30);
+  check('strip-props-hide', app.inspectorEl.style.display === 'none' && !strip().querySelector('.strip-props').classList.contains('active'));
+  strip().querySelector('.strip-props').click(); await wait(30);
+  check('strip-props-show', app.inspectorEl.style.display === '' && strip().querySelector('.strip-props').classList.contains('active'));
+  stripBtn('Delete').click(); await wait(300);
+  check('strip-delete', ed.doc.nodes.length === count - 2 && strip().hidden === true, ed.doc.nodes.length);
+}
 // accessibility basics and the getting-started guide
 {
   const unnamed = [...document.querySelectorAll('button.btn')].filter((b) => !b.textContent.trim() && !b.getAttribute('aria-label'));

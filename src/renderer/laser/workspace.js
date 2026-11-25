@@ -1,6 +1,7 @@
 // Laser workspace: 2D canvas editor, layers, machine control. Owns its own tools and shortcuts.
 import { addResizer } from '../ui/resizer.js';
 import { h, clear, button, icon, toast, popupMenu, promptDialog } from '../ui/dom.js';
+import { ContextStrip, stripLabel, stripSep, stripButton, stripMenu } from '../ui/contextStrip.js';
 import { platform } from '../platform.js';
 import { listFontNames, ensureFont } from '../core/fonts.js';
 import {
@@ -121,6 +122,70 @@ export class LaserWorkspace {
     for (const s of shapes) s.m = mul(matrix, s.m);
   }
 
+  /** The Arrange menu (on the selection's context strip). */
+  _arrangeItems() {
+    return [
+      { label: 'Align left', onClick: () => this.align('x', 0) }, { label: 'Align centres (vertical axis)', onClick: () => this.align('x', 0.5) }, { label: 'Align right', onClick: () => this.align('x', 1) },
+      { label: 'Align top', onClick: () => this.align('y', 0) }, { label: 'Align centres (horizontal axis)', onClick: () => this.align('y', 0.5) }, { label: 'Align bottom', onClick: () => this.align('y', 1) },
+      'sep',
+      { label: 'Distribute horizontally', onClick: () => this.distribute('x') }, { label: 'Distribute vertically', onClick: () => this.distribute('y') },
+      'sep',
+      { label: 'Move to centre of work area', shortcut: 'P', onClick: () => this.moveToBed(4) },
+      { label: 'Move to upper left', onClick: () => this.moveToBed(0) }, { label: 'Move to lower left', onClick: () => this.moveToBed(6) },
+      'sep',
+      { label: 'Flip horizontal', shortcut: 'Ctrl+Shift+H', onClick: () => this.flip('x') }, { label: 'Flip vertical', shortcut: 'Ctrl+Shift+V', onClick: () => this.flip('y') },
+      { label: 'Rotate 90° clockwise', shortcut: '.', onClick: () => this.rotate(90) }, { label: 'Rotate 90° counter-clockwise', shortcut: ',', onClick: () => this.rotate(-90) },
+      'sep',
+      { label: 'Bring to front', shortcut: 'PgUp', onClick: () => this.order(1) }, { label: 'Send to back', shortcut: 'PgDn', onClick: () => this.order(-1) },
+      { label: 'Lock / unlock', onClick: () => this.toggleLock() },
+    ];
+  }
+
+  /** The Modify menu (on the selection's context strip). */
+  _modifyItems() {
+    return [
+      { label: 'Weld (union)', shortcut: 'Ctrl+W', onClick: () => tools.boolean(this, 'union') },
+      { label: 'Subtract (first minus the rest)', onClick: () => tools.boolean(this, 'subtract') },
+      { label: 'Intersect', onClick: () => tools.boolean(this, 'intersect') },
+      { label: 'Exclude (XOR)', onClick: () => tools.boolean(this, 'xor') },
+      'sep',
+      { label: 'Offset shapes…', shortcut: 'Alt+O', onClick: () => tools.offsetDialog(this) },
+      { label: 'Convert to path', onClick: () => this.convertToPath() },
+      { label: 'Close path', onClick: () => this.closePaths() },
+      { label: 'Break apart', onClick: () => this.breakApart() },
+      'sep',
+      { label: 'Grid array…', onClick: () => tools.gridArrayDialog(this) },
+      { label: 'Circular array…', onClick: () => tools.circularArrayDialog(this) },
+      'sep',
+      { label: 'Trace image…', onClick: () => tools.traceDialog(this) },
+    ];
+  }
+
+  /** The context strip over the canvas: the selection's actions (ElectroCAD's convention). */
+  _updateStrip() {
+    if (!this.strip) return;
+    const sel = this.tool === 'select' || this.tool === 'node' ? this.selected() : [];
+    if (!sel.length) { this.strip.hide(); return; }
+    const one = sel.length === 1 ? sel[0] : null;
+    const label = one ? typeLabel(one) : `${sel.length} objects`;
+    const groups = sel.some((s) => s.type === 'group'), locked = sel.length > 0 && sel.every((s) => s.locked);
+    const key = `${sel.map((s) => s.id).join(',')}|${label}|${groups}|${locked}`;
+    this.strip.show(key, () => [
+      stripLabel(label, 'select'), stripSep(),
+      stripButton({ icon: 'copy', title: 'Copy (Ctrl+C)', onClick: () => this.copy() }),
+      stripButton({ icon: 'duplicate', title: 'Duplicate (Ctrl+D)', onClick: () => this.duplicate() }),
+      stripButton({ icon: 'trash', title: 'Delete (Del)', danger: true, onClick: () => this.remove() }),
+      stripSep(),
+      sel.length > 1 ? stripButton({ icon: 'group', label: 'Group', title: 'Group (Ctrl+G)', onClick: () => this.group() }) : null,
+      groups ? stripButton({ icon: 'ungroup', label: 'Ungroup', title: 'Ungroup (Ctrl+U)', onClick: () => this.ungroup() }) : null,
+      sel.length > 1 || groups ? stripSep() : null,
+      stripMenu({ icon: 'align', label: 'Arrange', items: () => this._arrangeItems() }),
+      stripMenu({ icon: 'intersect', label: 'Modify', items: () => this._modifyItems() }),
+      stripSep(),
+      stripButton({ icon: locked ? 'lock' : 'unlock', title: locked ? 'Unlock' : 'Lock: stop it moving', active: locked, onClick: () => this.toggleLock() }),
+    ]);
+  }
+
   // ---------------------------------------------------------------- layout
   _build() {
     const tb = (ic, title, onClick, label) => button({ icon: ic, title, onClick, label });
@@ -136,42 +201,8 @@ export class LaserWorkspace {
       h('span', { class: 'sep' }),
       tb('undo', 'Undo (Ctrl+Z)', () => this.undo()), tb('redo', 'Redo (Ctrl+Y)', () => this.redo()),
       h('span', { class: 'sep' }),
-      tb('copy', 'Copy (Ctrl+C)', () => this.copy()), tb('paste', 'Paste (Ctrl+V)', () => this.paste()),
-      tb('duplicate', 'Duplicate (Ctrl+D)', () => this.duplicate()), tb('trash', 'Delete (Del)', () => this.remove()),
+      tb('paste', 'Paste (Ctrl+V)', () => this.paste()),
       h('span', { class: 'sep' }),
-      tb('group', 'Group (Ctrl+G)', () => this.group(), 'Group'), tb('ungroup', 'Ungroup (Ctrl+U)', () => this.ungroup(), 'Ungroup'),
-      h('span', { class: 'sep' }),
-      menuBtn('Arrange', 'align', () => [
-        { label: 'Align left', onClick: () => this.align('x', 0) }, { label: 'Align centres (vertical axis)', onClick: () => this.align('x', 0.5) }, { label: 'Align right', onClick: () => this.align('x', 1) },
-        { label: 'Align top', onClick: () => this.align('y', 0) }, { label: 'Align centres (horizontal axis)', onClick: () => this.align('y', 0.5) }, { label: 'Align bottom', onClick: () => this.align('y', 1) },
-        'sep',
-        { label: 'Distribute horizontally', onClick: () => this.distribute('x') }, { label: 'Distribute vertically', onClick: () => this.distribute('y') },
-        'sep',
-        { label: 'Move to centre of work area', shortcut: 'P', onClick: () => this.moveToBed(4) },
-        { label: 'Move to upper left', onClick: () => this.moveToBed(0) }, { label: 'Move to lower left', onClick: () => this.moveToBed(6) },
-        'sep',
-        { label: 'Flip horizontal', shortcut: 'Ctrl+Shift+H', onClick: () => this.flip('x') }, { label: 'Flip vertical', shortcut: 'Ctrl+Shift+V', onClick: () => this.flip('y') },
-        { label: 'Rotate 90° clockwise', shortcut: '.', onClick: () => this.rotate(90) }, { label: 'Rotate 90° counter-clockwise', shortcut: ',', onClick: () => this.rotate(-90) },
-        'sep',
-        { label: 'Bring to front', shortcut: 'PgUp', onClick: () => this.order(1) }, { label: 'Send to back', shortcut: 'PgDn', onClick: () => this.order(-1) },
-        { label: 'Lock / unlock', onClick: () => this.toggleLock() },
-      ]),
-      menuBtn('Modify', 'intersect', () => [
-        { label: 'Weld (union)', shortcut: 'Ctrl+W', onClick: () => tools.boolean(this, 'union') },
-        { label: 'Subtract (first minus the rest)', onClick: () => tools.boolean(this, 'subtract') },
-        { label: 'Intersect', onClick: () => tools.boolean(this, 'intersect') },
-        { label: 'Exclude (XOR)', onClick: () => tools.boolean(this, 'xor') },
-        'sep',
-        { label: 'Offset shapes…', shortcut: 'Alt+O', onClick: () => tools.offsetDialog(this) },
-        { label: 'Convert to path', onClick: () => this.convertToPath() },
-        { label: 'Close path', onClick: () => this.closePaths() },
-        { label: 'Break apart', onClick: () => this.breakApart() },
-        'sep',
-        { label: 'Grid array…', onClick: () => tools.gridArrayDialog(this) },
-        { label: 'Circular array…', onClick: () => tools.circularArrayDialog(this) },
-        'sep',
-        { label: 'Trace image…', onClick: () => tools.traceDialog(this) },
-      ]),
       menuBtn('Create', 'plus', () => [
         { label: 'Depth map from STL or image…', onClick: () => depthMapStudio(this) },
         { label: 'Box maker (finger joints)…', onClick: () => boxMakerDialog(this) },
@@ -197,7 +228,9 @@ export class LaserWorkspace {
     this.canvas = h('canvas', { class: 'laser-canvas', 'aria-label': 'Laser bed drawing area' });
     this.ctx = this.canvas.getContext('2d');
     this.coords = h('div', { class: 'laser-coords' });
+    this.strip = new ContextStrip('Selection actions', 'laser');
     this.wrap = h('div', { class: 'laser-canvas-wrap' }, this.canvas, this.coords);
+    this.strip.mount(this.wrap);
 
     this.layerList = h('div', { class: 'laser-layer-list' });
     this.layerEditor = h('div', { class: 'laser-layer-editor' });
@@ -310,6 +343,7 @@ export class LaserWorkspace {
     this._renderPaletteState();
     this._renderStatus();
     for (const [id, b] of Object.entries(this.toolBtns)) b.classList.toggle('active', this.tool === id);
+    this._updateStrip();
     this.redraw();
   }
 

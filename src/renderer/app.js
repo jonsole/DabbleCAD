@@ -16,6 +16,7 @@ import { Gizmo, formatLength, parseLength } from './view/gizmo.js';
 import { buildVoxels, disposeVoxels } from './view/voxels.js';
 import { Editor } from './editor.js';
 import { Inspector } from './ui/inspector.js';
+import { ContextStrip, stripLabel, stripSep, stripButton, stripProps } from './ui/contextStrip.js';
 import { ShapesPanel } from './ui/shapespanel.js';
 import { Dashboard } from './ui/dashboard.js';
 import { scribbleDialog } from './ui/scribble.js';
@@ -101,37 +102,27 @@ export class App {
     const workspaceBar = this.workspaceBar = h('div', { class: 'workspace-bar', role: 'tablist', 'aria-label': 'Workspace' }, wsTab('3d', '3D Design', 'cube', '3D design workspace'), wsTab('slicer', 'Slicer', 'cube', 'Slicer workspace: slice your design to G-code for a 3D printer'), wsTab('laser', 'Laser', 'laser', 'Laser workspace: draw, set up cuts and engraves, and run your laser'));
     this.wsTabs['3d'].classList.add('active');
     this.applyWorkspaces();
+    // The toolbar keeps what always applies (ElectroCAD's convention): undo and redo, paste, the
+    // panels, the workspace's own commands, and the editing mode on the right. What acts on the
+    // selection (copy, delete, group, align…) is on the context strip over the canvas.
     const toolbar = h('div', { class: 'toolbar', role: 'toolbar', 'aria-label': 'Editing tools' },
-      tb('outliner', 'list', 'Objects list', () => this.toggleOutliner()), h('span', { class: 'sep' }),
-      tb('copy', 'copy', 'Copy (Ctrl+C)', () => this.editor.copy()),
-      tb('paste', 'paste', 'Paste (Ctrl+V)', () => this.editor.paste()),
-      tb('duplicate', 'duplicate', 'Duplicate and repeat (Ctrl+D)', () => this.editor.duplicate()),
-      tb('delete', 'trash', 'Delete (Del)', () => this.editor.deleteSelection()),
-      h('span', { class: 'sep' }),
       tb('undo', 'undo', 'Undo (Ctrl+Z)', () => this.editor.undo()),
       tb('redo', 'redo', 'Redo (Ctrl+Y)', () => this.editor.redo()),
       h('span', { class: 'sep' }),
+      tb('paste', 'paste', 'Paste (Ctrl+V)', () => this.editor.paste()),
+      h('span', { class: 'sep' }),
+      tb('outliner', 'list', 'Objects list', () => this.toggleOutliner()),
+      tb('stats', 'stats', 'Size, volume and weight', () => statsDialog(this)),
+      tb('showall', 'bulb', 'Show all hidden shapes (Ctrl+Shift+H)', () => this.editor.showAll()),
+      h('span', { class: 'sep' }),
+      tb('cruise', 'cruise', 'Cruise: drag shapes onto other shapes (C)', () => this.editor.toggleCruise(), 'Cruise'),
+      h('span', { class: 'spacer' }),
       h('div', { class: 'mode-group', role: 'group', 'aria-label': 'Editing mode' },
         tb('modeObject', 'modeObject', 'Object mode (1): move, resize and rotate whole shapes', () => this.editor.setTool('select')),
         tb('modeFace', 'modeFace', 'Face mode (2): pick flat faces and move them in or out', () => this.editor.setTool(this.editor.tool === 'face' ? 'select' : 'face')),
         tb('modeEdge', 'modeEdge', 'Edge mode (3): pick edges to round, chamfer or move them', () => this.editor.setTool(this.editor.tool === 'edges' ? 'select' : 'edges')),
-        tb('modeCorner', 'modeCorner', 'Corner mode (4): pick corners and move them', () => this.editor.setTool(this.editor.tool === 'corner' ? 'select' : 'corner'))),
-      h('span', { class: 'spacer' }),
-      tb('stats', 'stats', 'Size, volume and weight', () => statsDialog(this)),
-      tb('pattern', 'pattern', 'Pattern: repeat the selection in rows or a circle', () => patternDialog(this)),
-      tb('drop', 'drop', 'Drop to workplane (D)', () => this.editor.dropToWorkplane()),
-      h('span', { class: 'sep' }),
-      tb('showall', 'bulb', 'Show all hidden shapes (Ctrl+Shift+H)', () => this.editor.showAll()),
-      h('span', { class: 'sep' }),
-      tb('group', 'group', 'Group: union the selection, holes cut (Ctrl+G)', () => this.editor.group('union'), 'Group'),
-      tb('intersect', 'intersect', 'Intersect: keep only the overlap (Ctrl+I)', () => this.editor.group('intersect'), 'Intersect'),
-      tb('bundle', 'bundle', 'Bundle: move together but stay separate (Ctrl+B)', () => this.editor.group('bundle'), 'Bundle'),
-      tb('ungroup', 'ungroup', 'Ungroup: split the selected group back into its shapes (Ctrl+Shift+G)', () => this.editor.ungroup(), 'Ungroup'),
-      h('span', { class: 'sep' }),
-      tb('align', 'align', 'Align (L)', () => this.editor.setTool('align'), 'Align'),
-      tb('mirror', 'mirror', 'Mirror (M)', () => this.editor.setTool('mirror'), 'Mirror'),
-      tb('split', 'split', 'Split: cut the selection in two with a plane (K)', () => this.editor.setTool('split'), 'Split'),
-      tb('cruise', 'cruise', 'Cruise: drag shapes onto other shapes (C)', () => this.editor.toggleCruise(), 'Cruise'));
+        tb('modeCorner', 'modeCorner', 'Corner mode (4): pick corners and move them', () => this.editor.setTool(this.editor.tool === 'corner' ? 'select' : 'corner'))));
+    this.strip = new ContextStrip('Selection actions', '3d');
 
     this.outliner = h('div', { class: 'outliner' });
     this.viewEl = h('div', { class: 'viewport' });
@@ -172,9 +163,11 @@ export class App {
     this.voxelInfo = h('span', {});
     this.voxelBar = h('div', { class: 'voxel-bar' }, h('span', {}, 'Detail'), this.voxelDetail, this.voxelInfo,
       button({ label: 'Back to 3D design', cls: 'btn-primary', onClick: () => this.setViewMode('design') }));
+    this.strip.mount(this.viewEl);
     this.viewEl.append(this.inspectorEl, this.banner, this.status, this.gridbar, this.voxelBar, h('div', { class: 'busy-pill' }, 'Working…'));
 
     this.inspector = new Inspector(this.editor, this.inspectorEl, this);
+    if (this.settings.inspectorHidden) this.inspectorEl.style.display = 'none';
     this.shapes = new ShapesPanel(this.editor, this.side, this);
     this.dashboard = new Dashboard(this);
     this.laser = new LaserWorkspace(this, this.laserRoot);
@@ -725,24 +718,66 @@ export class App {
   // ---------------------------------------------------------------- state reflection
   _updateButtons() {
     const ed = this.editor;
-    const n = ed.selection.size, movable = ed.movableNodes().length;
     const set = (id, enabled) => this.btn[id].classList.toggle('disabled', !enabled);
-    set('copy', n > 0); set('paste', !!ed.clipboard); set('duplicate', n > 0); set('delete', movable > 0);
+    set('paste', !!ed.clipboard);
     set('undo', ed.history.canUndo); set('redo', ed.history.canRedo);
     // say what Undo / Redo would take back when the step has a name (the AI's steps do)
     const ul = ed.history.undoLabel, rl = ed.history.redoLabel;
     this.btn.undo.title = ul ? `Undo ${ul} (Ctrl+Z)` : 'Undo (Ctrl+Z)';
     this.btn.redo.title = rl ? `Redo ${rl} (Ctrl+Y)` : 'Redo (Ctrl+Y)';
-    set('group', movable > 1); set('intersect', movable > 1); set('bundle', movable > 1);
-    set('ungroup', ed.movableNodes().some((x) => x.type === 'group'));
-    set('align', movable > 0); set('mirror', movable > 0); set('split', movable > 0 || ed.tool === 'split'); set('drop', movable > 0); set('pattern', n > 0);
     set('showall', ed.doc.nodes.some((x) => x.hidden));
-    this.btn.align.classList.toggle('active', ed.tool === 'align');
     const mode = ed.tool === 'face' ? 'Face' : ed.tool === 'edges' ? 'Edge' : ed.tool === 'corner' ? 'Corner' : 'Object';
     for (const m of ['Object', 'Face', 'Edge', 'Corner']) { this.btn['mode' + m].classList.toggle('active', m === mode); this.btn['mode' + m].setAttribute('aria-pressed', m === mode ? 'true' : 'false'); }
-    this.btn.mirror.classList.toggle('active', ed.tool === 'mirror');
-    this.btn.split.classList.toggle('active', ed.tool === 'split');
     this.btn.cruise.classList.toggle('active', ed.cruise);
+    this._updateStrip();
+  }
+
+  /** The context strip over the 3D view: what can be done with the selection, or the tool in use. */
+  _updateStrip() {
+    const ed = this.editor;
+    const tool = ed.tool;
+    // Align and Mirror act on the selection with handles in the view: the strip names the tool and ends it
+    if (tool === 'align' || tool === 'mirror') {
+      const name = tool === 'align' ? 'Align' : 'Mirror';
+      this.strip.show(`tool:${tool}`, () => [stripLabel(name, tool), stripSep(),
+        stripButton({ icon: 'check', label: 'Done', title: `Finish ${name.toLowerCase()} (Esc)`, onClick: () => ed.setTool('select') })]);
+      return;
+    }
+    const n = ed.selection.size;
+    if (tool !== 'select' || !n) { this.strip.hide(); return; }
+    const movable = ed.movableNodes();
+    const m = movable.length, groups = movable.some((x) => x.type === 'group');
+    const nodes = ed.doc.nodes.filter((x) => ed.selection.has(x.id));
+    const first = nodes[0];
+    const label = n === 1 && first ? (first.name || (first.type === 'group' ? 'Group' : kindName(first.kind))) : `${n} shapes`;
+    const propsOpen = !this.settings.inspectorHidden;
+    const key = `sel:${[...ed.selection].join(',')}|${label}|${m}|${groups}|${propsOpen}|${ed.editing ? 1 : 0}`;
+    this.strip.show(key, () => [
+      stripLabel(label, groups && n === 1 ? 'group' : 'cube'), stripSep(),
+      stripButton({ icon: 'copy', title: 'Copy (Ctrl+C)', onClick: () => ed.copy() }),
+      stripButton({ icon: 'duplicate', title: 'Duplicate and repeat (Ctrl+D)', onClick: () => ed.duplicate() }),
+      stripButton({ icon: 'trash', title: 'Delete (Del)', danger: true, disabled: !m, onClick: () => ed.deleteSelection() }),
+      stripSep(),
+      m > 1 ? stripButton({ icon: 'group', label: 'Group', title: 'Group: union the selection, holes cut (Ctrl+G)', onClick: () => ed.group('union') }) : null,
+      m > 1 ? stripButton({ icon: 'intersect', title: 'Intersect: keep only the overlap (Ctrl+I)', onClick: () => ed.group('intersect') }) : null,
+      m > 1 ? stripButton({ icon: 'bundle', title: 'Bundle: move together but stay separate (Ctrl+B)', onClick: () => ed.group('bundle') }) : null,
+      groups ? stripButton({ icon: 'ungroup', label: 'Ungroup', title: 'Ungroup: split the selected group back into its shapes (Ctrl+Shift+G)', onClick: () => ed.ungroup() }) : null,
+      m > 1 || groups ? stripSep() : null,
+      stripButton({ icon: 'align', title: 'Align (L)', disabled: !m, onClick: () => ed.setTool('align') }),
+      stripButton({ icon: 'mirror', title: 'Mirror (M)', disabled: !m, onClick: () => ed.setTool('mirror') }),
+      stripButton({ icon: 'split', title: 'Split: cut the selection in two with a plane (K)', disabled: !m, onClick: () => ed.setTool('split') }),
+      stripButton({ icon: 'pattern', title: 'Pattern: repeat the selection in rows or a circle', onClick: () => patternDialog(this) }),
+      stripButton({ icon: 'drop', title: 'Drop to workplane (D)', disabled: !m, onClick: () => ed.dropToWorkplane() }),
+      stripSep(),
+      stripProps({ open: propsOpen, onToggle: () => this.toggleInspector() }),
+    ]);
+  }
+
+  /** Show or hide the inspector card (the selection's properties); remembered. */
+  toggleInspector(show = !!this.settings.inspectorHidden) {
+    this.patchSettings({ inspectorHidden: !show });
+    this.inspectorEl.style.display = show ? '' : 'none';
+    this._updateStrip();
   }
 
   _updateBanner() {
