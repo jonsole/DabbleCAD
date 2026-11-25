@@ -4,6 +4,7 @@ const { spawn } = require('node:child_process');
 const { registerUpdater } = require('./updater');
 const { registerGoogleAuth } = require('./googleauth');
 const { registerAi } = require('./ai');
+const mcpserver = require('./mcpserver');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -236,7 +237,8 @@ function createWindow() {
   // the renderer is showing a "Save changes?" prompt: wait for the user instead of force-closing
   ipcMain.on('app:close-hold', () => { clearTimeout(closeTimer); });
   ipcMain.on('app:close-cancel', () => { clearTimeout(closeTimer); closing = false; });
-  win.on('closed', () => { win = null; });
+  win.on('closed', () => { win = null; mcpBridge.setConnected(false); });
+  win.webContents.on('did-start-navigation', (_e, _url, inPlace, isMain) => { if (isMain && !inPlace) mcpBridge.setConnected(false); });
 
   if (SMOKE) runSmoke();
 }
@@ -271,6 +273,26 @@ ipcMain.handle('settings:set', (_e, patch) => {
   saveSettings();
   return { ...settings, hardwareAcceleration };
 });
+// ---------------------------------------------------------------- MCP server (AI apps)
+// Served from here on 127.0.0.1; each request is answered by the editor window over IPC.
+const mcpBridge = mcpserver.createCallbackBridge((msg) => { if (win && !win.isDestroyed()) win.webContents.send('mcp:request', msg); });
+const mcp = mcpserver.createMcpServer({ name: 'dabblecad', version: app.getVersion(), bridge: mcpBridge, getToken: () => settings.mcpToken });
+let mcpError = '';
+const mcpState = () => ({ enabled: !!settings.mcpEnabled, running: !!mcp.port, url: mcp.port ? mcp.url : `http://127.0.0.1:${mcpserver.DEFAULT_PORT}/mcp`, token: settings.mcpToken || '', connected: mcpBridge.connected, error: mcpError });
+async function mcpApply() {
+  if (settings.mcpEnabled && !settings.mcpToken) { settings.mcpToken = mcpserver.newToken(); saveSettings(); }
+  if (settings.mcpEnabled && !mcp.port) {
+    try { await mcp.start(); mcpError = ''; } catch (err) { mcpError = `Could not start the server: ${err.message}`; }
+  } else if (!settings.mcpEnabled && mcp.port) await mcp.stop();
+  return mcpState();
+}
+ipcMain.handle('mcp:state', () => mcpState());
+ipcMain.handle('mcp:enable', (_e, on) => { settings.mcpEnabled = !!on; saveSettings(); return mcpApply(); });
+ipcMain.handle('mcp:new-token', () => { settings.mcpToken = mcpserver.newToken(); saveSettings(); return mcpState(); });
+ipcMain.on('mcp:hello', (_e, hello) => mcpBridge.setConnected(true, hello));
+ipcMain.on('mcp:response', (_e, msg) => mcpBridge.respond(msg));
+app.whenReady().then(() => { if (!SMOKE) mcpApply(); });
+app.on('will-quit', () => { mcp.stop(); });
 // G-code to a printer on the local network (the page itself can't: CORS, mixed content). Any http(s) address.
 ipcMain.handle('printer:fetch', async (_e, url, opts = {}) => {
   try {

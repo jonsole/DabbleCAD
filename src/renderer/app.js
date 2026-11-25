@@ -20,6 +20,7 @@ import { ShapesPanel } from './ui/shapespanel.js';
 import { Dashboard } from './ui/dashboard.js';
 import { scribbleDialog } from './ui/scribble.js';
 import { sketchDialog } from './ui/sketch.js';
+import { McpConnection } from './mcp/bridge.js';
 import { settingsDialog, gridDialog, exportDialog, shortcutsDialog, welcomeDialog, updateDialog, statsDialog, patternDialog, noteDialog, aboutDialog, saveChangesDialog } from './ui/dialogs.js';
 import { newDoc, serializeDoc, deserializeDoc, uid, walk, countShapes } from './core/doc.js';
 import { initFonts, ensureFont } from './core/fonts.js';
@@ -46,11 +47,28 @@ export class App {
     this._build();
     this._wire();
     await this._openInitial();
+    this._startMcp();
     const boot = document.getElementById('boot');
     if (boot) boot.remove();
     setTimeout(() => this._checkForUpdate(), 4000);
     if (this.settings.welcomeSeen !== true && !this.settings.smoke) welcomeDialog(this);
     if (this.settings.gpuAutoDisabled) toast('GPU acceleration was turned off after a graphics crash. You can re-enable it in Settings.', 'warn', 7000);
+  }
+
+  _startMcp() {
+    this.mcp = new McpConnection(this);
+    let idle = null;
+    this.mcp.onChange((st) => {
+      const b = this.aiBadge;
+      b.hidden = !(st.enabled && st.running);
+      b.classList.toggle('waiting', !!st.running && !st.connected);
+      if (st.activity) {
+        clearTimeout(idle);
+        if (st.activity.busy > 0) { b.classList.add('busy'); b.lastChild.textContent = `AI: ${st.activity.name.replace(/_/g, ' ')}`; }
+        else idle = setTimeout(() => { b.classList.remove('busy'); b.lastChild.textContent = 'AI'; }, 600);
+      }
+    });
+    this.mcp.start().catch((err) => console.error('MCP', err));
   }
 
   toast(msg, kind, ms) { toast(msg, kind, ms); }
@@ -76,6 +94,9 @@ export class App {
       this._title();
     });
     this.saveState = h('span', { class: 'save-state' });
+    // shows when an AI app is connected (Settings → AI connection), and what it is doing
+    this.aiBadge = h('button', { class: 'ai-badge', type: 'button', hidden: true, title: 'AI connection: AI apps can read and edit this design. Click for settings.' }, h('i'), h('span', {}, 'AI'));
+    this.aiBadge.addEventListener('click', () => settingsDialog(this, { section: 'ai' }));
     this.modeSeg = h('div', { class: 'segmented', title: 'View mode' });
     for (const [id, label, ic, tip] of [['design', '3D Design', 'cube', 'Edit your design'], ['blocks', 'Blocks', 'blocks', 'See the design as blocks'], ['bricks', 'Bricks', 'bricks', 'See the design as building bricks']]) {
       const b = button({ label, icon: ic, title: tip, size: 16, onClick: () => this.setViewMode(id) });
@@ -86,7 +107,7 @@ export class App {
     this.themeBtn = button({ icon: 'sun', title: 'Switch between dark and light mode', onClick: () => this.setTheme(this.settings.theme === 'light' ? 'dark' : 'light') });
     const logo = h('button', { class: 'logo', type: 'button', title: 'Your designs' }, this.logoMark(), h('span', { class: 'logo-name' }, 'DabbleCAD', h('span', { class: 'logo-plus' }, 'Plus')), h('span', { class: 'logo-commit', title: BUILD_TITLE }, BUILD.short));
     logo.addEventListener('click', () => this.dashboard.show());
-    const topbar = h('div', { class: 'topbar', role: 'toolbar', 'aria-label': 'Design and file tools' }, logo, h('span', { class: 'sep' }), this.nameInput, this.saveState, h('span', { class: 'spacer' }),
+    const topbar = h('div', { class: 'topbar', role: 'toolbar', 'aria-label': 'Design and file tools' }, logo, h('span', { class: 'sep' }), this.nameInput, this.saveState, this.aiBadge, h('span', { class: 'spacer' }),
       this.modeSeg, h('span', { class: 'sep' }),
       button({ label: 'Import', icon: 'import', title: 'Import STL, OBJ, GLB, 3MF, SVG, images (Ctrl+O opens a design file)', onClick: () => this.importDialog() }),
       button({ label: 'Export', icon: 'export', title: 'Download for 3D printing or sharing (Ctrl+E)', onClick: () => exportDialog(this) }),

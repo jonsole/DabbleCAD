@@ -19,9 +19,10 @@
     "test:laser": "vite build && node tools/run.js --smoke=tools/smoke-laser.js",
     "test:depth": "vite build && node tools/run.js --smoke=tools/smoke-depth.js",
     "test:save": "vite build && node tools/run.js --smoke=tools/smoke-save.js",
-    "test:all": "npm run build && node tools/test.js",
+    "test:all": "npm run build && node tools/test-mcp.js && node tools/test.js",
     "test:packaged": "node tools/test.js --packaged",
-    "test:ai": "node tools/test-ai.mjs"
+    "test:ai": "node tools/test-ai.mjs",
+    "test:mcp": "node tools/test-mcp.js"
   },
   "devDependencies": {
     "@anthropic-ai/sdk": "^1.13.0",

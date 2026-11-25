@@ -13,6 +13,7 @@
     "electron/updater.js",
     "electron/googleauth.js",
     "electron/ai.js",
+    "electron/mcpserver.js",
     "build/icon.png",
     "package.json",
     "LICENSE",
